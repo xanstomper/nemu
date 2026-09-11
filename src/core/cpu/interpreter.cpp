@@ -919,6 +919,24 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             break;
         }
 
+        case Opcode::SMOV: {
+            // SMOV sign-extends the selected element up to 64 bits and writes Xd.
+            if (inst.vec_size == 3) {
+                const s64 v = static_cast<s64>(state_.GetVectorLane64(inst.rn, inst.vec_index));
+                state_.SetX(inst.rd, static_cast<u64>(v));
+            } else {
+                u64 v = 0;
+                unsigned bits = 0;
+                if (inst.vec_size == 0) { v = state_.GetVectorLane8(inst.rn, inst.vec_index); bits = 8; }
+                else if (inst.vec_size == 1) { v = state_.GetVectorLane16(inst.rn, inst.vec_index); bits = 16; }
+                else { v = static_cast<u64>(state_.GetVectorLane32(inst.rn, inst.vec_index)); bits = 32; }
+                const u64 sign = (v >> (bits - 1)) & 1;
+                const u64 ext = sign ? (~u64{0} << bits) : 0;
+                state_.SetX(inst.rd, v | ext);
+            }
+            break;
+        }
+
         // Atomics & Exclusives
         case Opcode::LDXR: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn);

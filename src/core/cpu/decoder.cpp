@@ -588,9 +588,16 @@ DecodedInstruction Decoder::DecodeDataProcSimdFp(u32 raw) noexcept {
 
             // NOTE: FMUL (vector) sets the 29 "u" bit to 1.
             if (u && opcode == 0b11011) { inst.opcode = Opcode::FMUL_vec; return inst; }
-            if (!u && opcode == 0b00011) { inst.opcode = Opcode::AND_vec; return inst; }
-            if (!u && opcode == 0b01011) { inst.opcode = Opcode::ORR_vec; return inst; }
-            if (u && opcode == 0b00011) { inst.opcode = Opcode::EOR_vec; return inst; }
+            // NOTE: AND/ORR/EOR/NOT (vector) all share opcode 0b00011; the 29 "u" bit
+            // selects EOR/NOT (u=1) vs AND/ORR (u=0), and bit 23 selects the
+            // "not"/second operand: AND(u0,b23=0), ORR(u0,b23=1), EOR(u1,b23=0),
+            // NOT/ORN(u1,b23=1).
+            if (opcode == 0b00011) {
+                const bool o23 = ExtractBit(raw, 23);
+                if (u) inst.opcode = o23 ? Opcode::NOT_vec : Opcode::EOR_vec;
+                else   inst.opcode = o23 ? Opcode::ORR_vec : Opcode::AND_vec;
+                return inst;
+            }
         }
 
         // DUP, INS, UMOV

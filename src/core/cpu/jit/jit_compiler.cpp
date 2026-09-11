@@ -267,12 +267,19 @@ namespace {
     }
 
     void JitVecSMov(CpuState* s, u8 rd, u8 rn, u8 vec_size, u8 index) noexcept {
-        if (vec_size == 3) {
+        // SMOV sign-extends the selected element up to 64 bits.
+        if (vec_size == 3) { // 64-bit lane
             const s64 v = static_cast<s64>(s->GetVectorLane64(rn, index));
             s->SetX(rd, static_cast<u64>(v));
-        } else if (vec_size == 2) {
-            const s32 v = static_cast<s32>(s->GetVectorLane32(rn, index));
-            s->SetW(rd, static_cast<u32>(v));
+        } else {
+            u64 v = 0;
+            unsigned bits = 0;
+            if (vec_size == 0) { v = s->GetVectorLane8(rn, index);  bits = 8; }
+            else if (vec_size == 1) { v = s->GetVectorLane16(rn, index); bits = 16; }
+            else { v = static_cast<u64>(s->GetVectorLane32(rn, index)); bits = 32; }
+            const u64 sign = (v >> (bits - 1)) & 1;
+            const u64 ext = sign ? (~u64{0} << bits) : 0;
+            s->SetX(rd, v | ext);
         }
     }
 

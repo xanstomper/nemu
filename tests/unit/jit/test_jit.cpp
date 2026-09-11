@@ -603,6 +603,102 @@ int main() {
         std::cout << "  - Differential Test 12 (Exclusive Monitor & Atomics): PASSED" << std::endl;
     }
 
+    // -----------------------------------------------------------------------
+    // Differential Test 13: NEON / SIMD Vector Arithmetic & Element Moves
+    // Exercises every vector slow-path thunk (int add/sub, FP arith, AND/ORR/
+    // EOR, DUP, INS, UMOV, SMOV) through a uniform 6-arg ABI call.
+    // -----------------------------------------------------------------------
+    {
+        const vaddr_t entry = CODE_BASE + 0xA000;
+        const vaddr_t halt  = CODE_BASE + 0xA100;
+        const u32 code[] = {
+            0x4EA28420, // 1.  ADD v0.4s,   v1.4s,   v2.4s
+            0x6EE58483, // 2.  SUB v3.2d,   v4.2d,   v5.2d
+            0x4E68D4E6, // 3.  FADD v6.2d,  v7.2d,   v8.2d
+            0x6E2BDD49, // 4.  FMUL v9.4s,  v10.4s,  v11.4s
+            0x4E2E1DAC, // 5.  AND v12.16b, v13.16b, v14.16b
+            0x4EB11E0F, // 6.  ORR v15.16b, v16.16b, v17.16b
+            0x6E341E72, // 7.  EOR v18.16b, v19.16b, v20.16b
+            0x4E040ED5, // 8.  DUP v21.4s,  W22
+            0x0E0C3F17, // 9.  UMOV W23,    V24.S[1]
+            0x4E0C1F59, // 10. INS v25.S[1], W26
+            0x4E042F9B, // 11. SMOV X27,    V28.S[0]
+            RetXn(30)
+        };
+        memory.WriteBlock(entry, code, sizeof(code));
+
+        cpu::CpuState s_interp, s_jit;
+        s_interp.Reset();
+        s_interp.pc = entry;
+        s_interp.SetX(30, halt);
+
+        // Seed integer lanes: V1=[10,20,30,40] + V2=[5,5,5,5]
+        for (size_t l = 0; l < 4; ++l) {
+            s_interp.SetVectorLane32(1, l, static_cast<u32>((l + 1) * 10));
+            s_interp.SetVectorLane32(2, l, 5);
+        }
+        // 64-bit lanes for SUB: V4=[1,2], V5=[3,4]
+        s_interp.SetVectorLane64(4, 0, 1); s_interp.SetVectorLane64(4, 1, 2);
+        s_interp.SetVectorLane64(5, 0, 3); s_interp.SetVectorLane64(5, 1, 4);
+        // FP double for FADD: V7=[1.5,2.5], V8=[2.0,3.0]
+        double d7[] = {1.5, 2.5}, d8[] = {2.0, 3.0};
+        for (size_t l = 0; l < 2; ++l) {
+            u64 u7, u8;
+            std::memcpy(&u7, &d7[l], 8);
+            std::memcpy(&u8, &d8[l], 8);
+            s_interp.SetVectorLane64(7, l, u7);
+            s_interp.SetVectorLane64(8, l, u8);
+        }
+        // FP single for FMUL: V10=[1,2,3,4], V11=[2,2,2,10]
+        float f10[] = {1.0f, 2.0f, 3.0f, 4.0f}, f11[] = {2.0f, 2.0f, 2.0f, 10.0f};
+        for (size_t l = 0; l < 4; ++l) {
+            u32 u10, u11;
+            std::memcpy(&u10, &f10[l], 4);
+            std::memcpy(&u11, &f11[l], 4);
+            s_interp.SetVectorLane32(10, l, u10);
+            s_interp.SetVectorLane32(11, l, u11);
+        }
+        // Logical: V13=0xFF00FF00 pairs, V14=0x0F0F0F0F, etc.
+        for (size_t l = 0; l < 4; ++l) {
+            s_interp.SetVectorLane32(13, l, 0xFF00FF00u);
+            s_interp.SetVectorLane32(14, l, 0x0F0F0F0Fu);
+            s_interp.SetVectorLane32(16, l, 0x00FF00FFu);
+            s_interp.SetVectorLane32(17, l, 0xF0F0F0F0u);
+            s_interp.SetVectorLane32(19, l, 0xAAAAAAAAu);
+            s_interp.SetVectorLane32(20, l, 0x55555555u);
+        }
+        // Element ops: DUP W22=7; UMOV V24.S[1] (lane1=6); INS V25[1]=W26; SMOV V28.S[0]
+        s_interp.SetX(22, 7);
+        for (size_t l = 0; l < 4; ++l) s_interp.SetVectorLane32(24, l, static_cast<u32>(5 + l));
+        s_interp.SetX(26, 0x12345678u);
+        s_interp.SetVectorLane32(28, 0, 0x80000000u); // sign bit set -> SMOV produces a negative X27
+
+        s_jit = s_interp;
+
+        cpu::Interpreter interp(s_interp, memory);
+        RunInterpTo(interp, s_interp, halt, "Differential Test 13 (NEON Vector)");
+        RunJitTo(jit, s_jit, memory, halt, "Differential Test 13 (NEON Vector)");
+
+        AssertCpuStatesMatchFull(s_interp, s_jit, "Differential Test 13 (NEON Vector)");
+
+        // Spot-check deterministic integer and element results. (FP-vector lanes are
+        // validated by the differential match above; their wall-value depends on
+        // the decoded lane layout, which is not asserted here to avoid encoding
+        // ambiguity.)
+        NEMU_TEST_ASSERT(s_interp.GetVectorLane32(0, 0) == 15, "ADD V0[0] == 10+5");
+        NEMU_TEST_ASSERT(s_interp.GetVectorLane64(3, 0) == static_cast<u64>(-2), "SUB V3[0] == 1-3");
+        NEMU_TEST_ASSERT(s_interp.GetVectorLane32(12, 0) == (0xFF00FF00u & 0x0F0F0F0Fu), "AND V12[0]");
+        NEMU_TEST_ASSERT(s_interp.GetVectorLane32(15, 0) == (0x00FF00FFu | 0xF0F0F0F0u), "ORR V15[0]");
+        NEMU_TEST_ASSERT(s_interp.GetVectorLane32(18, 0) == (0xAAAAAAAAu ^ 0x55555555u), "EOR V18[0]");
+        NEMU_TEST_ASSERT(s_interp.GetVectorLane32(21, 0) == 7, "DUP V21[0] == 7");
+        NEMU_TEST_ASSERT(s_interp.GetW(23) == 6, "UMOV W23 == V24.S[1] == 6");
+        NEMU_TEST_ASSERT(s_interp.GetVectorLane32(25, 1) == 0x12345678u, "INS V25.S[1] == W26");
+        NEMU_TEST_ASSERT(s_interp.GetX(27) == static_cast<u64>(static_cast<s64>(static_cast<s32>(0x80000000u))),
+                         "SMOV X27 == sign-extended V28.S[0]");
+
+        std::cout << "  - Differential Test 13 (NEON/SIMD Vector Arithmetic): PASSED" << std::endl;
+    }
+
     const auto stats = jit.GetStats();
     NEMU_TEST_ASSERT(stats.blocks_compiled > 0, "Blocks compiled must be > 0");
     NEMU_TEST_ASSERT(stats.blocks_executed > 0, "Blocks executed must be > 0");
