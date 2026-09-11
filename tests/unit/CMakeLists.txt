@@ -303,3 +303,18 @@ target_link_libraries(test_horizon_result PRIVATE
 
 target_compile_features(test_horizon_result PRIVATE cxx_std_20)
 add_test(NAME test_horizon_result COMMAND test_horizon_result)
+
+add_executable(test_bit_field
+    common/test_bit_field.cpp
+)
+
+target_include_directories(test_bit_field PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_bit_field PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_bit_field PRIVATE cxx_std_20)
+add_test(NAME test_bit_field COMMAND test_bit_field)
