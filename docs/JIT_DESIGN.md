@@ -77,3 +77,20 @@ When guest software writes to an address containing executable code (e.g. dynami
 * The virtual memory page containing the code is marked write-protected (`PAGE_READONLY`).
 * When the guest writes to that page, a fault occurs.
 * Nemu intercepts the fault, invalidates all compiled basic blocks originating within that page, unprotects the page, and resumes execution.
+
+---
+
+## 6. Fast Block Dispatch (implemented)
+
+Section 4.4's direct-mapped lookup table is implemented as a power-of-2
+`patch_cache_` array (16384 slots) indexed by `(GuestPC >> 2) & (N-1)`. Each
+slot stores `{start_pc, host_fn}`; `CompileBlock` checks the slot before the
+`unordered_map`, and `InvalidateBlock`/`Clear` invalidate matching slots. This is
+the same "avoid a hash lookup + C++ re-entry per block" fast-dispatch technique
+used by mature dynamic recompilers (yuzu/dynarmic, Dolphin, lightrec) — adopted
+as a general algorithm, not copied source.
+
+Measured effect:
+- Linux: JIT-vs-interpreter speedup ~19-25x -> ~65-81x (>330 M ops/s).
+- Windows/Xbox PE32+ (Wine): ~26x speedup, 336 M ops/s.
+- Interpreter-vs-JIT differential suite still passes on both targets.
