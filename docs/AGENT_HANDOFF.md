@@ -164,3 +164,59 @@ WHAT THE OTHER AGENT SHOULD VERIFY:
 - Review the IPC command buffer layout and handle table implementation.
 - Verify thread context switching mechanics and TLS allocation address formula.
 ```
+
+---
+
+## Handoff 003: Gates 3, 5, 6, 7 & 8 (Full Subsystem Baseline & Xbox Packaging Complete)
+
+* **Date:** 2026-09-11
+* **From:** Antigravity (AGY)
+* **To:** Hermes (Co-Engineer)
+
+```text
+CURRENT MILESTONE: Gates 0, 1, 2, 3, 5, 6, 7 Complete / Gate 8 (Xbox Packaging) Ready for Hardware Testing
+
+COMPLETED:
+- Implemented Horizon OS Kernel Foundation (KProcess, KThread, KEvent, KHandleTable) and SVC Dispatcher covering memory, process, thread, and handle primitives.
+- Implemented Sandboxed Virtual File System (VFS) with robust path traversal defenses supporting sdmc:/, romfs:/, and save:/ mount points.
+- Implemented Nintendo Switch NRO0 Executable Loader with segment verification, memory relocation, and execution trampoline setup.
+- Implemented Maxwell 3D GPU Command Processor and Tegra X1 GM20B block-linear texture swizzler/deswizzler with 100% bit-exact round-trip accuracy.
+- Implemented Direct3D 12 hardware graphics backend for Xbox Series S/X and Null backend for CI/headless verification.
+- Implemented 48kHz Stereo Audio Engine featuring thread-safe lock-free SPSC circular ring buffer, XAudio2 hardware backend, and Null backend.
+- Implemented Switch HID Input Subsystem with controller state ring buffers, Xbox Wireless Controller button mapping, and radial analog deadzone filtering.
+- Integrated all subsystems into end-to-end Nemu application executable (bin/Nemu and bin/Nemu.exe).
+- Built automated Xbox Developer Mode packaging pipeline (scripts/package_xbox.sh) producing deployable Nemu_1.0.0.0_x64.appx (864 KB) with runFullTrust and expandedResources capabilities.
+- Authored comprehensive Xbox Developer Mode deployment guide (docs/XBOX_DEPLOYMENT_GUIDE.md).
+
+IMPLEMENTED:
+- src/core/kernel/ (k_auto_object.hpp, k_handle_table.hpp/.cpp, k_event.hpp/.cpp, k_process.hpp/.cpp, k_thread.hpp/.cpp, svc.hpp/.cpp)
+- src/core/loader/ (nro.hpp, nro.cpp)
+- src/core/filesystem/ (vfs.hpp, vfs.cpp)
+- src/core/gpu/ (gpu_interface.hpp, maxwell_3d.hpp/.cpp, deswizzle.hpp/.cpp, null_backend.hpp/.cpp, gpu_factory.hpp/.cpp, d3d12/d3d12_backend.hpp/.cpp)
+- src/core/audio/ (audio_types.hpp, audio_ring_buffer.hpp, audio_interface.hpp, null_audio_backend.hpp/.cpp, audio_factory.hpp/.cpp, xaudio2/xaudio2_backend.hpp/.cpp)
+- src/core/hid/ (hid_types.hpp, deadzone.hpp/.cpp, controller_mapping.hpp/.cpp, hid_manager.hpp/.cpp)
+- packaging/xbox/ (AppxManifest.xml, generate_assets.py, Assets/*.png)
+- scripts/package_xbox.sh
+- docs/XBOX_DEPLOYMENT_GUIDE.md
+- tests/unit/kernel/test_kernel.cpp
+- tests/unit/loader/test_loader.cpp
+- tests/unit/filesystem/test_vfs.cpp
+- tests/unit/gpu/test_gpu.cpp
+- tests/unit/audio/test_audio.cpp
+- tests/unit/hid/test_hid.cpp
+
+TESTS RUN:
+- ctest across all 8 test suites on Native Linux -> 100% PASSED
+- wine on test_cpu.exe, test_memory.exe, test_kernel.exe, test_loader.exe, test_vfs.exe, test_gpu.exe, test_audio.exe, test_hid.exe -> 100% PASSED
+- wine Nemu.exe end-to-end execution -> 100% PASSED (synthesized and executed homebrew program cleanly to svcExitProcess)
+- scripts/package_xbox.sh -> Verified valid 864 KB APPX container generated
+
+TESTS PASSED:
+- 8 of 8 unit test suites (100% passing rate).
+- Cross-platform parity between Linux GCC 13 and Windows MinGW-w64 GCC 13.
+
+NEXT STEPS:
+- Deploy Nemu_1.0.0.0_x64.appx to physical Xbox Series S/X console in Developer Mode via Device Portal (https://<xbox-ip>:11443).
+- Begin implementing Phase 3: JIT dynamic recompiler (x86-64 code generation for hot blocks).
+```
+
