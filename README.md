@@ -47,6 +47,7 @@ Full architectural specifications, Xbox capabilities, roadmap, and design docume
 - [`docs/INPUT_DESIGN.md`](docs/INPUT_DESIGN.md) — Xbox controller integration, deadzones, and HID mapping
 - [`docs/TESTING.md`](docs/TESTING.md) — Unit, integration, differential, and regression testing strategy
 - [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — Metrics, budgets, profiling hooks, and frame pacing
+- [`docs/BOOTING_GAMES.md`](docs/BOOTING_GAMES.md) — NCA/NSP/XCI boot pipeline, sideloading, and key requirements
 - [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) — Active limitations, edge cases, and tracked bugs
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — Architecture Decision Records (ADR) log
 - [`docs/AGENT_HANDOFF.md`](docs/AGENT_HANDOFF.md) — Hermes <-> AGY collaboration handoff log
