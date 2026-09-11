@@ -213,3 +213,18 @@ add_test(NAME test_ipc COMMAND test_ipc)
 
 
 
+
+add_executable(test_timing
+    timing/test_timing.cpp
+)
+
+target_include_directories(test_timing PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_timing PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_timing PRIVATE cxx_std_20)
+add_test(NAME test_timing COMMAND test_timing)
