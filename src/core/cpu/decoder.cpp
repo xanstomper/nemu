@@ -416,7 +416,9 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
 
     // Load / Store Pair SIMD & FP
     // [opc:2] 101 1 [type:3] [L:1] [imm7] [Rn:5] [Rt:5] [Rt2:5]
-    if ((raw & 0x3E400000) == 0x2C000000) {
+    // NOTE: the mask must NOT include bit 22 (the L bit) — bit 22 selects load
+    // vs store and is extracted separately below.
+    if ((raw & 0x3E000000) == 0x2C000000) {
         const bool is_load = ExtractBit(raw, 22);
         const u32 opc = ExtractBits(raw, 30, 2);
         inst.is_fp_double = (opc == 0b01);
@@ -531,21 +533,22 @@ DecodedInstruction Decoder::DecodeDataProcSimdFp(u32 raw) noexcept {
             return inst;
         }
 
-        // Check 1-source scalar FP: bit 21=1, bits 20..16 == 0
-        if (ExtractBit(raw, 21) == 1 && ExtractBits(raw, 16, 5) == 0) {
-            const u32 op = ExtractBits(raw, 10, 6);
+        // Check 1-source scalar FP: bit 21=1, bits 14..10 == 0b10000
+        if (ExtractBit(raw, 21) == 1 && ExtractBits(raw, 10, 5) == 0b10000) {
+            const u32 op = (ExtractBits(raw, 16, 5) << 1) | ExtractBit(raw, 15);
             switch (op) {
                 case 0b000000: inst.opcode = Opcode::FMOV_reg; return inst;
                 case 0b000001: inst.opcode = Opcode::FABS_scalar; return inst;
                 case 0b000010: inst.opcode = Opcode::FNEG_scalar; return inst;
                 case 0b000011: inst.opcode = Opcode::FSQRT_scalar; return inst;
-                case 0b000100: inst.opcode = Opcode::FCVT; inst.is_fp_double = !ExtractBit(raw, 22); return inst;
+                case 0b000100:
+                case 0b000101: inst.opcode = Opcode::FCVT; inst.is_fp_double = !ExtractBit(raw, 22); return inst;
                 default: break;
             }
         }
 
-        // Check FMOV immediate
-        if (ExtractBits(raw, 29, 3) == 0b000 && ExtractBits(raw, 21, 2) == 0b01) {
+        // Check FMOV immediate: bit 21=1, bits 12..10 = 0b100, bits 9..5 = 0
+        if (ExtractBit(raw, 21) == 1 && ExtractBits(raw, 10, 3) == 0b100 && ExtractBits(raw, 5, 5) == 0) {
             inst.opcode = Opcode::FMOV_imm;
             const u32 imm8 = ExtractBits(raw, 13, 8);
             const bool sign = (imm8 >> 7) & 1;
@@ -560,7 +563,7 @@ DecodedInstruction Decoder::DecodeDataProcSimdFp(u32 raw) noexcept {
         inst.is_64bit = (sf == 1);
         const u32 rmode = ExtractBits(raw, 19, 2);
         const u32 opcode = ExtractBits(raw, 16, 3);
-        if (ExtractBits(raw, 21, 3) == 0b100) {
+        if (ExtractBit(raw, 21) == 1 && ExtractBits(raw, 10, 6) == 0) {
             if (opcode == 0b010) { inst.opcode = Opcode::SCVTF; return inst; }
             if (opcode == 0b011) { inst.opcode = Opcode::UCVTF; return inst; }
             if (opcode == 0b000 && rmode == 0b11) { inst.opcode = Opcode::FCVTZS; return inst; }
@@ -582,7 +585,9 @@ DecodedInstruction Decoder::DecodeDataProcSimdFp(u32 raw) noexcept {
             if (u && opcode == 0b10000) { inst.opcode = Opcode::SUB_vec; return inst; }
             if (!u && opcode == 0b11010) { inst.opcode = Opcode::FADD_vec; return inst; }
             if (u && opcode == 0b11010) { inst.opcode = Opcode::FSUB_vec; return inst; }
-            if (!u && opcode == 0b11011) { inst.opcode = Opcode::FMUL_vec; return inst; }
+
+            // NOTE: FMUL (vector) sets the 29 "u" bit to 1.
+            if (u && opcode == 0b11011) { inst.opcode = Opcode::FMUL_vec; return inst; }
             if (!u && opcode == 0b00011) { inst.opcode = Opcode::AND_vec; return inst; }
             if (!u && opcode == 0b01011) { inst.opcode = Opcode::ORR_vec; return inst; }
             if (u && opcode == 0b00011) { inst.opcode = Opcode::EOR_vec; return inst; }
@@ -596,8 +601,9 @@ DecodedInstruction Decoder::DecodeDataProcSimdFp(u32 raw) noexcept {
         else if (imm5 & 4) { inst.vec_size = 2; inst.vec_index = static_cast<u8>(imm5 >> 3); }
         else if (imm5 & 8) { inst.vec_size = 3; inst.vec_index = static_cast<u8>(imm5 >> 4); }
 
-        if (op_ins == 0b00001) { inst.opcode = Opcode::DUP_gen; return inst; }
+        if (op_ins == 0b00011) { inst.opcode = Opcode::DUP_gen; return inst; }
         if (op_ins == 0b00111) { inst.opcode = Opcode::INS_gen; return inst; }
+        if (op_ins == 0b01011) { inst.opcode = Opcode::SMOV; return inst; }
         if (op_ins == 0b01111) { inst.opcode = Opcode::UMOV; return inst; }
     }
 

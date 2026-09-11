@@ -76,6 +76,11 @@ private:
     void EmitConditionToZF(Condition cond);
     /// Emit the VirtualMemory-backed load/store for an unsigned-offset access.
     void EmitMemAccess(bool is_load, bool is_64bit, u8 rn, u64 offset, u8 rt);
+    /// Emit a uniform 6-argument call to the JitSlowOp dispatcher thunk,
+    /// following the correct ABI stack/shadow/alignment rules for the target.
+    void EmitSlowCall(u64 op, u64 rd, u64 rn, u64 rm, u64 rs, u64 rt2,
+                      u64 vec_size, u64 vec_index, u64 is64, u64 is_dbl,
+                      u64 cond, u64 is_load, u64 imm, u64 fp_imm_bits);
 
     /// Captured guest VirtualMemory address, patched into generated code at
     /// block compile time. The block cache is only valid while the same

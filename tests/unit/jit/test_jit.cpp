@@ -74,9 +74,19 @@ void AssertCpuStatesMatch(const cpu::CpuState& interp, const cpu::CpuState& jit,
     NEMU_TEST_ASSERT(interp.sp == jit.sp, "SP mismatch between Interpreter and JIT");
 }
 
-// Full differential including the NZCV condition flags.
+// Full differential including vector registers and the NZCV condition flags.
 void AssertCpuStatesMatchFull(const cpu::CpuState& interp, const cpu::CpuState& jit, const char* test_name) {
     AssertCpuStatesMatch(interp, jit, test_name);
+    for (u32 i = 0; i < 32; ++i) {
+        if (interp.v[i].low != jit.v[i].low || interp.v[i].high != jit.v[i].high) {
+            std::cerr << "[" << test_name << "] Vector register mismatch at V" << i
+                      << ": Interp low=0x" << std::hex << interp.v[i].low << " high=0x" << interp.v[i].high
+                      << ", JIT low=0x" << jit.v[i].low << " high=0x" << jit.v[i].high << std::dec << std::endl;
+            std::exit(1);
+        }
+    }
+    NEMU_TEST_ASSERT(interp.exclusive_active == jit.exclusive_active, std::string(test_name) + ": exclusive_active mismatch");
+    NEMU_TEST_ASSERT(interp.exclusive_addr == jit.exclusive_addr, std::string(test_name) + ": exclusive_addr mismatch");
     const char* t = test_name;
     NEMU_TEST_ASSERT(interp.pstate.n == jit.pstate.n, std::string(t) + ": N flag mismatch");
     NEMU_TEST_ASSERT(interp.pstate.z == jit.pstate.z, std::string(t) + ": Z flag mismatch");
@@ -484,6 +494,113 @@ int main() {
             base += 0x20;
         }
         (void)HALT;
+    }
+
+    // -----------------------------------------------------------------------
+    // Differential Test 10: Scalar FP Arithmetic & Conversions
+    // -----------------------------------------------------------------------
+    {
+        const vaddr_t entry = CODE_BASE + 0x6000;
+        const vaddr_t halt  = CODE_BASE + 0x6100;
+        const u32 code[] = {
+            0x1E212802, // 1. FADD S2, S0, S1
+            0x1E203843, // 2. FSUB S3, S2, S0
+            0x1E200844, // 3. FMUL S4, S2, S0
+            0x1E221885, // 4. FDIV S5, S4, S2
+            0x1E20C066, // 5. FABS S6, S3
+            0x1E214067, // 6. FNEG S7, S3
+            0x1E21C048, // 7. FSQRT S8, S2
+            0x1E212000, // 8. FCMP S0, S1
+            0x1E22000A, // 9. SCVTF S10, W0
+            0x1E380141, // 10. FCVTZS W1, S10
+            RetXn(30)
+        };
+        memory.WriteBlock(entry, code, sizeof(code));
+
+        cpu::CpuState s_interp;
+        s_interp.Reset();
+        s_interp.pc = entry;
+        s_interp.SetX(30, halt);
+        s_interp.SetX(0, 42);
+        s_interp.SetSingle(0, 1.5f);
+        s_interp.SetSingle(1, 2.5f);
+
+        cpu::CpuState s_jit = s_interp;
+
+        cpu::Interpreter interp(s_interp, memory);
+        RunInterpTo(interp, s_interp, halt, "Differential Test 10 (FP Scalar)");
+        RunJitTo(jit, s_jit, memory, halt, "Differential Test 10 (FP Scalar)");
+
+        AssertCpuStatesMatchFull(s_interp, s_jit, "Differential Test 10 (FP Scalar)");
+        std::cout << "  - Differential Test 10 (FP Scalar Arithmetic & Conversions): PASSED" << std::endl;
+    }
+
+    // -----------------------------------------------------------------------
+    // Differential Test 11: FP Load / Store
+    // -----------------------------------------------------------------------
+    {
+        const vaddr_t entry = CODE_BASE + 0x7000;
+        const vaddr_t halt  = CODE_BASE + 0x7100;
+        const u32 code[] = {
+            0xBD0013E0, // STR S0, [SP, #16]
+            0xBD4013E1, // LDR S1, [SP, #16]
+            RetXn(30)
+        };
+        memory.WriteBlock(entry, code, sizeof(code));
+
+        cpu::CpuState s_interp;
+        s_interp.Reset();
+        s_interp.pc = entry;
+        s_interp.sp = CODE_BASE + 0x8000;
+        s_interp.SetX(30, halt);
+        s_interp.SetSingle(0, 123.456f);
+
+        cpu::CpuState s_jit = s_interp;
+
+        cpu::Interpreter interp(s_interp, memory);
+        RunInterpTo(interp, s_interp, halt, "Differential Test 11 (FP Load/Store)");
+        RunJitTo(jit, s_jit, memory, halt, "Differential Test 11 (FP Load/Store)");
+
+        AssertCpuStatesMatchFull(s_interp, s_jit, "Differential Test 11 (FP Load/Store)");
+        std::cout << "  - Differential Test 11 (FP Load/Store): PASSED" << std::endl;
+    }
+
+    // -----------------------------------------------------------------------
+    // Differential Test 12: Exclusive Monitor & Atomics
+    // -----------------------------------------------------------------------
+    {
+        const vaddr_t entry = CODE_BASE + 0x9000;
+        const vaddr_t halt  = CODE_BASE + 0x9100;
+        auto seed = [&] {
+            memory.Write64(CODE_BASE + 0x9800, 0x1000);
+        };
+
+        const u32 code[] = {
+            0xC85F7C01, // 1. LDXR X1, [X0]
+            0xC8027C03, // 2. STXR W2, X3, [X0]
+            0xD5033F5F, // 3. CLREX
+            0xC8047C03, // 4. STXR W4, X3, [X0]
+            RetXn(30)
+        };
+        memory.WriteBlock(entry, code, sizeof(code));
+
+        cpu::CpuState s_interp;
+        s_interp.Reset();
+        s_interp.pc = entry;
+        s_interp.SetX(30, halt);
+        s_interp.SetX(0, CODE_BASE + 0x9800);
+        s_interp.SetX(3, 0x9999);
+
+        seed();
+        cpu::CpuState s_jit = s_interp;
+
+        cpu::Interpreter interp(s_interp, memory);
+        RunInterpTo(interp, s_interp, halt, "Differential Test 12 (Atomics)");
+        seed();
+        RunJitTo(jit, s_jit, memory, halt, "Differential Test 12 (Atomics)");
+
+        AssertCpuStatesMatchFull(s_interp, s_jit, "Differential Test 12 (Atomics)");
+        std::cout << "  - Differential Test 12 (Exclusive Monitor & Atomics): PASSED" << std::endl;
     }
 
     const auto stats = jit.GetStats();

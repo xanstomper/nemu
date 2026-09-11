@@ -209,6 +209,211 @@ void TestLoadStore() {
     std::cout << "  PASSED.\n";
 }
 
+void TestFpScalarArithmetic() {
+    std::cout << "[TEST] Running TestFpScalarArithmetic...\n";
+    memory::VirtualMemory mem;
+    NEMU_TEST_ASSERT(mem.Map(0x6000, 0x1000, memory::MemoryPermission::All));
+
+    // Test program:
+    // 1. FADD S2, S0, S1   (0x1E212802): S2 = 1.5 + 2.5 = 4.0
+    // 2. FSUB S3, S2, S0   (0x1E203843): S3 = 4.0 - 1.5 = 2.5
+    // 3. FMUL S4, S2, S0   (0x1E200844): S4 = 4.0 * 1.5 = 6.0
+    // 4. FDIV S5, S4, S2   (0x1E221885): S5 = 6.0 / 4.0 = 1.5
+    // 5. FABS S6, S3       (0x1E20C066): S6 = |2.5| = 2.5
+    // 6. FNEG S7, S3       (0x1E214067): S7 = -2.5
+    // 7. FSQRT S8, S2      (0x1E21C048): S8 = sqrt(4.0) = 2.0
+    // 8. FCMP S0, S1       (0x1E212000): 1.5 vs 2.5 -> C=0, Z=0, N=1
+    // 9. SCVTF S10, W0     (0x1E22000A): W0 (42) -> S10 (42.0f)
+    // 10. FCVTZS W1, S10   (0x1E380141): S10 (42.0f) -> W1 (42)
+    const u32 code[] = {
+        0x1E212802,
+        0x1E203843,
+        0x1E200844,
+        0x1E221885,
+        0x1E20C066,
+        0x1E214067,
+        0x1E21C048,
+        0x1E212000,
+        0x1E22000A,
+        0x1E380141
+    };
+    NEMU_TEST_ASSERT(mem.WriteBlock(0x6000, code, sizeof(code)));
+
+    cpu::CpuState state;
+    state.Reset();
+    state.pc = 0x6000;
+    state.SetSingle(0, 1.5f);
+    state.SetSingle(1, 2.5f);
+    state.SetX(0, 42);
+
+    cpu::Interpreter interp(state, mem);
+
+    // 1. FADD
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetSingle(2) == 4.0f);
+
+    // 2. FSUB
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetSingle(3) == 2.5f);
+
+    // 3. FMUL
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetSingle(4) == 6.0f);
+
+    // 4. FDIV
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetSingle(5) == 1.5f);
+
+    // 5. FABS
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetSingle(6) == 2.5f);
+
+    // 6. FNEG
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetSingle(7) == -2.5f);
+
+    // 7. FSQRT
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetSingle(8) == 2.0f);
+
+    // 8. FCMP
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.pstate.n == true); // 1.5 < 2.5
+    NEMU_TEST_ASSERT(state.pstate.z == false);
+
+    // 9. SCVTF
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetSingle(10) == 42.0f);
+
+    // 10. FCVTZS
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetX(1) == 42);
+
+    std::cout << "  PASSED.\n";
+}
+
+void TestFpLoadStore() {
+    std::cout << "[TEST] Running TestFpLoadStore...\n";
+    memory::VirtualMemory mem;
+    NEMU_TEST_ASSERT(mem.Map(0x7000, 0x2000, memory::MemoryPermission::All));
+
+    // 1. STR S0, [SP, #16]    (0xBD0013E0)
+    // 2. LDR S1, [SP, #16]    (0xBD4013E1)
+    const u32 code[] = {
+        0xBD0013E0,
+        0xBD4013E1
+    };
+    NEMU_TEST_ASSERT(mem.WriteBlock(0x7000, code, sizeof(code)));
+
+    cpu::CpuState state;
+    state.Reset();
+    state.pc = 0x7000;
+    state.sp = 0x8000;
+    state.SetSingle(0, 123.456f);
+
+    cpu::Interpreter interp(state, mem);
+
+    // 1. STR S0, [SP, #16]
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(mem.Read32(0x8010) == *reinterpret_cast<const u32*>(&state.v[0]));
+
+    // 2. LDR S1, [SP, #16]
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetSingle(1) == 123.456f);
+
+    std::cout << "  PASSED.\n";
+}
+
+void TestNeonVectorOps() {
+    std::cout << "[TEST] Running TestNeonVectorOps...\n";
+    memory::VirtualMemory mem;
+    NEMU_TEST_ASSERT(mem.Map(0x9000, 0x1000, memory::MemoryPermission::All));
+
+    // 1. ADD_vec V2.4S, V0.4S, V1.4S (0x4EA18002)
+    // 2. SUB_vec V3.4S, V2.4S, V0.4S (0x6EA08443) -> u=1, opcode=0b10000, Rn=2, Rm=0, Rd=3
+    const u32 code[] = {
+        0x4EA18002,
+        0x6EA08443
+    };
+    NEMU_TEST_ASSERT(mem.WriteBlock(0x9000, code, sizeof(code)));
+
+    cpu::CpuState state;
+    state.Reset();
+    state.pc = 0x9000;
+    for (u32 i = 0; i < 4; ++i) {
+        state.SetVectorLane32(0, i, (i + 1) * 10);
+        state.SetVectorLane32(1, i, 5);
+    }
+
+    cpu::Interpreter interp(state, mem);
+
+    // 1. ADD_vec: [10, 20, 30, 40] + [5, 5, 5, 5] = [15, 25, 35, 45]
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    for (u32 i = 0; i < 4; ++i) {
+        NEMU_TEST_ASSERT(state.GetVectorLane32(2, i) == ((i + 1) * 10 + 5));
+    }
+
+    // 2. SUB_vec: [15, 25, 35, 45] - [10, 20, 30, 40] = [5, 5, 5, 5]
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    for (u32 i = 0; i < 4; ++i) {
+        NEMU_TEST_ASSERT(state.GetVectorLane32(3, i) == 5);
+    }
+
+    std::cout << "  PASSED.\n";
+}
+
+void TestAtomics() {
+    std::cout << "[TEST] Running TestAtomics...\n";
+    memory::VirtualMemory mem;
+    NEMU_TEST_ASSERT(mem.Map(0xA000, 0x2000, memory::MemoryPermission::All));
+
+    // Initial memory setup: at 0xA800 put value 0x1000
+    mem.Write64(0xA800, 0x1000);
+
+    // 1. LDXR X1, [X0]         (0xC85F7C01): Load exclusive from [X0] into X1
+    // 2. STXR W2, X3, [X0]     (0xC8027C03): Store exclusive X3 into [X0], status in W2 (0=ok)
+    // 3. CLREX                 (0xD5033F5F): Clear exclusive monitor
+    // 4. STXR W4, X3, [X0]     (0xC8047C03): Store exclusive should FAIL (status=1) because monitor cleared
+    const u32 code[] = {
+        0xC85F7C01,
+        0xC8027C03,
+        0xD5033F5F,
+        0xC8047C03
+    };
+    NEMU_TEST_ASSERT(mem.WriteBlock(0xA000, code, sizeof(code)));
+
+    cpu::CpuState state;
+    state.Reset();
+    state.pc = 0xA000;
+    state.SetX(0, 0xA800);
+    state.SetX(3, 0x9999);
+
+    cpu::Interpreter interp(state, mem);
+
+    // 1. LDXR X1, [X0]
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetX(1) == 0x1000);
+    NEMU_TEST_ASSERT(state.exclusive_active == true);
+    NEMU_TEST_ASSERT(state.exclusive_addr == 0xA800);
+
+    // 2. STXR W2, X3, [X0] (should succeed)
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetX(2) == 0); // status 0 = success
+    NEMU_TEST_ASSERT(mem.Read64(0xA800) == 0x9999);
+    NEMU_TEST_ASSERT(state.exclusive_active == false);
+
+    // 3. CLREX
+    state.exclusive_active = true;
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.exclusive_active == false);
+
+    // 4. STXR W4, X3, [X0] (monitor not active -> must fail with status 1)
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetX(4) == 1); // status 1 = failed
+
+    std::cout << "  PASSED.\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "    NEMU CPU INSTRUCTION UNIT TESTS     \n";
@@ -219,6 +424,10 @@ int main() {
     TestMovesAndLogic();
     TestBranchAndLink();
     TestLoadStore();
+    TestFpScalarArithmetic();
+    TestFpLoadStore();
+    TestNeonVectorOps();
+    TestAtomics();
 
     std::cout << "ALL CPU UNIT TESTS PASSED SUCCESSFULLY!\n";
     return 0;
