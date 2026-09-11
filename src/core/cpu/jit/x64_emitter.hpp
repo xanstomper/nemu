@@ -46,6 +46,25 @@ enum class Cc : u8 {
     G  = 0xF  // Greater
 };
 
+enum class XmmReg : u8 {
+    XMM0 = 0,
+    XMM1 = 1,
+    XMM2 = 2,
+    XMM3 = 3,
+    XMM4 = 4,
+    XMM5 = 5,
+    XMM6 = 6,
+    XMM7 = 7,
+    XMM8 = 8,
+    XMM9 = 9,
+    XMM10 = 10,
+    XMM11 = 11,
+    XMM12 = 12,
+    XMM13 = 13,
+    XMM14 = 14,
+    XMM15 = 15
+};
+
 class X64Emitter {
 public:
     X64Emitter() = default;
@@ -117,6 +136,49 @@ public:
 
     /// cmp dst, imm8 -- sets ZF = (dst == imm), CF based on the arithmetic.
     void CmpR64Imm(X64Reg dst, s8 imm);
+
+    // SSE / Vector / Floating-point operations
+    void MovssXmmMem(XmmReg dst, X64Reg base, s32 disp);
+    void MovssMemXmm(X64Reg base, s32 disp, XmmReg src);
+    void MovsdXmmMem(XmmReg dst, X64Reg base, s32 disp);
+    void MovsdMemXmm(X64Reg base, s32 disp, XmmReg src);
+    void MovdqaXmmMem(XmmReg dst, X64Reg base, s32 disp);
+    void MovdqaMemXmm(X64Reg base, s32 disp, XmmReg src);
+
+    void Addss(XmmReg dst, XmmReg src);
+    void Subss(XmmReg dst, XmmReg src);
+    void Mulss(XmmReg dst, XmmReg src);
+    void Divss(XmmReg dst, XmmReg src);
+    void Sqrtss(XmmReg dst, XmmReg src);
+
+    void Addsd(XmmReg dst, XmmReg src);
+    void Subsd(XmmReg dst, XmmReg src);
+    void Mulsd(XmmReg dst, XmmReg src);
+    void Divsd(XmmReg dst, XmmReg src);
+    void Sqrtsd(XmmReg dst, XmmReg src);
+
+    void Ucomiss(XmmReg a, XmmReg b);
+    void Ucomisd(XmmReg a, XmmReg b);
+    void Xorps(XmmReg dst, XmmReg src);
+    void Xorpd(XmmReg dst, XmmReg src);
+
+    void Addps(XmmReg dst, XmmReg src);
+    void Subps(XmmReg dst, XmmReg src);
+    void Mulps(XmmReg dst, XmmReg src);
+    void Andps(XmmReg dst, XmmReg src);
+    void Orps(XmmReg dst, XmmReg src);
+
+    void Cvtsi2ss(XmmReg dst, X64Reg src, bool is_64bit);
+    void Cvtsi2sd(XmmReg dst, X64Reg src, bool is_64bit);
+    void Cvttss2si(X64Reg dst, XmmReg src, bool is_64bit);
+    void Cvttsd2si(X64Reg dst, XmmReg src, bool is_64bit);
+    void Cvtss2sd(XmmReg dst, XmmReg src);
+    void Cvtsd2ss(XmmReg dst, XmmReg src);
+
+    // Atomic instructions
+    void LockXaddMemR64(X64Reg base, s32 disp, X64Reg src, bool is_64bit);
+    void LockCmpxchgMemR64(X64Reg base, s32 disp, X64Reg src, bool is_64bit);
+    void XchgMemR64(X64Reg base, s32 disp, X64Reg src, bool is_64bit);
 
 private:
     void EmitRex(bool w, bool r, bool x, bool b);

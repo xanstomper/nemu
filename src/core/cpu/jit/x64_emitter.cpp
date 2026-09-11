@@ -335,4 +335,276 @@ void X64Emitter::CmpR64Imm(X64Reg dst, s8 imm) {
     EmitByte(static_cast<u8>(imm));
 }
 
+void X64Emitter::MovssXmmMem(XmmReg dst, X64Reg base, s32 disp) {
+    const u8 d = static_cast<u8>(dst);
+    const u8 b = static_cast<u8>(base);
+    EmitByte(0xF3);
+    EmitRex(false, d >= 8, false, b >= 8);
+    EmitByte(0x0F);
+    EmitByte(0x10);
+    EmitModRM(2, d, b);
+    if ((b & 7) == 4) EmitSIB(0, 4, 4);
+    Emit32(static_cast<u32>(disp));
+}
+
+void X64Emitter::MovssMemXmm(X64Reg base, s32 disp, XmmReg src) {
+    const u8 b = static_cast<u8>(base);
+    const u8 s = static_cast<u8>(src);
+    EmitByte(0xF3);
+    EmitRex(false, s >= 8, false, b >= 8);
+    EmitByte(0x0F);
+    EmitByte(0x11);
+    EmitModRM(2, s, b);
+    if ((b & 7) == 4) EmitSIB(0, 4, 4);
+    Emit32(static_cast<u32>(disp));
+}
+
+void X64Emitter::MovsdXmmMem(XmmReg dst, X64Reg base, s32 disp) {
+    const u8 d = static_cast<u8>(dst);
+    const u8 b = static_cast<u8>(base);
+    EmitByte(0xF2);
+    EmitRex(false, d >= 8, false, b >= 8);
+    EmitByte(0x0F);
+    EmitByte(0x10);
+    EmitModRM(2, d, b);
+    if ((b & 7) == 4) EmitSIB(0, 4, 4);
+    Emit32(static_cast<u32>(disp));
+}
+
+void X64Emitter::MovsdMemXmm(X64Reg base, s32 disp, XmmReg src) {
+    const u8 b = static_cast<u8>(base);
+    const u8 s = static_cast<u8>(src);
+    EmitByte(0xF2);
+    EmitRex(false, s >= 8, false, b >= 8);
+    EmitByte(0x0F);
+    EmitByte(0x11);
+    EmitModRM(2, s, b);
+    if ((b & 7) == 4) EmitSIB(0, 4, 4);
+    Emit32(static_cast<u32>(disp));
+}
+
+void X64Emitter::MovdqaXmmMem(XmmReg dst, X64Reg base, s32 disp) {
+    const u8 d = static_cast<u8>(dst);
+    const u8 b = static_cast<u8>(base);
+    EmitByte(0x66);
+    EmitRex(false, d >= 8, false, b >= 8);
+    EmitByte(0x0F);
+    EmitByte(0x6F);
+    EmitModRM(2, d, b);
+    if ((b & 7) == 4) EmitSIB(0, 4, 4);
+    Emit32(static_cast<u32>(disp));
+}
+
+void X64Emitter::MovdqaMemXmm(X64Reg base, s32 disp, XmmReg src) {
+    const u8 b = static_cast<u8>(base);
+    const u8 s = static_cast<u8>(src);
+    EmitByte(0x66);
+    EmitRex(false, s >= 8, false, b >= 8);
+    EmitByte(0x0F);
+    EmitByte(0x7F);
+    EmitModRM(2, s, b);
+    if ((b & 7) == 4) EmitSIB(0, 4, 4);
+    Emit32(static_cast<u32>(disp));
+}
+
+void X64Emitter::Addss(XmmReg dst, XmmReg src) {
+    EmitByte(0xF3);
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x58);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Subss(XmmReg dst, XmmReg src) {
+    EmitByte(0xF3);
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x5C);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Mulss(XmmReg dst, XmmReg src) {
+    EmitByte(0xF3);
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x59);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Divss(XmmReg dst, XmmReg src) {
+    EmitByte(0xF3);
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x5E);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Sqrtss(XmmReg dst, XmmReg src) {
+    EmitByte(0xF3);
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x51);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Addsd(XmmReg dst, XmmReg src) {
+    EmitByte(0xF2);
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x58);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Subsd(XmmReg dst, XmmReg src) {
+    EmitByte(0xF2);
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x5C);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Mulsd(XmmReg dst, XmmReg src) {
+    EmitByte(0xF2);
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x59);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Divsd(XmmReg dst, XmmReg src) {
+    EmitByte(0xF2);
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x5E);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Sqrtsd(XmmReg dst, XmmReg src) {
+    EmitByte(0xF2);
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x51);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Ucomiss(XmmReg a, XmmReg b) {
+    EmitRex(false, static_cast<u8>(a) >= 8, false, static_cast<u8>(b) >= 8);
+    EmitByte(0x0F); EmitByte(0x2E);
+    EmitModRM(3, static_cast<u8>(a), static_cast<u8>(b));
+}
+
+void X64Emitter::Ucomisd(XmmReg a, XmmReg b) {
+    EmitByte(0x66);
+    EmitRex(false, static_cast<u8>(a) >= 8, false, static_cast<u8>(b) >= 8);
+    EmitByte(0x0F); EmitByte(0x2E);
+    EmitModRM(3, static_cast<u8>(a), static_cast<u8>(b));
+}
+
+void X64Emitter::Xorps(XmmReg dst, XmmReg src) {
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x57);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Xorpd(XmmReg dst, XmmReg src) {
+    EmitByte(0x66);
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x57);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Addps(XmmReg dst, XmmReg src) {
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x58);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Subps(XmmReg dst, XmmReg src) {
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x5C);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Mulps(XmmReg dst, XmmReg src) {
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x59);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Andps(XmmReg dst, XmmReg src) {
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x54);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Orps(XmmReg dst, XmmReg src) {
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x56);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Cvtsi2ss(XmmReg dst, X64Reg src, bool is_64bit) {
+    EmitByte(0xF3);
+    EmitRex(is_64bit, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x2A);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Cvtsi2sd(XmmReg dst, X64Reg src, bool is_64bit) {
+    EmitByte(0xF2);
+    EmitRex(is_64bit, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x2A);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Cvttss2si(X64Reg dst, XmmReg src, bool is_64bit) {
+    EmitByte(0xF3);
+    EmitRex(is_64bit, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x2C);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Cvttsd2si(X64Reg dst, XmmReg src, bool is_64bit) {
+    EmitByte(0xF2);
+    EmitRex(is_64bit, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x2C);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Cvtss2sd(XmmReg dst, XmmReg src) {
+    EmitByte(0xF3);
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x5A);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::Cvtsd2ss(XmmReg dst, XmmReg src) {
+    EmitByte(0xF2);
+    EmitRex(false, static_cast<u8>(dst) >= 8, false, static_cast<u8>(src) >= 8);
+    EmitByte(0x0F); EmitByte(0x5A);
+    EmitModRM(3, static_cast<u8>(dst), static_cast<u8>(src));
+}
+
+void X64Emitter::LockXaddMemR64(X64Reg base, s32 disp, X64Reg src, bool is_64bit) {
+    const u8 b = static_cast<u8>(base);
+    const u8 s = static_cast<u8>(src);
+    EmitByte(0xF0); // LOCK
+    EmitRex(is_64bit, s >= 8, false, b >= 8);
+    EmitByte(0x0F); EmitByte(0xC1);
+    EmitModRM(2, s, b);
+    if ((b & 7) == 4) EmitSIB(0, 4, 4);
+    Emit32(static_cast<u32>(disp));
+}
+
+void X64Emitter::LockCmpxchgMemR64(X64Reg base, s32 disp, X64Reg src, bool is_64bit) {
+    const u8 b = static_cast<u8>(base);
+    const u8 s = static_cast<u8>(src);
+    EmitByte(0xF0); // LOCK
+    EmitRex(is_64bit, s >= 8, false, b >= 8);
+    EmitByte(0x0F); EmitByte(0xB1);
+    EmitModRM(2, s, b);
+    if ((b & 7) == 4) EmitSIB(0, 4, 4);
+    Emit32(static_cast<u32>(disp));
+}
+
+void X64Emitter::XchgMemR64(X64Reg base, s32 disp, X64Reg src, bool is_64bit) {
+    const u8 b = static_cast<u8>(base);
+    const u8 s = static_cast<u8>(src);
+    EmitRex(is_64bit, s >= 8, false, b >= 8);
+    EmitByte(0x87);
+    EmitModRM(2, s, b);
+    if ((b & 7) == 4) EmitSIB(0, 4, 4);
+    Emit32(static_cast<u32>(disp));
+}
+
 } // namespace nemu::core::cpu::jit

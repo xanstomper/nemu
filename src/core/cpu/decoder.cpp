@@ -1,4 +1,5 @@
 #include "decoder.hpp"
+#include <cmath>
 
 namespace nemu::core::cpu {
 
@@ -61,6 +62,57 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::MRS: return "MRS";
         case Opcode::MSR: return "MSR";
         case Opcode::CSEL: return "CSEL";
+
+        // Scalar Floating-Point
+        case Opcode::FADD_scalar: return "FADD (scalar)";
+        case Opcode::FSUB_scalar: return "FSUB (scalar)";
+        case Opcode::FMUL_scalar: return "FMUL (scalar)";
+        case Opcode::FDIV_scalar: return "FDIV (scalar)";
+        case Opcode::FMAX_scalar: return "FMAX (scalar)";
+        case Opcode::FMIN_scalar: return "FMIN (scalar)";
+        case Opcode::FNEG_scalar: return "FNEG (scalar)";
+        case Opcode::FABS_scalar: return "FABS (scalar)";
+        case Opcode::FSQRT_scalar: return "FSQRT (scalar)";
+        case Opcode::FCMP_scalar: return "FCMP (scalar)";
+        case Opcode::FCSEL_scalar: return "FCSEL (scalar)";
+        case Opcode::FMOV_reg: return "FMOV (reg)";
+        case Opcode::FMOV_imm: return "FMOV (imm)";
+        case Opcode::FMOV_to_gp: return "FMOV (FP->GP)";
+        case Opcode::FMOV_from_gp: return "FMOV (GP->FP)";
+        case Opcode::SCVTF: return "SCVTF";
+        case Opcode::UCVTF: return "UCVTF";
+        case Opcode::FCVTZS: return "FCVTZS";
+        case Opcode::FCVTZU: return "FCVTZU";
+        case Opcode::FCVT: return "FCVT";
+        case Opcode::LDR_fp_imm: return "LDR (FP imm)";
+        case Opcode::STR_fp_imm: return "STR (FP imm)";
+        case Opcode::LDP_fp: return "LDP (FP)";
+        case Opcode::STP_fp: return "STP (FP)";
+
+        // Vector / NEON SIMD
+        case Opcode::ADD_vec: return "ADD (vector)";
+        case Opcode::SUB_vec: return "SUB (vector)";
+        case Opcode::FADD_vec: return "FADD (vector)";
+        case Opcode::FSUB_vec: return "FSUB (vector)";
+        case Opcode::FMUL_vec: return "FMUL (vector)";
+        case Opcode::DUP_gen: return "DUP (gen)";
+        case Opcode::DUP_elem: return "DUP (elem)";
+        case Opcode::INS_gen: return "INS (gen)";
+        case Opcode::INS_elem: return "INS (elem)";
+        case Opcode::UMOV: return "UMOV";
+        case Opcode::SMOV: return "SMOV";
+        case Opcode::AND_vec: return "AND (vector)";
+        case Opcode::ORR_vec: return "ORR (vector)";
+        case Opcode::EOR_vec: return "EOR (vector)";
+        case Opcode::NOT_vec: return "NOT (vector)";
+
+        // Atomics
+        case Opcode::LDXR: return "LDXR";
+        case Opcode::STXR: return "STXR";
+        case Opcode::LDADD: return "LDADD";
+        case Opcode::CAS: return "CAS";
+        case Opcode::SWP: return "SWP";
+        case Opcode::CLREX: return "CLREX";
         default: return "UNDEFINED";
     }
 }
@@ -70,6 +122,14 @@ DecodedInstruction Decoder::Decode(u32 raw) noexcept {
     if (raw == 0xD503201F) {
         DecodedInstruction inst{};
         inst.opcode = Opcode::NOP;
+        inst.raw = raw;
+        return inst;
+    }
+
+    // Check CLREX explicitly (0xD5033F5F)
+    if (raw == 0xD5033F5F) {
+        DecodedInstruction inst{};
+        inst.opcode = Opcode::CLREX;
         inst.raw = raw;
         return inst;
     }
@@ -91,6 +151,9 @@ DecodedInstruction Decoder::Decode(u32 raw) noexcept {
         case 0b0101:
         case 0b1101:
             return DecodeDataProcReg(raw);
+        case 0b0111:
+        case 0b1111:
+            return DecodeDataProcSimdFp(raw);
         default:
             break;
     }
@@ -318,6 +381,54 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
 
     const u32 size = ExtractBits(raw, 30, 2);
 
+    // Load / Store Exclusive
+    // [size:2] 001000 [o2:1] [L:1] [o1:1] [Rs:5] [o0:1] [Rt2:5] [Rn:5] [Rt:5]
+    if ((raw & 0x3F000000) == 0x08000000) {
+        const bool is_load = ExtractBit(raw, 22);
+        inst.is_64bit = (size == 0b11);
+        inst.rs = static_cast<u8>(ExtractBits(raw, 16, 5));
+        inst.opcode = is_load ? Opcode::LDXR : Opcode::STXR;
+        return inst;
+    }
+
+    // Atomic memory operations (ARMv8.1-A LSE)
+    // LDADD: [size:2] 111 0 00 [A:1] [R:1] 1 [Rs:5] 000 [opc:3] [Rn:5] [Rt:5]
+    if ((raw & 0x3B200C00) == 0x38200000) {
+        const u32 opc = ExtractBits(raw, 12, 3);
+        inst.is_64bit = (size == 0b11);
+        inst.rs = static_cast<u8>(ExtractBits(raw, 16, 5));
+        if (opc == 0b000) {
+            inst.opcode = Opcode::LDADD;
+            return inst;
+        } else if (opc == 0b010) {
+            inst.opcode = Opcode::SWP;
+            return inst;
+        }
+    }
+
+    // CAS: [size:2] 001010 [A:1] [R:1] 1 [Rs:5] 1 [o0:4] [Rn:5] [Rt:5]
+    if ((raw & 0x3FA00000) == 0x08A00000) {
+        inst.is_64bit = (size == 0b11);
+        inst.rs = static_cast<u8>(ExtractBits(raw, 16, 5));
+        inst.opcode = Opcode::CAS;
+        return inst;
+    }
+
+    // Load / Store Pair SIMD & FP
+    // [opc:2] 101 1 [type:3] [L:1] [imm7] [Rn:5] [Rt:5] [Rt2:5]
+    if ((raw & 0x3E400000) == 0x2C000000) {
+        const bool is_load = ExtractBit(raw, 22);
+        const u32 opc = ExtractBits(raw, 30, 2);
+        inst.is_fp_double = (opc == 0b01);
+        inst.is_64bit = inst.is_fp_double;
+        inst.rt2 = static_cast<u8>(ExtractBits(raw, 10, 5));
+        const u32 imm7 = ExtractBits(raw, 15, 7);
+        const s64 scale = inst.is_fp_double ? 8 : 4;
+        inst.imm = static_cast<u64>(SignExtend(static_cast<s64>(imm7), 7) * scale);
+        inst.opcode = is_load ? Opcode::LDP_fp : Opcode::STP_fp;
+        return inst;
+    }
+
     // Load / Store Pair (LDP / STP)
     // [opc:2] 101 0 [type:3] [L:1] [imm7] [Rn:5] [Rt:5] [Rt2:5]
     if ((raw & 0x3E400000) == 0x28000000) {
@@ -328,6 +439,25 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
         const s64 scale = inst.is_64bit ? 8 : 4;
         inst.imm = static_cast<u64>(SignExtend(static_cast<s64>(imm7), 7) * scale);
         inst.opcode = is_load ? Opcode::LDP : Opcode::STP;
+        return inst;
+    }
+
+    // Load / Store Single SIMD & FP (unsigned immediate)
+    // [size:2] 111 1 01 [opc:2] [imm12] [Rn:5] [Rt:5]
+    if ((raw & 0x3F000000) == 0x3D000000) {
+        const bool is_load = ExtractBit(raw, 22);
+        const u32 imm12 = ExtractBits(raw, 10, 12);
+        if (size == 0b11) { // Double
+            inst.is_fp_double = true;
+            inst.is_64bit = true;
+            inst.imm = static_cast<u64>(imm12) * 8;
+            inst.opcode = is_load ? Opcode::LDR_fp_imm : Opcode::STR_fp_imm;
+        } else if (size == 0b10) { // Single
+            inst.is_fp_double = false;
+            inst.is_64bit = false;
+            inst.imm = static_cast<u64>(imm12) * 4;
+            inst.opcode = is_load ? Opcode::LDR_fp_imm : Opcode::STR_fp_imm;
+        }
         return inst;
     }
 
@@ -353,6 +483,122 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
             inst.opcode = is_load ? Opcode::LDRB_imm : Opcode::STRB_imm;
         }
         return inst;
+    }
+
+    return inst;
+}
+
+DecodedInstruction Decoder::DecodeDataProcSimdFp(u32 raw) noexcept {
+    DecodedInstruction inst{};
+    inst.raw = raw;
+    inst.rd = static_cast<u8>(ExtractBits(raw, 0, 5));
+    inst.rn = static_cast<u8>(ExtractBits(raw, 5, 5));
+    inst.rm = static_cast<u8>(ExtractBits(raw, 16, 5));
+
+    const u32 b28_24 = ExtractBits(raw, 24, 5);
+    const bool is_vector = (ExtractBit(raw, 28) == 0);
+
+    if (!is_vector && b28_24 == 0b11110) {
+        // Scalar Floating-Point
+        const u32 ftype = ExtractBits(raw, 22, 2);
+        inst.is_fp_double = (ftype == 1);
+
+        // Check 2-source scalar arithmetic: bit 21=1, bits 11..10 = 0b10
+        if (ExtractBit(raw, 21) == 1 && ExtractBits(raw, 10, 2) == 0b10) {
+            const u32 op = ExtractBits(raw, 12, 4);
+            switch (op) {
+                case 0b0000: inst.opcode = Opcode::FMUL_scalar; return inst;
+                case 0b0001: inst.opcode = Opcode::FDIV_scalar; return inst;
+                case 0b0010: inst.opcode = Opcode::FADD_scalar; return inst;
+                case 0b0011: inst.opcode = Opcode::FSUB_scalar; return inst;
+                case 0b0100: inst.opcode = Opcode::FMAX_scalar; return inst;
+                case 0b0101: inst.opcode = Opcode::FMIN_scalar; return inst;
+                default: break;
+            }
+        }
+
+        // Check FCSEL: bit 21=1, bits 11..10 = 0b11
+        if (ExtractBit(raw, 21) == 1 && ExtractBits(raw, 10, 2) == 0b11) {
+            inst.opcode = Opcode::FCSEL_scalar;
+            inst.condition = static_cast<Condition>(ExtractBits(raw, 12, 4));
+            return inst;
+        }
+
+        // Check FCMP: bit 21=1, bits 15..10 = 0b001000
+        if (ExtractBit(raw, 21) == 1 && ExtractBits(raw, 10, 6) == 0b001000) {
+            inst.opcode = Opcode::FCMP_scalar;
+            if (ExtractBit(raw, 3)) inst.rm = 31;
+            return inst;
+        }
+
+        // Check 1-source scalar FP: bit 21=1, bits 20..16 == 0
+        if (ExtractBit(raw, 21) == 1 && ExtractBits(raw, 16, 5) == 0) {
+            const u32 op = ExtractBits(raw, 10, 6);
+            switch (op) {
+                case 0b000000: inst.opcode = Opcode::FMOV_reg; return inst;
+                case 0b000001: inst.opcode = Opcode::FABS_scalar; return inst;
+                case 0b000010: inst.opcode = Opcode::FNEG_scalar; return inst;
+                case 0b000011: inst.opcode = Opcode::FSQRT_scalar; return inst;
+                case 0b000100: inst.opcode = Opcode::FCVT; inst.is_fp_double = !ExtractBit(raw, 22); return inst;
+                default: break;
+            }
+        }
+
+        // Check FMOV immediate
+        if (ExtractBits(raw, 29, 3) == 0b000 && ExtractBits(raw, 21, 2) == 0b01) {
+            inst.opcode = Opcode::FMOV_imm;
+            const u32 imm8 = ExtractBits(raw, 13, 8);
+            const bool sign = (imm8 >> 7) & 1;
+            const u32 exp = ((imm8 >> 4) & 7) ^ 4;
+            const u32 mant = imm8 & 0xF;
+            inst.fp_imm = (sign ? -1.0 : 1.0) * (1.0 + mant / 16.0) * std::pow(2.0, static_cast<int>(exp) - 3);
+            return inst;
+        }
+
+        // Check conversions & GP transfers: SCVTF, UCVTF, FCVTZS, FCVTZU, FMOV GP<->FP
+        const u32 sf = ExtractBit(raw, 31);
+        inst.is_64bit = (sf == 1);
+        const u32 rmode = ExtractBits(raw, 19, 2);
+        const u32 opcode = ExtractBits(raw, 16, 3);
+        if (ExtractBits(raw, 21, 3) == 0b100) {
+            if (opcode == 0b010) { inst.opcode = Opcode::SCVTF; return inst; }
+            if (opcode == 0b011) { inst.opcode = Opcode::UCVTF; return inst; }
+            if (opcode == 0b000 && rmode == 0b11) { inst.opcode = Opcode::FCVTZS; return inst; }
+            if (opcode == 0b001 && rmode == 0b11) { inst.opcode = Opcode::FCVTZU; return inst; }
+            if (opcode == 0b110) { inst.opcode = Opcode::FMOV_to_gp; return inst; }
+            if (opcode == 0b111) { inst.opcode = Opcode::FMOV_from_gp; return inst; }
+        }
+    } else {
+        // Vector / Advanced SIMD
+        const u32 u = ExtractBit(raw, 29);
+        const u32 size = ExtractBits(raw, 22, 2);
+        inst.vec_size = static_cast<u8>(size);
+        inst.is_fp_double = (size == 0b11);
+
+        // 3-same instructions (ADD, SUB, FADD, FSUB, FMUL, AND, ORR, EOR)
+        if (ExtractBit(raw, 21) == 1 && ExtractBits(raw, 24, 4) == 0b1110) {
+            const u32 opcode = ExtractBits(raw, 11, 5);
+            if (!u && opcode == 0b10000) { inst.opcode = Opcode::ADD_vec; return inst; }
+            if (u && opcode == 0b10000) { inst.opcode = Opcode::SUB_vec; return inst; }
+            if (!u && opcode == 0b11010) { inst.opcode = Opcode::FADD_vec; return inst; }
+            if (u && opcode == 0b11010) { inst.opcode = Opcode::FSUB_vec; return inst; }
+            if (!u && opcode == 0b11011) { inst.opcode = Opcode::FMUL_vec; return inst; }
+            if (!u && opcode == 0b00011) { inst.opcode = Opcode::AND_vec; return inst; }
+            if (!u && opcode == 0b01011) { inst.opcode = Opcode::ORR_vec; return inst; }
+            if (u && opcode == 0b00011) { inst.opcode = Opcode::EOR_vec; return inst; }
+        }
+
+        // DUP, INS, UMOV
+        const u32 op_ins = ExtractBits(raw, 10, 5);
+        const u32 imm5 = ExtractBits(raw, 16, 5);
+        if (imm5 & 1) { inst.vec_size = 0; inst.vec_index = static_cast<u8>(imm5 >> 1); }
+        else if (imm5 & 2) { inst.vec_size = 1; inst.vec_index = static_cast<u8>(imm5 >> 2); }
+        else if (imm5 & 4) { inst.vec_size = 2; inst.vec_index = static_cast<u8>(imm5 >> 3); }
+        else if (imm5 & 8) { inst.vec_size = 3; inst.vec_index = static_cast<u8>(imm5 >> 4); }
+
+        if (op_ins == 0b00001) { inst.opcode = Opcode::DUP_gen; return inst; }
+        if (op_ins == 0b00111) { inst.opcode = Opcode::INS_gen; return inst; }
+        if (op_ins == 0b01111) { inst.opcode = Opcode::UMOV; return inst; }
     }
 
     return inst;

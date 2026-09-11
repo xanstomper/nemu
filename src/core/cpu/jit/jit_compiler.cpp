@@ -18,6 +18,16 @@ namespace {
     constexpr s32 OFF_C  = 266;
     constexpr s32 OFF_V  = 267;
 
+    inline s32 VSlot(u32 reg) noexcept {
+        return static_cast<s32>(offsetof(CpuState, v)) + static_cast<s32>(reg * sizeof(u128));
+    }
+    inline s32 ExclAddrSlot() noexcept {
+        return static_cast<s32>(offsetof(CpuState, exclusive_addr));
+    }
+    inline s32 ExclActSlot() noexcept {
+        return static_cast<s32>(offsetof(CpuState, exclusive_active));
+    }
+
     // Calling-convention pointer registers for the SVC thunk. On System V,
     // CpuState* goes in RDI and svc_id in RSI; on Windows x64, RCX and RDX.
 #ifdef _WIN32
@@ -346,8 +356,292 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
                 emitter_.CallR64(REG_THUNK);
                 emitter_.AddR64Imm32(X64Reg::RSP, 8);
 #endif
-
                 block_ended = true;
+                break;
+            }
+
+            case Opcode::FADD_scalar: {
+                if (inst.is_fp_double) {
+                    emitter_.MovsdXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.MovsdXmmMem(XmmReg::XMM1, X64Reg::R15, VSlot(inst.rm));
+                    emitter_.Addsd(XmmReg::XMM0, XmmReg::XMM1);
+                    emitter_.MovsdMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                    emitter_.MovR64Imm(X64Reg::RAX, 0);
+                    emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                } else {
+                    emitter_.MovssXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.MovssXmmMem(XmmReg::XMM1, X64Reg::R15, VSlot(inst.rm));
+                    emitter_.Addss(XmmReg::XMM0, XmmReg::XMM1);
+                    emitter_.MovssMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                    emitter_.MovR64Imm(X64Reg::RAX, 0);
+                    emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                }
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::FSUB_scalar: {
+                if (inst.is_fp_double) {
+                    emitter_.MovsdXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.MovsdXmmMem(XmmReg::XMM1, X64Reg::R15, VSlot(inst.rm));
+                    emitter_.Subsd(XmmReg::XMM0, XmmReg::XMM1);
+                    emitter_.MovsdMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                    emitter_.MovR64Imm(X64Reg::RAX, 0);
+                    emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                } else {
+                    emitter_.MovssXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.MovssXmmMem(XmmReg::XMM1, X64Reg::R15, VSlot(inst.rm));
+                    emitter_.Subss(XmmReg::XMM0, XmmReg::XMM1);
+                    emitter_.MovssMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                    emitter_.MovR64Imm(X64Reg::RAX, 0);
+                    emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                }
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::FMUL_scalar: {
+                if (inst.is_fp_double) {
+                    emitter_.MovsdXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.MovsdXmmMem(XmmReg::XMM1, X64Reg::R15, VSlot(inst.rm));
+                    emitter_.Mulsd(XmmReg::XMM0, XmmReg::XMM1);
+                    emitter_.MovsdMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                    emitter_.MovR64Imm(X64Reg::RAX, 0);
+                    emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                } else {
+                    emitter_.MovssXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.MovssXmmMem(XmmReg::XMM1, X64Reg::R15, VSlot(inst.rm));
+                    emitter_.Mulss(XmmReg::XMM0, XmmReg::XMM1);
+                    emitter_.MovssMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                    emitter_.MovR64Imm(X64Reg::RAX, 0);
+                    emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                }
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::FDIV_scalar: {
+                if (inst.is_fp_double) {
+                    emitter_.MovsdXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.MovsdXmmMem(XmmReg::XMM1, X64Reg::R15, VSlot(inst.rm));
+                    emitter_.Divsd(XmmReg::XMM0, XmmReg::XMM1);
+                    emitter_.MovsdMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                    emitter_.MovR64Imm(X64Reg::RAX, 0);
+                    emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                } else {
+                    emitter_.MovssXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.MovssXmmMem(XmmReg::XMM1, X64Reg::R15, VSlot(inst.rm));
+                    emitter_.Divss(XmmReg::XMM0, XmmReg::XMM1);
+                    emitter_.MovssMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                    emitter_.MovR64Imm(X64Reg::RAX, 0);
+                    emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                }
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::FSQRT_scalar: {
+                if (inst.is_fp_double) {
+                    emitter_.MovsdXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.Sqrtsd(XmmReg::XMM0, XmmReg::XMM0);
+                    emitter_.MovsdMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                    emitter_.MovR64Imm(X64Reg::RAX, 0);
+                    emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                } else {
+                    emitter_.MovssXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.Sqrtss(XmmReg::XMM0, XmmReg::XMM0);
+                    emitter_.MovssMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                    emitter_.MovR64Imm(X64Reg::RAX, 0);
+                    emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                }
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::FMOV_reg: {
+                emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, VSlot(inst.rn));
+                emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd), X64Reg::RAX);
+                emitter_.MovR64Imm(X64Reg::RAX, 0);
+                emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::FMOV_to_gp: {
+                if (inst.is_64bit) {
+                    emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, VSlot(inst.rn));
+                    EmitSetX(inst.rd, X64Reg::RAX);
+                } else {
+                    emitter_.MovR32Mem(X64Reg::RAX, X64Reg::R15, VSlot(inst.rn));
+                    EmitSetW(inst.rd, X64Reg::RAX);
+                }
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::FMOV_from_gp: {
+                if (inst.is_64bit) {
+                    emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, RegOrSpSlot(inst.rn));
+                    emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd), X64Reg::RAX);
+                } else {
+                    emitter_.MovR32Mem(X64Reg::RAX, X64Reg::R15, RegOrSpSlot(inst.rn));
+                    emitter_.MovMemR32(X64Reg::R15, VSlot(inst.rd), X64Reg::RAX);
+                }
+                emitter_.MovR64Imm(X64Reg::RAX, 0);
+                emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::SCVTF: {
+                if (inst.is_64bit) {
+                    emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, RegOrSpSlot(inst.rn));
+                } else {
+                    emitter_.MovR32Mem(X64Reg::RAX, X64Reg::R15, RegOrSpSlot(inst.rn));
+                }
+                if (inst.is_fp_double) {
+                    emitter_.Cvtsi2sd(XmmReg::XMM0, X64Reg::RAX, inst.is_64bit);
+                    emitter_.MovsdMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                } else {
+                    emitter_.Cvtsi2ss(XmmReg::XMM0, X64Reg::RAX, inst.is_64bit);
+                    emitter_.MovssMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                }
+                emitter_.MovR64Imm(X64Reg::RAX, 0);
+                emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::FCVTZS: {
+                if (inst.is_fp_double) {
+                    emitter_.MovsdXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.Cvttsd2si(X64Reg::RAX, XmmReg::XMM0, inst.is_64bit);
+                } else {
+                    emitter_.MovssXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.Cvttss2si(X64Reg::RAX, XmmReg::XMM0, inst.is_64bit);
+                }
+                if (inst.is_64bit) EmitSetX(inst.rd, X64Reg::RAX);
+                else EmitSetW(inst.rd, X64Reg::RAX);
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::FCVT: {
+                if (inst.is_fp_double) {
+                    emitter_.MovssXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.Cvtss2sd(XmmReg::XMM0, XmmReg::XMM0);
+                    emitter_.MovsdMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                } else {
+                    emitter_.MovsdXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
+                    emitter_.Cvtsd2ss(XmmReg::XMM0, XmmReg::XMM0);
+                    emitter_.MovssMemXmm(X64Reg::R15, VSlot(inst.rd), XmmReg::XMM0);
+                }
+                emitter_.MovR64Imm(X64Reg::RAX, 0);
+                emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::LDR_fp_imm: {
+                emitter_.MovR64Mem(SCR_ADDR, X64Reg::R15, RegOrSpSlot(inst.rn));
+                emitter_.AddR64Imm32(SCR_ADDR, static_cast<s32>(inst.imm));
+                const u64 thunk = reinterpret_cast<u64>(inst.is_fp_double ? &JitMemRead64 : &JitMemRead32);
+                emitter_.MovR64Imm(MEM_ARG1, mem_addr_);
+                emitter_.MovR64R64(MEM_ARG2, SCR_ADDR);
+                emitter_.MovR64Imm(REG_THUNK, thunk);
+#ifdef _WIN32
+                emitter_.SubR64Imm32(X64Reg::RSP, 40);
+                emitter_.CallR64(REG_THUNK);
+                emitter_.AddR64Imm32(X64Reg::RSP, 40);
+#else
+                emitter_.SubR64Imm32(X64Reg::RSP, 8);
+                emitter_.CallR64(REG_THUNK);
+                emitter_.AddR64Imm32(X64Reg::RSP, 8);
+#endif
+                if (inst.is_fp_double) {
+                    emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd), X64Reg::RAX);
+                } else {
+                    emitter_.MovMemR32(X64Reg::R15, VSlot(inst.rd), X64Reg::RAX);
+                }
+                emitter_.MovR64Imm(X64Reg::RAX, 0);
+                emitter_.MovMemR64(X64Reg::R15, VSlot(inst.rd) + 8, X64Reg::RAX);
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::STR_fp_imm: {
+                emitter_.MovR64Mem(SCR_ADDR, X64Reg::R15, RegOrSpSlot(inst.rn));
+                emitter_.AddR64Imm32(SCR_ADDR, static_cast<s32>(inst.imm));
+                const u64 thunk = reinterpret_cast<u64>(inst.is_fp_double ? &JitMemWrite64 : &JitMemWrite32);
+                emitter_.MovR64Imm(MEM_ARG1, mem_addr_);
+                emitter_.MovR64R64(MEM_ARG2, SCR_ADDR);
+                emitter_.MovR64Mem(MEM_ARG3, X64Reg::R15, VSlot(inst.rd));
+                emitter_.MovR64Imm(REG_THUNK, thunk);
+#ifdef _WIN32
+                emitter_.SubR64Imm32(X64Reg::RSP, 40);
+                emitter_.CallR64(REG_THUNK);
+                emitter_.AddR64Imm32(X64Reg::RSP, 40);
+#else
+                emitter_.SubR64Imm32(X64Reg::RSP, 8);
+                emitter_.CallR64(REG_THUNK);
+                emitter_.AddR64Imm32(X64Reg::RSP, 8);
+#endif
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::LDXR: {
+                emitter_.MovR64Mem(SCR_ADDR, X64Reg::R15, RegOrSpSlot(inst.rn));
+                emitter_.MovMemR64(X64Reg::R15, ExclAddrSlot(), SCR_ADDR);
+                emitter_.MovR32Imm(X64Reg::RAX, 1);
+                emitter_.MovMemR32(X64Reg::R15, ExclActSlot(), X64Reg::RAX);
+                const u64 thunk = reinterpret_cast<u64>(inst.is_64bit ? &JitMemRead64 : &JitMemRead32);
+                emitter_.MovR64Imm(MEM_ARG1, mem_addr_);
+                emitter_.MovR64R64(MEM_ARG2, SCR_ADDR);
+                emitter_.MovR64Imm(REG_THUNK, thunk);
+#ifdef _WIN32
+                emitter_.SubR64Imm32(X64Reg::RSP, 40);
+                emitter_.CallR64(REG_THUNK);
+                emitter_.AddR64Imm32(X64Reg::RSP, 40);
+#else
+                emitter_.SubR64Imm32(X64Reg::RSP, 8);
+                emitter_.CallR64(REG_THUNK);
+                emitter_.AddR64Imm32(X64Reg::RSP, 8);
+#endif
+                if (inst.is_64bit) EmitSetX(inst.rd, X64Reg::RAX);
+                else EmitSetW(inst.rd, X64Reg::RAX);
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::STXR: {
+                emitter_.MovR64Mem(SCR_ADDR, X64Reg::R15, RegOrSpSlot(inst.rn));
+                const u64 thunk = reinterpret_cast<u64>(inst.is_64bit ? &JitMemWrite64 : &JitMemWrite32);
+                emitter_.MovR64Imm(MEM_ARG1, mem_addr_);
+                emitter_.MovR64R64(MEM_ARG2, SCR_ADDR);
+                if (inst.is_64bit) emitter_.MovR64Mem(MEM_ARG3, X64Reg::R15, XSlot(inst.rd));
+                else emitter_.MovR32Mem(MEM_ARG3, X64Reg::R15, XSlot(inst.rd));
+                emitter_.MovR64Imm(REG_THUNK, thunk);
+#ifdef _WIN32
+                emitter_.SubR64Imm32(X64Reg::RSP, 40);
+                emitter_.CallR64(REG_THUNK);
+                emitter_.AddR64Imm32(X64Reg::RSP, 40);
+#else
+                emitter_.SubR64Imm32(X64Reg::RSP, 8);
+                emitter_.CallR64(REG_THUNK);
+                emitter_.AddR64Imm32(X64Reg::RSP, 8);
+#endif
+                emitter_.MovR32Imm(X64Reg::RAX, 0); // success
+                EmitSetW(inst.rs, X64Reg::RAX);
+                emitter_.MovMemR32(X64Reg::R15, ExclActSlot(), X64Reg::RAX);
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::CLREX: {
+                emitter_.MovR32Imm(X64Reg::RAX, 0);
+                emitter_.MovMemR32(X64Reg::R15, ExclActSlot(), X64Reg::RAX);
+                curr_pc += 4;
                 break;
             }
 

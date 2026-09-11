@@ -1,5 +1,7 @@
 #include "interpreter.hpp"
 #include "platform/logger.hpp"
+#include <cmath>
+#include <cstring>
 
 namespace nemu::core::cpu {
 
@@ -498,6 +500,507 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
                     state_.SetW(inst.rd, state_.GetW(inst.rm));
                 }
             }
+            break;
+        }
+
+        // Scalar Floating-Point Arithmetic
+        case Opcode::FADD_scalar: {
+            if (inst.is_fp_double) {
+                state_.SetDouble(inst.rd, state_.GetDouble(inst.rn) + state_.GetDouble(inst.rm));
+            } else {
+                state_.SetSingle(inst.rd, state_.GetSingle(inst.rn) + state_.GetSingle(inst.rm));
+            }
+            break;
+        }
+
+        case Opcode::FSUB_scalar: {
+            if (inst.is_fp_double) {
+                state_.SetDouble(inst.rd, state_.GetDouble(inst.rn) - state_.GetDouble(inst.rm));
+            } else {
+                state_.SetSingle(inst.rd, state_.GetSingle(inst.rn) - state_.GetSingle(inst.rm));
+            }
+            break;
+        }
+
+        case Opcode::FMUL_scalar: {
+            if (inst.is_fp_double) {
+                state_.SetDouble(inst.rd, state_.GetDouble(inst.rn) * state_.GetDouble(inst.rm));
+            } else {
+                state_.SetSingle(inst.rd, state_.GetSingle(inst.rn) * state_.GetSingle(inst.rm));
+            }
+            break;
+        }
+
+        case Opcode::FDIV_scalar: {
+            if (inst.is_fp_double) {
+                state_.SetDouble(inst.rd, state_.GetDouble(inst.rn) / state_.GetDouble(inst.rm));
+            } else {
+                state_.SetSingle(inst.rd, state_.GetSingle(inst.rn) / state_.GetSingle(inst.rm));
+            }
+            break;
+        }
+
+        case Opcode::FMAX_scalar: {
+            if (inst.is_fp_double) {
+                state_.SetDouble(inst.rd, std::fmax(state_.GetDouble(inst.rn), state_.GetDouble(inst.rm)));
+            } else {
+                state_.SetSingle(inst.rd, std::fmax(state_.GetSingle(inst.rn), state_.GetSingle(inst.rm)));
+            }
+            break;
+        }
+
+        case Opcode::FMIN_scalar: {
+            if (inst.is_fp_double) {
+                state_.SetDouble(inst.rd, std::fmin(state_.GetDouble(inst.rn), state_.GetDouble(inst.rm)));
+            } else {
+                state_.SetSingle(inst.rd, std::fmin(state_.GetSingle(inst.rn), state_.GetSingle(inst.rm)));
+            }
+            break;
+        }
+
+        case Opcode::FABS_scalar: {
+            if (inst.is_fp_double) {
+                state_.SetDouble(inst.rd, std::fabs(state_.GetDouble(inst.rn)));
+            } else {
+                state_.SetSingle(inst.rd, std::fabs(state_.GetSingle(inst.rn)));
+            }
+            break;
+        }
+
+        case Opcode::FNEG_scalar: {
+            if (inst.is_fp_double) {
+                state_.SetDouble(inst.rd, -state_.GetDouble(inst.rn));
+            } else {
+                state_.SetSingle(inst.rd, -state_.GetSingle(inst.rn));
+            }
+            break;
+        }
+
+        case Opcode::FSQRT_scalar: {
+            if (inst.is_fp_double) {
+                state_.SetDouble(inst.rd, std::sqrt(state_.GetDouble(inst.rn)));
+            } else {
+                state_.SetSingle(inst.rd, std::sqrt(state_.GetSingle(inst.rn)));
+            }
+            break;
+        }
+
+        case Opcode::FCMP_scalar: {
+            const double val_a = inst.is_fp_double ? state_.GetDouble(inst.rn) : static_cast<double>(state_.GetSingle(inst.rn));
+            const double val_b = (inst.rm == 31) ? 0.0 : (inst.is_fp_double ? state_.GetDouble(inst.rm) : static_cast<double>(state_.GetSingle(inst.rm)));
+            state_.SetNZCV_FPCmp(val_a, val_b);
+            break;
+        }
+
+        case Opcode::FCSEL_scalar: {
+            if (state_.CheckCondition(inst.condition)) {
+                if (inst.is_fp_double) state_.SetDouble(inst.rd, state_.GetDouble(inst.rn));
+                else state_.SetSingle(inst.rd, state_.GetSingle(inst.rn));
+            } else {
+                if (inst.is_fp_double) state_.SetDouble(inst.rd, state_.GetDouble(inst.rm));
+                else state_.SetSingle(inst.rd, state_.GetSingle(inst.rm));
+            }
+            break;
+        }
+
+        case Opcode::FMOV_reg: {
+            if (inst.is_fp_double) state_.SetDouble(inst.rd, state_.GetDouble(inst.rn));
+            else state_.SetSingle(inst.rd, state_.GetSingle(inst.rn));
+            break;
+        }
+
+        case Opcode::FMOV_imm: {
+            if (inst.is_fp_double) state_.SetDouble(inst.rd, inst.fp_imm);
+            else state_.SetSingle(inst.rd, static_cast<float>(inst.fp_imm));
+            break;
+        }
+
+        case Opcode::FMOV_to_gp: {
+            if (inst.is_64bit) {
+                u64 u = 0;
+                const double d = state_.GetDouble(inst.rn);
+                std::memcpy(&u, &d, sizeof(u));
+                state_.SetX(inst.rd, u);
+            } else {
+                u32 u = 0;
+                const float f = state_.GetSingle(inst.rn);
+                std::memcpy(&u, &f, sizeof(u));
+                state_.SetW(inst.rd, u);
+            }
+            break;
+        }
+
+        case Opcode::FMOV_from_gp: {
+            if (inst.is_64bit) {
+                double d = 0.0;
+                const u64 u = state_.GetX(inst.rn);
+                std::memcpy(&d, &u, sizeof(d));
+                state_.SetDouble(inst.rd, d);
+            } else {
+                float f = 0.0f;
+                const u32 u = state_.GetW(inst.rn);
+                std::memcpy(&f, &u, sizeof(f));
+                state_.SetSingle(inst.rd, f);
+            }
+            break;
+        }
+
+        case Opcode::SCVTF: {
+            if (inst.is_fp_double) {
+                const double d = inst.is_64bit ? static_cast<double>(static_cast<s64>(state_.GetX(inst.rn)))
+                                               : static_cast<double>(static_cast<s32>(state_.GetW(inst.rn)));
+                state_.SetDouble(inst.rd, d);
+            } else {
+                const float f = inst.is_64bit ? static_cast<float>(static_cast<s64>(state_.GetX(inst.rn)))
+                                              : static_cast<float>(static_cast<s32>(state_.GetW(inst.rn)));
+                state_.SetSingle(inst.rd, f);
+            }
+            break;
+        }
+
+        case Opcode::UCVTF: {
+            if (inst.is_fp_double) {
+                const double d = inst.is_64bit ? static_cast<double>(state_.GetX(inst.rn))
+                                               : static_cast<double>(state_.GetW(inst.rn));
+                state_.SetDouble(inst.rd, d);
+            } else {
+                const float f = inst.is_64bit ? static_cast<float>(state_.GetX(inst.rn))
+                                              : static_cast<float>(state_.GetW(inst.rn));
+                state_.SetSingle(inst.rd, f);
+            }
+            break;
+        }
+
+        case Opcode::FCVTZS: {
+            if (inst.is_fp_double) {
+                const double d = state_.GetDouble(inst.rn);
+                if (inst.is_64bit) state_.SetX(inst.rd, static_cast<u64>(static_cast<s64>(d)));
+                else state_.SetW(inst.rd, static_cast<u32>(static_cast<s32>(d)));
+            } else {
+                const float f = state_.GetSingle(inst.rn);
+                if (inst.is_64bit) state_.SetX(inst.rd, static_cast<u64>(static_cast<s64>(f)));
+                else state_.SetW(inst.rd, static_cast<u32>(static_cast<s32>(f)));
+            }
+            break;
+        }
+
+        case Opcode::FCVTZU: {
+            if (inst.is_fp_double) {
+                const double d = state_.GetDouble(inst.rn);
+                if (inst.is_64bit) state_.SetX(inst.rd, static_cast<u64>(d));
+                else state_.SetW(inst.rd, static_cast<u32>(d));
+            } else {
+                const float f = state_.GetSingle(inst.rn);
+                if (inst.is_64bit) state_.SetX(inst.rd, static_cast<u64>(f));
+                else state_.SetW(inst.rd, static_cast<u32>(f));
+            }
+            break;
+        }
+
+        case Opcode::FCVT: {
+            if (inst.is_fp_double) {
+                state_.SetDouble(inst.rd, static_cast<double>(state_.GetSingle(inst.rn)));
+            } else {
+                state_.SetSingle(inst.rd, static_cast<float>(state_.GetDouble(inst.rn)));
+            }
+            break;
+        }
+
+        // Loads and Stores FP
+        case Opcode::LDR_fp_imm: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
+            if (inst.is_fp_double) {
+                state_.v[inst.rd].low = memory_.Read64(addr);
+                state_.v[inst.rd].high = 0;
+            } else {
+                state_.v[inst.rd].low = memory_.Read32(addr);
+                state_.v[inst.rd].high = 0;
+            }
+            break;
+        }
+
+        case Opcode::STR_fp_imm: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
+            if (inst.is_fp_double) {
+                memory_.Write64(addr, state_.v[inst.rd].low);
+            } else {
+                memory_.Write32(addr, static_cast<u32>(state_.v[inst.rd].low));
+            }
+            break;
+        }
+
+        case Opcode::LDP_fp: {
+            const vaddr_t base = state_.GetRegOrSP(inst.rn) + inst.imm;
+            if (inst.is_fp_double) {
+                state_.v[inst.rd].low = memory_.Read64(base);
+                state_.v[inst.rd].high = 0;
+                state_.v[inst.rt2].low = memory_.Read64(base + 8);
+                state_.v[inst.rt2].high = 0;
+            } else {
+                state_.v[inst.rd].low = memory_.Read32(base);
+                state_.v[inst.rd].high = 0;
+                state_.v[inst.rt2].low = memory_.Read32(base + 4);
+                state_.v[inst.rt2].high = 0;
+            }
+            break;
+        }
+
+        case Opcode::STP_fp: {
+            const vaddr_t base = state_.GetRegOrSP(inst.rn) + inst.imm;
+            if (inst.is_fp_double) {
+                memory_.Write64(base, state_.v[inst.rd].low);
+                memory_.Write64(base + 8, state_.v[inst.rt2].low);
+            } else {
+                memory_.Write32(base, static_cast<u32>(state_.v[inst.rd].low));
+                memory_.Write32(base + 4, static_cast<u32>(state_.v[inst.rt2].low));
+            }
+            break;
+        }
+
+        // Vector / NEON SIMD
+        case Opcode::ADD_vec: {
+            if (inst.vec_size == 2) {
+                for (size_t l = 0; l < 4; ++l) {
+                    state_.SetVectorLane32(inst.rd, l, state_.GetVectorLane32(inst.rn, l) + state_.GetVectorLane32(inst.rm, l));
+                }
+            } else {
+                for (size_t l = 0; l < 2; ++l) {
+                    state_.SetVectorLane64(inst.rd, l, state_.GetVectorLane64(inst.rn, l) + state_.GetVectorLane64(inst.rm, l));
+                }
+            }
+            break;
+        }
+
+        case Opcode::SUB_vec: {
+            if (inst.vec_size == 2) {
+                for (size_t l = 0; l < 4; ++l) {
+                    state_.SetVectorLane32(inst.rd, l, state_.GetVectorLane32(inst.rn, l) - state_.GetVectorLane32(inst.rm, l));
+                }
+            } else {
+                for (size_t l = 0; l < 2; ++l) {
+                    state_.SetVectorLane64(inst.rd, l, state_.GetVectorLane64(inst.rn, l) - state_.GetVectorLane64(inst.rm, l));
+                }
+            }
+            break;
+        }
+
+        case Opcode::FADD_vec: {
+            if (inst.is_fp_double) {
+                for (size_t l = 0; l < 2; ++l) {
+                    double a = 0.0, b = 0.0;
+                    const u64 ua = state_.GetVectorLane64(inst.rn, l);
+                    const u64 ub = state_.GetVectorLane64(inst.rm, l);
+                    std::memcpy(&a, &ua, 8);
+                    std::memcpy(&b, &ub, 8);
+                    double res = a + b;
+                    u64 ures = 0;
+                    std::memcpy(&ures, &res, 8);
+                    state_.SetVectorLane64(inst.rd, l, ures);
+                }
+            } else {
+                for (size_t l = 0; l < 4; ++l) {
+                    float a = 0.0f, b = 0.0f;
+                    const u32 ua = state_.GetVectorLane32(inst.rn, l);
+                    const u32 ub = state_.GetVectorLane32(inst.rm, l);
+                    std::memcpy(&a, &ua, 4);
+                    std::memcpy(&b, &ub, 4);
+                    float res = a + b;
+                    u32 ures = 0;
+                    std::memcpy(&ures, &res, 4);
+                    state_.SetVectorLane32(inst.rd, l, ures);
+                }
+            }
+            break;
+        }
+
+        case Opcode::FSUB_vec: {
+            if (inst.is_fp_double) {
+                for (size_t l = 0; l < 2; ++l) {
+                    double a = 0.0, b = 0.0;
+                    const u64 ua = state_.GetVectorLane64(inst.rn, l);
+                    const u64 ub = state_.GetVectorLane64(inst.rm, l);
+                    std::memcpy(&a, &ua, 8);
+                    std::memcpy(&b, &ub, 8);
+                    double res = a - b;
+                    u64 ures = 0;
+                    std::memcpy(&ures, &res, 8);
+                    state_.SetVectorLane64(inst.rd, l, ures);
+                }
+            } else {
+                for (size_t l = 0; l < 4; ++l) {
+                    float a = 0.0f, b = 0.0f;
+                    const u32 ua = state_.GetVectorLane32(inst.rn, l);
+                    const u32 ub = state_.GetVectorLane32(inst.rm, l);
+                    std::memcpy(&a, &ua, 4);
+                    std::memcpy(&b, &ub, 4);
+                    float res = a - b;
+                    u32 ures = 0;
+                    std::memcpy(&ures, &res, 4);
+                    state_.SetVectorLane32(inst.rd, l, ures);
+                }
+            }
+            break;
+        }
+
+        case Opcode::FMUL_vec: {
+            if (inst.is_fp_double) {
+                for (size_t l = 0; l < 2; ++l) {
+                    double a = 0.0, b = 0.0;
+                    const u64 ua = state_.GetVectorLane64(inst.rn, l);
+                    const u64 ub = state_.GetVectorLane64(inst.rm, l);
+                    std::memcpy(&a, &ua, 8);
+                    std::memcpy(&b, &ub, 8);
+                    double res = a * b;
+                    u64 ures = 0;
+                    std::memcpy(&ures, &res, 8);
+                    state_.SetVectorLane64(inst.rd, l, ures);
+                }
+            } else {
+                for (size_t l = 0; l < 4; ++l) {
+                    float a = 0.0f, b = 0.0f;
+                    const u32 ua = state_.GetVectorLane32(inst.rn, l);
+                    const u32 ub = state_.GetVectorLane32(inst.rm, l);
+                    std::memcpy(&a, &ua, 4);
+                    std::memcpy(&b, &ub, 4);
+                    float res = a * b;
+                    u32 ures = 0;
+                    std::memcpy(&ures, &res, 4);
+                    state_.SetVectorLane32(inst.rd, l, ures);
+                }
+            }
+            break;
+        }
+
+        case Opcode::AND_vec: {
+            state_.v[inst.rd].low = state_.v[inst.rn].low & state_.v[inst.rm].low;
+            state_.v[inst.rd].high = state_.v[inst.rn].high & state_.v[inst.rm].high;
+            break;
+        }
+
+        case Opcode::ORR_vec: {
+            state_.v[inst.rd].low = state_.v[inst.rn].low | state_.v[inst.rm].low;
+            state_.v[inst.rd].high = state_.v[inst.rn].high | state_.v[inst.rm].high;
+            break;
+        }
+
+        case Opcode::EOR_vec: {
+            state_.v[inst.rd].low = state_.v[inst.rn].low ^ state_.v[inst.rm].low;
+            state_.v[inst.rd].high = state_.v[inst.rn].high ^ state_.v[inst.rm].high;
+            break;
+        }
+
+        case Opcode::DUP_gen: {
+            if (inst.vec_size == 3) {
+                const u64 val = state_.GetX(inst.rn);
+                state_.SetVectorLane64(inst.rd, 0, val);
+                state_.SetVectorLane64(inst.rd, 1, val);
+            } else if (inst.vec_size == 2) {
+                const u32 val = state_.GetW(inst.rn);
+                for (size_t l = 0; l < 4; ++l) state_.SetVectorLane32(inst.rd, l, val);
+            }
+            break;
+        }
+
+        case Opcode::INS_gen: {
+            if (inst.vec_size == 3) {
+                state_.SetVectorLane64(inst.rd, inst.vec_index, state_.GetX(inst.rn));
+            } else if (inst.vec_size == 2) {
+                state_.SetVectorLane32(inst.rd, inst.vec_index, state_.GetW(inst.rn));
+            }
+            break;
+        }
+
+        case Opcode::UMOV: {
+            if (inst.vec_size == 3) {
+                state_.SetX(inst.rd, state_.GetVectorLane64(inst.rn, inst.vec_index));
+            } else if (inst.vec_size == 2) {
+                state_.SetW(inst.rd, state_.GetVectorLane32(inst.rn, inst.vec_index));
+            }
+            break;
+        }
+
+        // Atomics & Exclusives
+        case Opcode::LDXR: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn);
+            state_.exclusive_addr = addr;
+            state_.exclusive_active = true;
+            if (inst.is_64bit) {
+                state_.SetX(inst.rd, memory_.Read64(addr));
+            } else {
+                state_.SetW(inst.rd, memory_.Read32(addr));
+            }
+            break;
+        }
+
+        case Opcode::STXR: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn);
+            if (state_.exclusive_active && state_.exclusive_addr == addr) {
+                if (inst.is_64bit) {
+                    memory_.Write64(addr, state_.GetX(inst.rd));
+                } else {
+                    memory_.Write32(addr, state_.GetW(inst.rd));
+                }
+                state_.SetW(inst.rs, 0); // 0 = Success
+                state_.exclusive_active = false;
+            } else {
+                state_.SetW(inst.rs, 1); // 1 = Failure
+            }
+            break;
+        }
+
+        case Opcode::LDADD: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn);
+            if (inst.is_64bit) {
+                const u64 old_val = memory_.Read64(addr);
+                const u64 add_val = state_.GetX(inst.rs);
+                memory_.Write64(addr, old_val + add_val);
+                state_.SetX(inst.rd, old_val);
+            } else {
+                const u32 old_val = memory_.Read32(addr);
+                const u32 add_val = state_.GetW(inst.rs);
+                memory_.Write32(addr, old_val + add_val);
+                state_.SetW(inst.rd, old_val);
+            }
+            break;
+        }
+
+        case Opcode::CAS: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn);
+            if (inst.is_64bit) {
+                const u64 cur = memory_.Read64(addr);
+                const u64 cmp = state_.GetX(inst.rs);
+                if (cur == cmp) {
+                    memory_.Write64(addr, state_.GetX(inst.rd));
+                }
+                state_.SetX(inst.rs, cur);
+            } else {
+                const u32 cur = memory_.Read32(addr);
+                const u32 cmp = state_.GetW(inst.rs);
+                if (cur == cmp) {
+                    memory_.Write32(addr, state_.GetW(inst.rd));
+                }
+                state_.SetW(inst.rs, cur);
+            }
+            break;
+        }
+
+        case Opcode::SWP: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn);
+            if (inst.is_64bit) {
+                const u64 cur = memory_.Read64(addr);
+                memory_.Write64(addr, state_.GetX(inst.rs));
+                state_.SetX(inst.rd, cur);
+            } else {
+                const u32 cur = memory_.Read32(addr);
+                memory_.Write32(addr, state_.GetW(inst.rs));
+                state_.SetW(inst.rd, cur);
+            }
+            break;
+        }
+
+        case Opcode::CLREX: {
+            state_.exclusive_active = false;
+            state_.exclusive_addr = 0;
             break;
         }
 

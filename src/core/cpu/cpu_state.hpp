@@ -57,6 +57,10 @@ struct alignas(16) CpuState {
     u32 fpcr{0};
     u32 fpsr{0};
 
+    // Exclusive monitor for atomic operations (LDXR/STXR/CAS)
+    vaddr_t exclusive_addr{0};
+    bool exclusive_active{false};
+
     // System Registers
     u64 tpidrro_el0{0}; // TLS base register for user-mode
     u64 tpidr_el0{0};
@@ -82,6 +86,28 @@ struct alignas(16) CpuState {
     [[nodiscard]] u32 GetWRegOrSP(u32 reg) const noexcept;
     void SetWRegOrSP(u32 reg, u32 val) noexcept;
 
+    // Floating-point and Vector (V0 - V31) accessors
+    [[nodiscard]] float GetSingle(u32 reg) const noexcept;
+    void SetSingle(u32 reg, float val) noexcept;
+
+    [[nodiscard]] double GetDouble(u32 reg) const noexcept;
+    void SetDouble(u32 reg, double val) noexcept;
+
+    [[nodiscard]] u128 GetVector(u32 reg) const noexcept;
+    void SetVector(u32 reg, const u128& val) noexcept;
+
+    [[nodiscard]] u8 GetVectorLane8(u32 reg, size_t lane) const noexcept;
+    void SetVectorLane8(u32 reg, size_t lane, u8 val) noexcept;
+
+    [[nodiscard]] u16 GetVectorLane16(u32 reg, size_t lane) const noexcept;
+    void SetVectorLane16(u32 reg, size_t lane, u16 val) noexcept;
+
+    [[nodiscard]] u32 GetVectorLane32(u32 reg, size_t lane) const noexcept;
+    void SetVectorLane32(u32 reg, size_t lane, u32 val) noexcept;
+
+    [[nodiscard]] u64 GetVectorLane64(u32 reg, size_t lane) const noexcept;
+    void SetVectorLane64(u32 reg, size_t lane, u64 val) noexcept;
+
     [[nodiscard]] bool CheckCondition(Condition cond) const noexcept;
 
     // Flag update helpers
@@ -91,6 +117,7 @@ struct alignas(16) CpuState {
     void SetNZCV_Sub64(u64 a, u64 b, u64 result) noexcept;
     void SetNZ_Logical32(u32 result) noexcept;
     void SetNZ_Logical64(u64 result) noexcept;
+    void SetNZCV_FPCmp(double a, double b) noexcept;
 
     std::string DumpState() const;
 };
