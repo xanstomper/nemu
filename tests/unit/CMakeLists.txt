@@ -73,3 +73,50 @@ target_link_libraries(test_vfs PRIVATE
 target_compile_features(test_vfs PRIVATE cxx_std_20)
 add_test(NAME test_vfs COMMAND test_vfs)
 
+add_executable(test_gpu
+    gpu/test_gpu.cpp
+)
+
+target_include_directories(test_gpu PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_gpu PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_gpu PRIVATE cxx_std_20)
+add_test(NAME test_gpu COMMAND test_gpu)
+
+add_executable(test_audio
+    audio/test_audio.cpp
+)
+
+target_include_directories(test_audio PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_audio PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_audio PRIVATE cxx_std_20)
+add_test(NAME test_audio COMMAND test_audio)
+
+add_executable(test_hid
+    hid/test_hid.cpp
+)
+
+target_include_directories(test_hid PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_hid PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_hid PRIVATE cxx_std_20)
+add_test(NAME test_hid COMMAND test_hid)
+
+
+
