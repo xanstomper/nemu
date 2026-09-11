@@ -50,6 +50,7 @@ if(WIN32)
     target_link_libraries(Nemu.Gpu PUBLIC
         d3d12
         dxgi
+        d3dcompiler
     )
 endif()
 
