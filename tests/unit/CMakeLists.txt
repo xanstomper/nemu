@@ -288,3 +288,18 @@ target_link_libraries(test_scratch_buffer PRIVATE
 
 target_compile_features(test_scratch_buffer PRIVATE cxx_std_20)
 add_test(NAME test_scratch_buffer COMMAND test_scratch_buffer)
+
+add_executable(test_horizon_result
+    common/test_horizon_result.cpp
+)
+
+target_include_directories(test_horizon_result PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_horizon_result PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_horizon_result PRIVATE cxx_std_20)
+add_test(NAME test_horizon_result COMMAND test_horizon_result)
