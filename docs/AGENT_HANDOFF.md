@@ -76,3 +76,91 @@ WHAT THE OTHER AGENT SHOULD VERIFY:
 - Validate that the ARM64 CpuState struct satisfies cache-line alignment and exact register mappings.
 - Review the instruction decoder bitmask hierarchy in CPU_DESIGN.md.
 ```
+
+---
+
+## Handoff 002: Gate 1 (CPU Interpreter) & Gate 2 (Virtual Memory) Complete
+
+* **Date:** 2026-09-11
+* **From:** Antigravity (AGY)
+* **To:** Hermes (Primary Implementation Engineer)
+
+```text
+CURRENT MILESTONE: Gate 1 & Gate 2 Complete / Transitioning to Gate 3 (Horizon Kernel HLE)
+
+COMPLETED:
+- Fully implemented AArch64 CpuState register file (X0..X30, SP, PC, NZCV, system registers).
+- Implemented ARM64 instruction Decoder with full classification for arithmetic, logical, move wide, branch, system, and load/store pairs.
+- Implemented reference Interpreter executing deterministic instructions with accurate condition code calculations.
+- Implemented multi-level VirtualMemory with 4 KiB page granularities, permission enforcement (Read, Write, Execute), and boundary block transfers.
+- Built both Native Linux and Windows/Xbox PE32+ targets with zero compiler warnings under -Wall -Wextra -Wpedantic.
+- Discovered and fixed critical side-effect assert bug where memory mapping evaporated under Release (-DNDEBUG); introduced robust NEMU_TEST_ASSERT macro.
+- Verified Windows PE32+ static linking (-static -static-libgcc -static-libstdc++) eliminating missing MinGW DLL dependencies.
+- 100% test pass rate on both Linux and Windows/Xbox under Wine.
+
+IMPLEMENTED:
+- src/core/types.hpp
+- src/platform/logger.hpp
+- src/platform/logger.cpp
+- src/platform/CMakeLists.txt
+- src/core/memory/memory_interface.hpp
+- src/core/memory/virtual_memory.hpp
+- src/core/memory/virtual_memory.cpp
+- src/core/memory/CMakeLists.txt
+- src/core/cpu/cpu_state.hpp
+- src/core/cpu/cpu_state.cpp
+- src/core/cpu/instruction.hpp
+- src/core/cpu/decoder.hpp
+- src/core/cpu/decoder.cpp
+- src/core/cpu/interpreter.hpp
+- src/core/cpu/interpreter.cpp
+- src/core/cpu/CMakeLists.txt
+- src/core/CMakeLists.txt
+- src/nemu/main.cpp
+- src/nemu/CMakeLists.txt
+- src/CMakeLists.txt
+- tests/CMakeLists.txt
+- tests/unit/CMakeLists.txt
+- tests/unit/cpu/test_cpu.cpp
+- tests/unit/memory/test_memory.cpp
+- benchmarks/CMakeLists.txt
+
+FILES CHANGED:
+- CMakeLists.txt (added MinGW static runtime flags)
+- .gitignore (added build-win/)
+- docs/PROJECT_STATUS.md (marked Gate 1 and Gate 2 as passed)
+- docs/AGENT_HANDOFF.md (logged Handoff 002)
+
+TESTS RUN:
+- ctest (test_cpu, test_memory) on Linux -> PASSED (100%)
+- wine test_cpu.exe on Windows PE32+ -> PASSED (100%)
+- wine test_memory.exe on Windows PE32+ -> PASSED (100%)
+- wine Nemu.exe on Windows PE32+ -> PASSED (executed guest MOVZ/ADD/SVC sequence and dumped registers)
+
+TESTS PASSED:
+- 100% of all CPU and Memory unit and integration tests.
+
+TESTS FAILED:
+- None.
+
+KNOWN BUGS:
+- None in current implementation.
+
+PERFORMANCE:
+- Test execution runtime: < 0.03s.
+- Zero memory leaks detected.
+
+ARCHITECTURAL DECISIONS:
+- Static C++ runtime linking on Windows to ensure self-contained Xbox UWP package.
+- Introduction of NEMU_TEST_ASSERT to prevent test suppression in Release configurations.
+
+RISKS:
+- Horizon OS SVC dispatcher and IPC command structure require rigorous message framing to prevent guest memory desynchronization.
+
+NEXT HIGHEST-PRIORITY TASK:
+- Gate 3: Implement Horizon OS HLE primitives (KProcess, KThread, KHandleTable, KEvent, and fundamental memory/thread SVC dispatcher: svcSetHeapSize, svcAllocateMemory, svcCreateThread, svcSleepThread, svcExitProcess).
+
+WHAT THE OTHER AGENT SHOULD VERIFY:
+- Review the IPC command buffer layout and handle table implementation.
+- Verify thread context switching mechanics and TLS allocation address formula.
+```

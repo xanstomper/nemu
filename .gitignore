@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+build-win/
 bin/
 lib/
 out/
