@@ -258,3 +258,18 @@ target_link_libraries(test_timed_wake PRIVATE
 
 target_compile_features(test_timed_wake PRIVATE cxx_std_20)
 add_test(NAME test_timed_wake COMMAND test_timed_wake)
+
+add_executable(test_bounded_queue
+    common/test_bounded_queue.cpp
+)
+
+target_include_directories(test_bounded_queue PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_bounded_queue PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_bounded_queue PRIVATE cxx_std_20)
+add_test(NAME test_bounded_queue COMMAND test_bounded_queue)
