@@ -484,6 +484,23 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             break;
         }
 
+        case Opcode::CSEL: {
+            if (state_.CheckCondition(inst.condition)) {
+                if (inst.is_64bit) {
+                    state_.SetX(inst.rd, state_.GetX(inst.rn));
+                } else {
+                    state_.SetW(inst.rd, state_.GetW(inst.rn));
+                }
+            } else {
+                if (inst.is_64bit) {
+                    state_.SetX(inst.rd, state_.GetX(inst.rm));
+                } else {
+                    state_.SetW(inst.rd, state_.GetW(inst.rm));
+                }
+            }
+            break;
+        }
+
         case Opcode::SVC: {
             state_.pc = next_pc;
             if (svc_handler_) {

@@ -52,6 +52,14 @@ void X64Emitter::Ret() {
     EmitByte(0xC3);
 }
 
+void X64Emitter::CallR64(X64Reg reg) {
+    const u8 r = static_cast<u8>(reg);
+    // FF /2: call r/m64. REX.R selects high register on the r/m encoding.
+    EmitRex(false, false, false, r >= 8);
+    EmitByte(0xFF);
+    EmitModRM(3, 2, r);
+}
+
 void X64Emitter::MovR64Imm(X64Reg dst, u64 imm) {
     const u8 r = static_cast<u8>(dst);
     EmitRex(true, false, false, r >= 8);
@@ -137,6 +145,194 @@ void X64Emitter::AddR64Imm32(X64Reg dst, s32 imm) {
     EmitByte(0x81);
     EmitModRM(3, 0, d);
     Emit32(static_cast<u32>(imm));
+}
+
+void X64Emitter::SubR64Imm32(X64Reg dst, s32 imm) {
+    const u8 d = static_cast<u8>(dst);
+    EmitRex(true, false, false, d >= 8);
+    EmitByte(0x81);
+    EmitModRM(3, 5, d);
+    Emit32(static_cast<u32>(imm));
+}
+
+void X64Emitter::MovR32Imm(X64Reg dst, u32 imm) {
+    const u8 d = static_cast<u8>(dst);
+    EmitRex(false, false, false, d >= 8);
+    EmitByte(static_cast<u8>(0xB8 + (d & 7)));
+    Emit32(imm);
+}
+
+void X64Emitter::MovR32R32(X64Reg dst, X64Reg src) {
+    const u8 d = static_cast<u8>(dst);
+    const u8 s = static_cast<u8>(src);
+    EmitRex(false, s >= 8, false, d >= 8);
+    EmitByte(0x89);
+    EmitModRM(3, s, d);
+}
+
+void X64Emitter::MovR32Mem(X64Reg dst, X64Reg base, s32 disp) {
+    const u8 d = static_cast<u8>(dst);
+    const u8 b = static_cast<u8>(base);
+    EmitRex(false, d >= 8, false, b >= 8);
+    EmitByte(0x8B);
+    EmitModRM(2, d, b);
+    if ((b & 7) == 4) {
+        EmitSIB(0, 4, 4);
+    }
+    Emit32(static_cast<u32>(disp));
+}
+
+void X64Emitter::MovMemR32(X64Reg base, s32 disp, X64Reg src) {
+    const u8 b = static_cast<u8>(base);
+    const u8 s = static_cast<u8>(src);
+    EmitRex(false, s >= 8, false, b >= 8);
+    EmitByte(0x89);
+    EmitModRM(2, s, b);
+    if ((b & 7) == 4) {
+        EmitSIB(0, 4, 4);
+    }
+    Emit32(static_cast<u32>(disp));
+}
+
+void X64Emitter::MovzxR64Mem8(X64Reg dst, X64Reg base, s32 disp) {
+    const u8 d = static_cast<u8>(dst);
+    const u8 b = static_cast<u8>(base);
+    EmitRex(true, d >= 8, false, b >= 8);
+    EmitByte(0x0F);
+    EmitByte(0xB6);
+    EmitModRM(2, d, b);
+    if ((b & 7) == 4) {
+        EmitSIB(0, 4, 4);
+    }
+    Emit32(static_cast<u32>(disp));
+}
+
+void X64Emitter::AndR32R32(X64Reg dst, X64Reg src) {
+    const u8 d = static_cast<u8>(dst);
+    const u8 s = static_cast<u8>(src);
+    EmitRex(false, s >= 8, false, d >= 8);
+    EmitByte(0x21);
+    EmitModRM(3, s, d);
+}
+
+void X64Emitter::OrR32R32(X64Reg dst, X64Reg src) {
+    const u8 d = static_cast<u8>(dst);
+    const u8 s = static_cast<u8>(src);
+    EmitRex(false, s >= 8, false, d >= 8);
+    EmitByte(0x09);
+    EmitModRM(3, s, d);
+}
+
+void X64Emitter::XorR32R32(X64Reg dst, X64Reg src) {
+    const u8 d = static_cast<u8>(dst);
+    const u8 s = static_cast<u8>(src);
+    EmitRex(false, s >= 8, false, d >= 8);
+    EmitByte(0x31);
+    EmitModRM(3, s, d);
+}
+
+void X64Emitter::XorR32Imm(X64Reg dst, u32 imm) {
+    const u8 d = static_cast<u8>(dst);
+    EmitRex(false, false, false, d >= 8);
+    EmitByte(0x81);
+    EmitModRM(3, 6, d);
+    Emit32(imm);
+}
+
+void X64Emitter::ShlR64Imm(X64Reg dst, u8 imm) {
+    const u8 d = static_cast<u8>(dst);
+    EmitRex(true, false, false, d >= 8);
+    EmitByte(0xC1);
+    EmitModRM(3, 4, d);
+    EmitByte(imm & 0x3F);
+}
+void X64Emitter::ShrR64Imm(X64Reg dst, u8 imm) {
+    const u8 d = static_cast<u8>(dst);
+    EmitRex(true, false, false, d >= 8);
+    EmitByte(0xC1);
+    EmitModRM(3, 5, d);
+    EmitByte(imm & 0x3F);
+}
+void X64Emitter::SarR64Imm(X64Reg dst, u8 imm) {
+    const u8 d = static_cast<u8>(dst);
+    EmitRex(true, false, false, d >= 8);
+    EmitByte(0xC1);
+    EmitModRM(3, 7, d);
+    EmitByte(imm & 0x3F);
+}
+void X64Emitter::RorR64Imm(X64Reg dst, u8 imm) {
+    const u8 d = static_cast<u8>(dst);
+    EmitRex(true, false, false, d >= 8);
+    EmitByte(0xC1);
+    EmitModRM(3, 1, d);
+    EmitByte(imm & 0x3F);
+}
+
+void X64Emitter::ShlR32Imm(X64Reg dst, u8 imm) {
+    const u8 d = static_cast<u8>(dst);
+    EmitRex(false, false, false, d >= 8);
+    EmitByte(0xC1);
+    EmitModRM(3, 4, d);
+    EmitByte(imm & 0x1F);
+}
+void X64Emitter::ShrR32Imm(X64Reg dst, u8 imm) {
+    const u8 d = static_cast<u8>(dst);
+    EmitRex(false, false, false, d >= 8);
+    EmitByte(0xC1);
+    EmitModRM(3, 5, d);
+    EmitByte(imm & 0x1F);
+}
+void X64Emitter::SarR32Imm(X64Reg dst, u8 imm) {
+    const u8 d = static_cast<u8>(dst);
+    EmitRex(false, false, false, d >= 8);
+    EmitByte(0xC1);
+    EmitModRM(3, 7, d);
+    EmitByte(imm & 0x1F);
+}
+void X64Emitter::RorR32Imm(X64Reg dst, u8 imm) {
+    const u8 d = static_cast<u8>(dst);
+    EmitRex(false, false, false, d >= 8);
+    EmitByte(0xC1);
+    EmitModRM(3, 1, d);
+    EmitByte(imm & 0x1F);
+}
+
+void X64Emitter::SetccMem(X64Reg base, s32 disp, Cc cc) {
+    const u8 b = static_cast<u8>(base);
+    EmitRex(false, false, false, b >= 8);
+    EmitByte(0x0F);
+    EmitByte(static_cast<u8>(0x90 + static_cast<u8>(cc)));
+    EmitModRM(2, 0, b);
+    if ((b & 7) == 4) {
+        EmitSIB(0, 4, 4);
+    }
+    Emit32(static_cast<u32>(disp));
+}
+
+void X64Emitter::CmovccR64R64(X64Reg dst, X64Reg src, Cc cc) {
+    const u8 d = static_cast<u8>(dst);
+    const u8 s = static_cast<u8>(src);
+    EmitRex(true, d >= 8, false, s >= 8);
+    EmitByte(0x0F);
+    EmitByte(static_cast<u8>(0x40 + static_cast<u8>(cc)));
+    EmitModRM(3, d, s);
+}
+
+void X64Emitter::CmovccR32R32(X64Reg dst, X64Reg src, Cc cc) {
+    const u8 d = static_cast<u8>(dst);
+    const u8 s = static_cast<u8>(src);
+    EmitRex(false, d >= 8, false, s >= 8);
+    EmitByte(0x0F);
+    EmitByte(static_cast<u8>(0x40 + static_cast<u8>(cc)));
+    EmitModRM(3, d, s);
+}
+
+void X64Emitter::CmpR64Imm(X64Reg dst, s8 imm) {
+    const u8 d = static_cast<u8>(dst);
+    EmitRex(true, false, false, d >= 8);
+    EmitByte(0x83);
+    EmitModRM(3, 7, d);
+    EmitByte(static_cast<u8>(imm));
 }
 
 } // namespace nemu::core::cpu::jit

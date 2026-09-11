@@ -87,4 +87,5 @@ Nemu is designed from the ground up to achieve clean, maintainable, high-perform
 | `test_config` | **100%** (INI parsing & persistence) | **100%** |
 | `test_debug` | **100%** (Crash dump formatting) | **100%** |
 | `test_frontend`| **100%** (Gamepad UI navigation) | **100%** |
-| **Total** | **13 / 13 Suites (100% Passing)** | **13 / 13 Suites (100% Passing)** |
+| `test_ipc`     | **100%** (Horizon OS IPC & Services HLE) | **100%** |
+| **Total** | **14 / 14 Suites (100% Passing)** | **14 / 14 Suites (100% Passing)** |

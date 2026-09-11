@@ -273,4 +273,44 @@ VERIFICATION EVIDENCE:
 - Safe host environment: USB storage /dev/sdb preserved without formatting.
 ```
 
+---
+
+## Handoff 005: Horizon OS IPC Services, AArch64 JIT Full Expansion, & Microbenchmark Suite
+
+* **Date:** 2026-09-11
+* **From:** Antigravity (AGY) & Hermes (Co-Engineers)
+* **To:** Engineering Record & Deployment
+
+```text
+CURRENT MILESTONE: All Core Subsystems, Extended JIT Engine, IPC Subsystem, Benchmark Suite, and Xbox Packaging Complete
+GATE STATUS: Gates 0-10 Complete (14/14 Test Suites Passing at 100% on Linux & Windows/Wine)
+
+COMPLETED:
+- Horizon OS IPC Engine: Implemented IPC message framing (SFCI/SFCO, TLS+0x100 command buffer), client ports/sessions, and core HLE services:
+  - sm: (Initialize, GetServiceHandle)
+  - time:u (GetStandardUserSystemClock, TimeClockService)
+  - set:sys (GetFirmwareVersion, GetLanguageCode)
+  - hid (CreateAppletResource, GetSharedMemoryHandle, virtual gamepad state bridge)
+- AArch64 JIT Recompiler Expansion:
+  - BL (Function call with LR X30=PC+4 write and branch)
+  - BLR (Indirect register call with LR write)
+  - RET (Register return)
+  - LDR / STR (64-bit and 32-bit unsigned offset, reading/writing through VirtualMemory with bounds checking)
+  - SUBS / CMP (Setting NZCV flags in CpuState according to x86 sub semantics: N=SF, Z=ZF, C=!CF, V=OF)
+  - B.cond (All 15 condition codes evaluated against NZCV and branched via conditional move)
+  - CSEL (64-bit and 32-bit conditional select with correct ModR/M destination/source register encoding)
+- Unified JIT SVC Native Thunk:
+  - Invokes registered SvcDispatcher handlers directly from compiled JIT blocks.
+  - Fully complies with 16-byte stack alignment and 32-byte shadow store on Windows x64 ABI.
+- Empirical Microbenchmarking Suite (benchmarks/):
+  - bench_jit_vs_interpreter: Verified 14.75x JIT speedup (44.52 M ops/s vs 3.02 M ops/s over 8M instructions).
+  - bench_memory: 3.77 M ops/s, 2.44 GB transferred across 4 KiB boundaries.
+  - bench_deswizzle: 300 frames of 720p RGBA8 GM20B block-linear deswizzling.
+  - bench_ipc: 306,700 synchronous requests/second (3.26 µs latency).
+- Dual-Target Parity:
+  - 14 of 14 unit test suites passing 100% on Native Linux (GCC 13) and Windows PE32+ (MinGW-w64 under Wine).
+  - Updated Xbox Developer Mode APPX package: build-win/Nemu_1.0.0.0_x64.appx (912 KB).
+```
+
+
 

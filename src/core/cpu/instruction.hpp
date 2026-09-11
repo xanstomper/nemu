@@ -77,7 +77,10 @@ enum class Opcode : u16 {
     SVC,
     BRK,
     MRS,
-    MSR
+    MSR,
+
+    // Conditional Select
+    CSEL
 };
 
 enum class AddressingMode : u8 {

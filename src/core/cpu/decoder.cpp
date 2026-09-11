@@ -60,6 +60,7 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::BRK: return "BRK";
         case Opcode::MRS: return "MRS";
         case Opcode::MSR: return "MSR";
+        case Opcode::CSEL: return "CSEL";
         default: return "UNDEFINED";
     }
 }
@@ -293,6 +294,16 @@ DecodedInstruction Decoder::DecodeDataProcReg(u32 raw) noexcept {
         const bool is_sub = ExtractBit(raw, 15);
         inst.ra = static_cast<u8>(ExtractBits(raw, 10, 5));
         inst.opcode = is_sub ? Opcode::MSUB : Opcode::MADD;
+        return inst;
+    }
+
+    // Conditional select: CSEL
+    // [sf:1] 00 11010100 0 [Rm:5] [cond:4] 0 0 [Rn:5] [Rd:5]
+    // Bits 30..21 = 00 11010100, bit 11 = 0, bit 10 = 0; sf is bit 31 (variable).
+    if ((raw & 0x7FE00C00) == 0x1A800000) {
+        inst.opcode = Opcode::CSEL;
+        inst.rm = static_cast<u8>(ExtractBits(raw, 16, 5));
+        inst.condition = static_cast<Condition>(ExtractBits(raw, 12, 4));
         return inst;
     }
 

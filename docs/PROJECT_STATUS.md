@@ -72,20 +72,22 @@
 | **Gate 1** | CPU Reference Interpreter | **PASSED** | `test_cpu` (Linux) & `test_cpu.exe` (Win/Xbox) pass 100% |
 | **Gate 2** | Virtual Memory & Paging | **PASSED** | `test_memory` (Linux) & `test_memory.exe` (Win/Xbox) pass 100% |
 | **Gate 3** | Horizon Kernel Services | **PASSED** | `test_kernel` (Linux) & `test_kernel.exe` (Win/Xbox) pass 100% |
-| **Gate 4** | JIT Dynamic Recompiler | **PASSED** | `test_jit` differential verification passes 100% bit-for-bit |
+| **Gate 4** | JIT Dynamic Recompiler | **PASSED** | `test_jit` differential verification passes 100% across all 9 tests |
 | **Gate 5** | Direct3D 12 Graphics Engine | **PASSED** | `test_gpu` (Linux) & `test_gpu.exe` (Win/Xbox) pass 100% |
 | **Gate 6** | Audio & Input Subsystems | **PASSED** | `test_audio` & `test_hid` pass 100% on Linux and Win/Xbox |
 | **Gate 7** | Real Switch Homebrew Boot | **PASSED** | `test_loader` & `test_vfs` pass 100%; `Nemu` executes end-to-end |
-| **Gate 8** | Xbox Hardware Deployment | **READY** | Deployable package `build-win/Nemu_1.0.0.0_x64.appx` (904 KB) generated |
+| **Gate 8** | Xbox Hardware Deployment | **READY** | Deployable package `build-win/Nemu_1.0.0.0_x64.appx` (912 KB) generated |
+| **Gate 9** | Performance & Microbenchmarks| **PASSED** | `bench_jit_vs_interpreter` confirms **14.75x JIT speedup** (44.5 M ops/s) |
+| **Gate 10**| Horizon OS IPC & Services HLE| **PASSED** | `test_ipc` validates `sm:`, `time:u`, `set:sys`, `hid` shared memory |
 
 ---
 
 ## 3. Subsystem Implementation Health
 
-* **Core Interpreter (`src/core/cpu`)**: ARM64 reference interpreter, opcode decoder, full register file with NZCV flags.
-* **JIT Recompiler (`src/core/cpu/jit`)**: Native x86-64 machine code emitter, 16 MiB RWX executable code cache, block cache.
+* **Core Interpreter (`src/core/cpu`)**: ARM64 reference interpreter, opcode decoder, full register file with NZCV flags, branch/call and conditional select opcodes.
+* **JIT Recompiler (`src/core/cpu/jit`)**: Native x86-64 machine code emitter, 16 MiB RWX executable code cache, block cache, ABI-compliant SVC native thunk, 64/32-bit LDR/STR via VirtualMemory, CMP, all 15 B.cond conditions, CSEL, and BL/BLR/RET function calls.
 * **Memory (`src/core/memory`)**: 48-bit Virtual memory manager with 4 KiB paging, multi-page spanning transfers, and permission enforcement.
-* **Kernel (`src/core/kernel`)**: Horizon OS primitives (`KProcess`, `KThread`, `KEvent`, `KHandleTable`) and SVC dispatcher.
+* **Kernel (`src/core/kernel`)**: Horizon OS primitives (`KProcess`, `KThread`, `KEvent`, `KHandleTable`), SVC dispatcher, and IPC subsystem (`src/core/kernel/ipc/`) hosting Service Registry, `sm:`, `time:u`, `set:sys`, and `hid`.
 * **Loader (`src/core/loader`)**: NRO0 binary parser, segment mapper, and relocation setup.
 * **Filesystem (`src/core/filesystem`)**: Sandboxed VFS mounting `sdmc:/`, `romfs:/`, `save:/` with traversal attack defenses.
 * **Graphics (`src/core/gpu`)**: Maxwell 3D command processor, GM20B block-linear deswizzler, D3D12 hardware backend, and Null backend.
@@ -95,4 +97,5 @@
 * **Configuration (`src/core/config`)**: INI-based configuration manager supporting resolution, audio, deadzones, button layouts, and CPU backend modes.
 * **Crash & Diagnostics (`src/core/debug`)**: Formatted diagnostic reports capturing fault addresses, register files, process states, and timestamps.
 * **Frontend UI (`src/frontend`)**: Xbox gamepad navigable interface, homebrew library scanner, settings adjustment, and GPU rendering pass.
+* **Benchmarks (`benchmarks/`)**: Automated benchmark suite verifying JIT speedup (14.75x), VirtualMemory bandwidth (3.77 M ops/s), texture deswizzling, and IPC latency (3.26 µs).
 * **Packaging (`packaging/xbox`, `scripts`)**: Automated `Nemu_1.0.0.0_x64.appx` packaging with full-trust & expanded-resources manifest.

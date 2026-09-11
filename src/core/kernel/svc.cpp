@@ -1,10 +1,20 @@
 #include "svc.hpp"
 #include "k_event.hpp"
+#include "ipc/ipc_dispatcher.hpp"
+#include "ipc/ipc_service.hpp"
+#include "ipc/service_registry.hpp"
 #include "platform/logger.hpp"
 #include <thread>
 #include <vector>
+#include <memory>
 
 namespace nemu::core::kernel {
+
+std::shared_ptr<ipc::ServiceRegistry> SvcDispatcher::ipc_registry_;
+
+void SvcDispatcher::InitializeIpc(std::shared_ptr<ipc::ServiceRegistry> registry) {
+    ipc_registry_ = std::move(registry);
+}
 
 void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& thread, u32 svc_id) {
     NEMU_LOG_DEBUG("SVC", "Dispatching SVC 0x{:02X} for TID {}", svc_id, thread.GetTid());
@@ -21,7 +31,9 @@ void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& t
         case 0x16: SvcCloseHandle(state, process); break;
         case 0x17: SvcResetSignal(state, process); break;
         case 0x18: SvcWaitSynchronization(state, process); break;
+        case 0x21: SvcSendSyncRequest(state, process, thread); break;
         case 0x27: SvcOutputDebugString(state, process); break;
+        case 0x2B: SvcConnectToPort(state, process); break;
 
         default:
             NEMU_LOG_WARN("SVC", "Unhandled SVC 0x{:02X} called at PC 0x{:016X}", svc_id, state.pc);
@@ -232,6 +244,60 @@ void SvcDispatcher::SvcOutputDebugString(cpu::CpuState& state, KProcess& process
         }
     }
     state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcConnectToPort(cpu::CpuState& state, KProcess& process) {
+    const vaddr_t out_handle_ptr = state.GetX(0);
+    const Handle port_handle = static_cast<Handle>(state.GetX(1));
+
+    if (!ipc_registry_) {
+        NEMU_LOG_WARN("IPC", "svcConnectToPort called before InitializeIpc()");
+        state.SetX(0, static_cast<u64>(Result::NotSupported));
+        return;
+    }
+
+    auto port = process.GetHandleTable().GetObject<ipc::KClientPort>(port_handle);
+    if (!port) {
+        state.SetX(0, static_cast<u64>(Result::ResultInvalidHandle));
+        return;
+    }
+
+    auto session = std::make_shared<ipc::KClientSession>();
+    session->SetService(port->GetService());
+
+    const Handle session_handle = process.GetHandleTable().CreateHandle(session);
+    if (session_handle == InvalidHandle) {
+        state.SetX(0, static_cast<u64>(Result::OutOfMemory));
+        return;
+    }
+
+    if (!process.GetVirtualMemory().WriteBlock(out_handle_ptr, &session_handle, sizeof(session_handle))) {
+        process.GetHandleTable().CloseHandle(session_handle);
+        state.SetX(0, static_cast<u64>(Result::InvalidAddress));
+        return;
+    }
+
+    NEMU_LOG_DEBUG("IPC", "svcConnectToPort('{}') -> session handle {}", port->GetServiceName(),
+                   session_handle);
+    state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcSendSyncRequest(cpu::CpuState& state, KProcess& process, KThread& thread) {
+    const Handle session_handle = static_cast<Handle>(state.GetX(0));
+
+    if (!ipc_registry_) {
+        state.SetX(0, static_cast<u64>(Result::NotSupported));
+        return;
+    }
+
+    auto session = process.GetHandleTable().GetObject<ipc::KClientSession>(session_handle);
+    if (!session) {
+        state.SetX(0, static_cast<u64>(Result::ResultInvalidHandle));
+        return;
+    }
+
+    const u32 result = ipc::DispatchSyncRequest(process, thread, *session, *ipc_registry_);
+    state.SetX(0, result);
 }
 
 } // namespace nemu::core::kernel

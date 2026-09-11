@@ -194,6 +194,21 @@ target_link_libraries(test_frontend PRIVATE
 target_compile_features(test_frontend PRIVATE cxx_std_20)
 add_test(NAME test_frontend COMMAND test_frontend)
 
+add_executable(test_ipc
+    ipc/test_ipc.cpp
+)
+
+target_include_directories(test_ipc PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_ipc PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_ipc PRIVATE cxx_std_20)
+add_test(NAME test_ipc COMMAND test_ipc)
+
 
 
 
