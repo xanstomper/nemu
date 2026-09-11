@@ -55,6 +55,9 @@ public:
     [[nodiscard]] u64 GetContentSize() const noexcept { return content_size_; }
     [[nodiscard]] u8 GetKeyGeneration() const noexcept { return key_generation_; }
     [[nodiscard]] bool IsEncrypted() const noexcept { return is_encrypted_; }
+    [[nodiscard]] bool HasRightsId() const noexcept { return has_rights_id_; }
+    [[nodiscard]] std::array<u8, 16> GetRightsId() const noexcept { return rights_id_; }
+    [[nodiscard]] std::string GetRightsIdHex() const;
 
     /// Check if section (0..3) exists
     [[nodiscard]] bool HasSection(u32 section_index) const;
@@ -78,6 +81,8 @@ private:
     u8 key_generation_{0};
     u8 kaek_index_{0};
     bool is_encrypted_{false};
+    bool has_rights_id_{false};
+    std::array<u8, 16> rights_id_{};
     std::array<NcaSectionInfo, 4> sections_{};
     std::array<std::array<u8, 16>, 4> key_area_{};
 };

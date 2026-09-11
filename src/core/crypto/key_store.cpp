@@ -148,4 +148,65 @@ std::optional<std::vector<u8>> KeyStore::GetKeyAreaKey(u8 generation, u8 type) c
     return GetKey(ss.str());
 }
 
+std::optional<std::vector<u8>> KeyStore::GetTitleKey(std::string_view rights_id_hex) const {
+    std::string hex_str = ToLower(Trim(rights_id_hex));
+    if (hex_str.empty()) return std::nullopt;
+
+    // 1. Direct match with rights ID
+    auto key = GetKey(hex_str);
+    if (key.has_value()) return key;
+
+    // 2. Prefixed with title_key_
+    key = GetKey("title_key_" + hex_str);
+    if (key.has_value()) return key;
+
+    // 3. Prefixed with titlekey_
+    key = GetKey("titlekey_" + hex_str);
+    if (key.has_value()) return key;
+
+    return std::nullopt;
+}
+
+bool KeyStore::LoadDefaultKeys() {
+    bool any_loaded = false;
+
+    const char* env_path = std::getenv("NEMU_KEYS_PATH");
+    if (env_path != nullptr && env_path[0] != '\0') {
+        if (LoadFromFile(env_path)) any_loaded = true;
+    }
+
+    static constexpr const char* const kFixedPaths[] = {
+        "prod.keys",
+        "title.keys",
+        "keys/prod.keys",
+        "keys/title.keys",
+        "switch/prod.keys",
+        "switch/title.keys",
+        "save/keys/prod.keys",
+        "save/keys/title.keys"
+    };
+
+    for (const char* path : kFixedPaths) {
+        if (LoadFromFile(path)) {
+            any_loaded = true;
+        }
+    }
+
+    const char* home = std::getenv("HOME");
+    if (home != nullptr && home[0] != '\0') {
+        std::string home_str(home);
+        if (LoadFromFile(home_str + "/.switch/prod.keys")) any_loaded = true;
+        if (LoadFromFile(home_str + "/.switch/title.keys")) any_loaded = true;
+    }
+
+    const char* user_profile = std::getenv("USERPROFILE");
+    if (user_profile != nullptr && user_profile[0] != '\0') {
+        std::string up_str(user_profile);
+        if (LoadFromFile(up_str + "/.switch/prod.keys")) any_loaded = true;
+        if (LoadFromFile(up_str + "/.switch/title.keys")) any_loaded = true;
+    }
+
+    return any_loaded;
+}
+
 } // namespace nemu::core::crypto

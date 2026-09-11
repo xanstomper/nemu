@@ -55,6 +55,10 @@ bool NcaReader::Initialize(std::span<const u8> data, const crypto::KeyStore* key
     std::memcpy(&content_size_, h + 8, sizeof(u64));
     std::memcpy(&title_id_, h + 16, sizeof(u64));
 
+    // Rights ID at 0x230 (h + 0x30, 16 bytes)
+    std::memcpy(rights_id_.data(), h + 0x30, 16);
+    has_rights_id_ = std::any_of(rights_id_.begin(), rights_id_.end(), [](u8 b) { return b != 0; });
+
     // Parse section entries at 0x240 (4 entries of 16 bytes: relative to start of header: 0x240)
     for (u32 s = 0; s < 4; ++s) {
         const u8* sec_ptr = decrypted_header_.data() + 0x240 + s * 16;
@@ -99,6 +103,11 @@ std::optional<NcaSectionInfo> NcaReader::GetSectionInfo(u32 section_index) const
     return sections_[section_index];
 }
 
+std::string NcaReader::GetRightsIdHex() const {
+    if (!has_rights_id_) return {};
+    return crypto::KeyStore::BytesToHex(rights_id_);
+}
+
 std::optional<std::vector<u8>> NcaReader::ExtractSection(
     u32 section_index,
     const crypto::KeyStore* key_store
@@ -120,21 +129,38 @@ std::optional<std::vector<u8>> NcaReader::ExtractSection(
         return output;
     }
 
-    // Encrypted section: unwrap key area key and decrypt using CTR mode
     if (key_store == nullptr) {
         return std::nullopt;
     }
 
-    auto kak = key_store->GetKeyAreaKey(key_generation_, 0);
-    if (!kak.has_value() || kak->size() < 16) {
+    std::array<u8, 16> section_key{};
+    bool key_resolved = false;
+
+    // 1. Try resolving via Rights ID / Title Key if present
+    if (has_rights_id_) {
+        std::string rid_hex = GetRightsIdHex();
+        auto title_key = key_store->GetTitleKey(rid_hex);
+        if (title_key.has_value() && title_key->size() >= 16) {
+            std::copy_n(title_key->data(), 16, section_key.data());
+            key_resolved = true;
+        }
+    }
+
+    // 2. Fall back to Key Area unwrap using Key Area Key
+    if (!key_resolved) {
+        auto kak = key_store->GetKeyAreaKey(key_generation_, 0);
+        if (kak.has_value() && kak->size() >= 16) {
+            crypto::Aes128 kak_cipher(std::span<const u8, 16>(kak->data(), 16));
+            kak_cipher.DecryptBlock(key_area_[kaek_index_ & 3], section_key);
+            key_resolved = true;
+        }
+    }
+
+    if (!key_resolved) {
         return std::nullopt;
     }
 
-    crypto::Aes128 kak_cipher(std::span<const u8, 16>(kak->data(), 16));
-    std::array<u8, 16> decrypted_title_key{};
-    kak_cipher.DecryptBlock(key_area_[kaek_index_ & 3], decrypted_title_key);
-
-    crypto::Aes128 section_cipher(decrypted_title_key);
+    crypto::Aes128 section_cipher(section_key);
     section_cipher.DecryptCtr(src_slice, output, sec.ctr, 0);
 
     return output;

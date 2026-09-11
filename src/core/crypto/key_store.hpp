@@ -44,6 +44,12 @@ public:
     /// Helper to get a key area key by generation index (0..31) and type (0=Application, 1=Ocean, 2=System)
     [[nodiscard]] std::optional<std::vector<u8>> GetKeyAreaKey(u8 generation, u8 type = 0) const;
 
+    /// Retrieve title key associated with a 32-character hex rights ID
+    [[nodiscard]] std::optional<std::vector<u8>> GetTitleKey(std::string_view rights_id_hex) const;
+
+    /// Auto-detect and load keys from standard paths (save:/keys/, sdmc:/switch/, etc.)
+    bool LoadDefaultKeys();
+
     /// Convert a 32-hex character string to a 16-byte array
     static std::optional<std::vector<u8>> HexToBytes(std::string_view hex);
 
