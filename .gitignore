@@ -1,0 +1,39 @@
+# Build artifacts
+build/
+bin/
+lib/
+out/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+
+# Packaging
+*.appx
+*.msix
+*.appxupload
+*.msixupload
+AppPackages/
+
+# CMake temporary files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.ninja
+.ninja_*
+
+# IDEs
+.vscode/
+.vs/
+*.user
+.idea/
+
+# Logs and test outputs
+*.log
+test_reports/
+benchmarks_out/
