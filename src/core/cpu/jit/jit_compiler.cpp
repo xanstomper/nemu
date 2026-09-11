@@ -450,11 +450,21 @@ namespace {
 
 JitCompiler::JitCompiler(size_t cache_size)
     : code_cache_(cache_size) {
+    patch_cache_.resize(PATCH_CACHE_SLOTS);
 }
 
 JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& memory) {
+    // Fast path: direct-mapped patch cache hit (avoids the hash lookup).
+    {
+        const size_t idx = PatchIndex(guest_pc);
+        const BlockPatchSlot& slot = patch_cache_[idx];
+        if (slot.start_pc == guest_pc && slot.fn != nullptr) {
+            return slot.fn;
+        }
+    }
     auto it = block_map_.find(guest_pc);
     if (it != block_map_.end()) {
+        patch_cache_[PatchIndex(guest_pc)] = {guest_pc, it->second};
         return it->second;
     }
 
@@ -1192,6 +1202,7 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
 
     auto fn = reinterpret_cast<JitBlockFn>(exec_ptr);
     block_map_[guest_pc] = fn;
+    patch_cache_[PatchIndex(guest_pc)] = {guest_pc, fn};
     stats_.blocks_compiled++;
     stats_.instructions_recompiled += insn_count;
 
@@ -1223,10 +1234,12 @@ void JitCompiler::InvokeSvcHandler(CpuState* state, u32 svc_id) {
 
 void JitCompiler::InvalidateBlock(vaddr_t guest_pc) {
     block_map_.erase(guest_pc);
+    patch_cache_[PatchIndex(guest_pc)] = {static_cast<vaddr_t>(-1), nullptr};
 }
 
 void JitCompiler::Clear() {
     block_map_.clear();
+    std::fill(patch_cache_.begin(), patch_cache_.end(), BlockPatchSlot{static_cast<vaddr_t>(-1), nullptr});
     code_cache_.Reset();
 }
 

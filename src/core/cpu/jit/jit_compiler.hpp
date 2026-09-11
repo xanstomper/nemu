@@ -8,6 +8,7 @@
 #include <functional>
 #include <unordered_map>
 #include <memory>
+#include <vector>
 
 namespace nemu::core::cpu::jit {
 
@@ -82,6 +83,19 @@ private:
                       u64 vec_size, u64 vec_index, u64 is64, u64 is_dbl,
                       u64 cond, u64 is_load, u64 imm, u64 fp_imm_bits);
 
+    /// Direct-mapped JIT block-patch cache (the "fast dispatch" technique used
+    /// by mature dynarecs like yuzu/dynarmic and dolphin). The hot path indexes
+    /// an array by a masked guest PC and hits a cached block pointer directly,
+    /// avoiding a std::unordered_map lookup on every block re-entry.
+    struct BlockPatchSlot {
+        vaddr_t start_pc{static_cast<vaddr_t>(-1)};
+        JitBlockFn fn{nullptr};
+    };
+    static constexpr size_t PATCH_CACHE_SLOTS = 1 << 14; // 16384 slots
+    size_t PatchIndex(vaddr_t pc) const noexcept {
+        return (static_cast<size_t>(pc >> 2)) & (PATCH_CACHE_SLOTS - 1);
+    }
+
     /// Captured guest VirtualMemory address, patched into generated code at
     /// block compile time. The block cache is only valid while the same
     /// VirtualMemory object backs execution.
@@ -90,6 +104,7 @@ private:
     CodeCache code_cache_;
     X64Emitter emitter_;
     std::unordered_map<vaddr_t, JitBlockFn> block_map_;
+    std::vector<BlockPatchSlot> patch_cache_;
     JitStats stats_{};
     static SvcHandler svc_handler_;
 };
