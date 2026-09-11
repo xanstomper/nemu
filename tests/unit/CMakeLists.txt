@@ -118,5 +118,83 @@ target_link_libraries(test_hid PRIVATE
 target_compile_features(test_hid PRIVATE cxx_std_20)
 add_test(NAME test_hid COMMAND test_hid)
 
+add_executable(test_jit
+    jit/test_jit.cpp
+)
+
+target_include_directories(test_jit PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_jit PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_jit PRIVATE cxx_std_20)
+add_test(NAME test_jit COMMAND test_jit)
+
+add_executable(test_save
+    save/test_save.cpp
+)
+
+target_include_directories(test_save PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_save PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_save PRIVATE cxx_std_20)
+add_test(NAME test_save COMMAND test_save)
+
+add_executable(test_config
+    config/test_config.cpp
+)
+
+target_include_directories(test_config PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_config PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_config PRIVATE cxx_std_20)
+add_test(NAME test_config COMMAND test_config)
+
+add_executable(test_debug
+    debug/test_debug.cpp
+)
+
+target_include_directories(test_debug PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_debug PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_debug PRIVATE cxx_std_20)
+add_test(NAME test_debug COMMAND test_debug)
+
+add_executable(test_frontend
+    frontend/test_frontend.cpp
+)
+
+target_include_directories(test_frontend PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_frontend PRIVATE
+    Nemu.Core
+    Nemu.Frontend
+)
+
+target_compile_features(test_frontend PRIVATE cxx_std_20)
+add_test(NAME test_frontend COMMAND test_frontend)
+
+
+
 
 

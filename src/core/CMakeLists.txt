@@ -6,6 +6,9 @@ add_subdirectory(filesystem)
 add_subdirectory(gpu)
 add_subdirectory(audio)
 add_subdirectory(hid)
+add_subdirectory(debug)
+add_subdirectory(save)
+add_subdirectory(config)
 
 add_library(Nemu.Core INTERFACE)
 target_link_libraries(Nemu.Core INTERFACE
@@ -17,8 +20,12 @@ target_link_libraries(Nemu.Core INTERFACE
     Nemu.Gpu
     Nemu.Audio
     Nemu.Hid
+    Nemu.Debug
+    Nemu.Save
+    Nemu.Config
     Nemu.Platform
 )
+
 
 
 

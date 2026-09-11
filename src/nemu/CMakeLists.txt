@@ -8,6 +8,7 @@ target_include_directories(Nemu PRIVATE
 
 target_link_libraries(Nemu PRIVATE
     Nemu.Core
+    Nemu.Frontend
 )
 
 target_compile_features(Nemu PRIVATE cxx_std_20)
