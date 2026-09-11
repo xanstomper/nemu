@@ -348,3 +348,18 @@ target_link_libraries(test_render_pipeline PRIVATE
 
 target_compile_features(test_render_pipeline PRIVATE cxx_std_20)
 add_test(NAME test_render_pipeline COMMAND test_render_pipeline)
+
+add_executable(test_aligned_alloc
+    common/test_aligned_alloc.cpp
+)
+
+target_include_directories(test_aligned_alloc PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_aligned_alloc PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_aligned_alloc PRIVATE cxx_std_20)
+add_test(NAME test_aligned_alloc COMMAND test_aligned_alloc)
