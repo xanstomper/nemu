@@ -273,3 +273,18 @@ target_link_libraries(test_bounded_queue PRIVATE
 
 target_compile_features(test_bounded_queue PRIVATE cxx_std_20)
 add_test(NAME test_bounded_queue COMMAND test_bounded_queue)
+
+add_executable(test_scratch_buffer
+    common/test_scratch_buffer.cpp
+)
+
+target_include_directories(test_scratch_buffer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_scratch_buffer PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_scratch_buffer PRIVATE cxx_std_20)
+add_test(NAME test_scratch_buffer COMMAND test_scratch_buffer)
