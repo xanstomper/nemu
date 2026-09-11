@@ -51,6 +51,15 @@ private:
     static void SvcCloseHandle(cpu::CpuState& state, KProcess& process);
     static void SvcResetSignal(cpu::CpuState& state, KProcess& process);
     static void SvcWaitSynchronization(cpu::CpuState& state, KProcess& process);
+    static void SvcArbitrateLock(cpu::CpuState& state, KProcess& process);
+    static void SvcArbitrateUnlock(cpu::CpuState& state, KProcess& process);
+    static void SvcWaitProcessWideKeyAtomic(cpu::CpuState& state, KProcess& process);
+    static void SvcSignalProcessWideKey(cpu::CpuState& state, KProcess& process);
+
+    // Shared Memory
+    static void SvcCreateSharedMemory(cpu::CpuState& state, KProcess& process);
+    static void SvcMapSharedMemory(cpu::CpuState& state, KProcess& process);
+    static void SvcUnmapSharedMemory(cpu::CpuState& state, KProcess& process);
 
     // IPC (Horizon HLE)
     static void SvcConnectToPort(cpu::CpuState& state, KProcess& process);

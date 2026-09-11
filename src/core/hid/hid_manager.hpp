@@ -3,6 +3,8 @@
 #include "hid_types.hpp"
 #include "deadzone.hpp"
 #include "controller_mapping.hpp"
+#include "vibration.hpp"
+#include "sixaxis.hpp"
 #include <array>
 #include <mutex>
 
@@ -35,6 +37,14 @@ public:
         outer_deadzone_ = outer;
     }
 
+    /// Vibration manager access
+    [[nodiscard]] VibrationManager& GetVibrationManager() noexcept { return vibration_; }
+    [[nodiscard]] const VibrationManager& GetVibrationManager() const noexcept { return vibration_; }
+
+    /// Six-axis motion sensor manager access
+    [[nodiscard]] SixAxisManager& GetSixAxisManager() noexcept { return sixaxis_; }
+    [[nodiscard]] const SixAxisManager& GetSixAxisManager() const noexcept { return sixaxis_; }
+
 private:
     mutable std::mutex hid_mutex_;
     FaceButtonLayout layout_{FaceButtonLayout::NintendoStandard};
@@ -43,6 +53,9 @@ private:
 
     std::array<NpadRingBuffer, MAX_PLAYERS> controllers_{};
     std::array<s64, MAX_PLAYERS> sampling_numbers_{};
+
+    VibrationManager vibration_{};
+    SixAxisManager sixaxis_{};
 };
 
 } // namespace nemu::core::hid

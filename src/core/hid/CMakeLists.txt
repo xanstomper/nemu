@@ -6,6 +6,10 @@ add_library(Nemu.Hid STATIC
     controller_mapping.cpp
     hid_manager.hpp
     hid_manager.cpp
+    vibration.hpp
+    vibration.cpp
+    sixaxis.hpp
+    sixaxis.cpp
 )
 
 target_include_directories(Nemu.Hid PUBLIC

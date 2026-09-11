@@ -92,6 +92,57 @@ int main() {
         std::cout << "  - HidManager multi-player & ring buffer saturation: PASSED" << std::endl;
     }
 
+    // 4. Test VibrationManager (Switch HD Rumble -> Xbox ERM/LRA Motors)
+    {
+        HidManager mgr;
+        NpadVibrationValue left{
+            .amp_low = 0.8f,
+            .freq_low = 160.0f,
+            .amp_high = 0.2f,
+            .freq_high = 320.0f
+        };
+        NpadVibrationValue right{
+            .amp_low = 0.1f,
+            .freq_low = 160.0f,
+            .amp_high = 0.9f,
+            .freq_high = 320.0f
+        };
+
+        mgr.GetVibrationManager().SetVibration(0, left, right);
+        auto xbox_vib = mgr.GetVibrationManager().GetVibration(0);
+
+        NEMU_TEST_ASSERT(xbox_vib.left_motor == 0.8f, "Left motor matches low-freq amplitude");
+        NEMU_TEST_ASSERT(xbox_vib.right_motor == 0.9f, "Right motor matches high-freq amplitude");
+        NEMU_TEST_ASSERT(xbox_vib.left_trigger > 0.0f, "Left trigger impulse active");
+        NEMU_TEST_ASSERT(xbox_vib.right_trigger > 0.0f, "Right trigger impulse active");
+
+        mgr.GetVibrationManager().StopAll();
+        auto stopped_vib = mgr.GetVibrationManager().GetVibration(0);
+        NEMU_TEST_ASSERT(stopped_vib.left_motor == 0.0f && stopped_vib.right_motor == 0.0f, "StopAll silences motors");
+
+        std::cout << "  - VibrationManager HD rumble -> Xbox motors: PASSED" << std::endl;
+    }
+
+    // 5. Test SixAxisManager (Motion Sensor & Gyro Emulation)
+    {
+        HidManager mgr;
+        auto neutral = mgr.GetSixAxisManager().GetSensorState(0);
+        NEMU_TEST_ASSERT(neutral.accel_z == 1.0f, "Neutral sensor experiences 1G gravity along Z");
+        NEMU_TEST_ASSERT(neutral.gyro_x == 0.0f && neutral.gyro_z == 0.0f, "Neutral gyro is stationary");
+
+        // Deflect right thumbstick horizontally (simulating yaw rotation)
+        XboxGamepadState state{};
+        state.thumb_rx = 32767; // Full right deflection
+        state.thumb_ry = 0;
+        mgr.UpdateController(0, state);
+
+        auto motion = mgr.GetSixAxisManager().GetSensorState(0);
+        NEMU_TEST_ASSERT(motion.gyro_z > 170.0f, "Right stick deflection generates yaw angular velocity");
+        NEMU_TEST_ASSERT(motion.accel_x > 0.4f, "Right stick deflection tilts accelerometer X");
+
+        std::cout << "  - SixAxisManager IMU & gyro emulation: PASSED" << std::endl;
+    }
+
     std::cout << "[Test: Input / HID Subsystem & Gamepad Mapping PASSED]" << std::endl;
     return 0;
 }

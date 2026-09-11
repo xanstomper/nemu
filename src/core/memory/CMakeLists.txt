@@ -2,6 +2,8 @@ add_library(Nemu.Memory STATIC
     memory_interface.hpp
     virtual_memory.hpp
     virtual_memory.cpp
+    fastmem.hpp
+    fastmem.cpp
 )
 
 target_include_directories(Nemu.Memory PUBLIC

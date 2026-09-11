@@ -1,4 +1,5 @@
 #include "core/memory/virtual_memory.hpp"
+#include "core/memory/fastmem.hpp"
 #include <iostream>
 #include <cstdlib>
 #include <vector>
@@ -74,6 +75,54 @@ void TestBlockAndBoundary() {
     std::cout << "  PASSED.\n";
 }
 
+void TestFastmemAndTiers() {
+    std::cout << "[TEST] Running TestFastmemAndTiers...\n";
+    auto& fm = FastmemManager::Instance();
+
+    // 1. Test 4GB retail initialization
+    NEMU_TEST_ASSERT(fm.Initialize(MemoryTier::Retail4GB));
+    NEMU_TEST_ASSERT(fm.IsEnabled());
+    NEMU_TEST_ASSERT(fm.GetDramSize() == FastmemManager::SIZE_4GB);
+    NEMU_TEST_ASSERT(fm.GetBase() != nullptr);
+
+    const vaddr_t test_va = 0x80000000ULL; // 2 GiB heap offset
+    const size_t test_sz = 0x10000;         // 64 KiB
+
+    // Commit ReadWrite
+    NEMU_TEST_ASSERT(fm.Commit(test_va, test_sz, MemoryPermission::ReadWrite));
+    NEMU_TEST_ASSERT(fm.IsValidRange(test_va, test_sz));
+
+    // Direct host pointer access
+    u8* host_ptr = fm.GetPointer(test_va);
+    NEMU_TEST_ASSERT(host_ptr != nullptr);
+
+    // Direct memory write and readback
+    const u64 sample = 0xFEEDC0FFEE010203ULL;
+    *reinterpret_cast<u64*>(host_ptr) = sample;
+    NEMU_TEST_ASSERT(*reinterpret_cast<volatile u64*>(host_ptr) == sample);
+
+    // Change protection
+    NEMU_TEST_ASSERT(fm.Protect(test_va, test_sz, MemoryPermission::Read));
+
+    // Decommit and shutdown
+    NEMU_TEST_ASSERT(fm.Decommit(test_va, test_sz));
+    fm.Shutdown();
+    NEMU_TEST_ASSERT(!fm.IsEnabled());
+    NEMU_TEST_ASSERT(fm.GetBase() == nullptr);
+
+    // 2. Test 6GB OLED tier initialization
+    NEMU_TEST_ASSERT(fm.Initialize(MemoryTier::Oled6GB));
+    NEMU_TEST_ASSERT(fm.GetDramSize() == FastmemManager::SIZE_6GB);
+    fm.Shutdown();
+
+    // 3. Test 8GB DevKit tier initialization
+    NEMU_TEST_ASSERT(fm.Initialize(MemoryTier::DevKit8GB));
+    NEMU_TEST_ASSERT(fm.GetDramSize() == FastmemManager::SIZE_8GB);
+    fm.Shutdown();
+
+    std::cout << "  PASSED.\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "   NEMU VIRTUAL MEMORY UNIT TESTS       \n";
@@ -81,6 +130,7 @@ int main() {
 
     TestMappingAndPermissions();
     TestBlockAndBoundary();
+    TestFastmemAndTiers();
 
     std::cout << "ALL MEMORY UNIT TESTS PASSED SUCCESSFULLY!\n";
     return 0;

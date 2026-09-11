@@ -18,6 +18,7 @@
 #include "core/kernel/ipc/vi_service.hpp"
 #include "core/kernel/ipc/fsp_srv_service.hpp"
 #include "core/kernel/ipc/audren_service.hpp"
+#include "core/kernel/ipc/audout_service.hpp"
 #include "core/kernel/ipc/applet_service.hpp"
 #include "core/kernel/ipc/acc_service.hpp"
 #include "core/filesystem/vfs.hpp"
@@ -570,6 +571,81 @@ void TestAudrenService() {
     std::cout << "  PASSED.\n";
 }
 
+void TestAudoutService() {
+    std::cout << "[TEST] audout:u direct audio output ...\n";
+    auto backend = std::make_shared<audio::NullAudioBackend>();
+    backend->Initialize(48000, 2);
+
+    ServiceRegistry reg;
+    reg.Register(std::make_shared<AudoutManagerService>(backend));
+
+    auto proc = std::make_shared<KProcess>(1, "Ipctest");
+    KThread thread(1, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+
+    auto port = reg.CreatePort("audout:u");
+    NEMU_IPC_ASSERT(port.has_value());
+    auto session = std::make_shared<KClientSession>();
+    session->SetService((*port)->GetService());
+
+    // 1. ListAudioOuts (cmd 0)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 0, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const u32 dev_count = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(dev_count == 1);
+
+    // 2. OpenAudioOut (cmd 1)
+    struct { u32 rate; u16 channels; } open_args{48000, 2};
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 1, &open_args, sizeof(open_args));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle out_handle = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(out_handle != InvalidHandle);
+
+    auto out_session = std::dynamic_pointer_cast<KClientSession>(proc->GetHandleTable().GetObject(out_handle));
+    NEMU_IPC_ASSERT(out_session != nullptr);
+
+    // 3. StartAudioOut (cmd 1 on IAudioOut)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 1, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *out_session, reg) == static_cast<u32>(IpcResult::Success));
+
+    // 4. GetAudioOutState (cmd 0) -> state should be 1 (started)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 0, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *out_session, reg) == static_cast<u32>(IpcResult::Success));
+    const u32 state = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(state == 1);
+
+    // 5. AppendAudioOutBuffer (cmd 3)
+    // Setup test buffer in guest memory: 480 frames = 10 ms audio
+    constexpr vaddr_t sample_vaddr = 0x0073000000ULL;
+    NEMU_IPC_ASSERT(proc->GetVirtualMemory().Map(sample_vaddr, 0x2000, memory::MemoryPermission::All));
+    std::vector<s16> sample_data(480 * 2, 1000);
+    NEMU_IPC_ASSERT(proc->GetVirtualMemory().WriteBlock(sample_vaddr, sample_data.data(), sample_data.size() * sizeof(s16)));
+
+    AudioOutBufferDescriptor desc{
+        .next_ptr = 0,
+        .sample_data_ptr = sample_vaddr,
+        .buffer_capacity = sample_data.size() * sizeof(s16),
+        .data_size = sample_data.size() * sizeof(s16),
+        .tag = 0xFEEDCAFEULL
+    };
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 3, &desc, sizeof(desc));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *out_session, reg) == static_cast<u32>(IpcResult::Success));
+
+    // 6. GetReleasedAudioOutBuffers (cmd 5)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 5, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *out_session, reg) == static_cast<u32>(IpcResult::Success));
+    const u32 rel_count = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(rel_count == 1);
+    const u64 rel_tag = ReadReply<u64>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 8);
+    NEMU_IPC_ASSERT(rel_tag == 0xFEEDCAFEULL);
+
+    // 7. StopAudioOut (cmd 2)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 2, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *out_session, reg) == static_cast<u32>(IpcResult::Success));
+
+    backend->Shutdown();
+    std::cout << "  PASSED.\n";
+}
+
 void TestAppletService() {
     std::cout << "[TEST] appletOE application service ...\n";
     ServiceRegistry reg;
@@ -653,6 +729,7 @@ int main() {
     TestViService();
     TestFspSrvService();
     TestAudrenService();
+    TestAudoutService();
     TestAppletService();
     TestAccountService();
 

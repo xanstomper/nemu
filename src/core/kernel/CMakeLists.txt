@@ -8,6 +8,12 @@ add_library(Nemu.Kernel STATIC
     k_process.cpp
     k_thread.hpp
     k_thread.cpp
+    k_shared_memory.hpp
+    k_shared_memory.cpp
+    k_mutex.hpp
+    k_mutex.cpp
+    k_address_arbiter.hpp
+    k_address_arbiter.cpp
     svc.hpp
     svc.cpp
     ipc/ipc_types.hpp
@@ -34,6 +40,8 @@ add_library(Nemu.Kernel STATIC
     ipc/fsp_srv_service.cpp
     ipc/audren_service.hpp
     ipc/audren_service.cpp
+    ipc/audout_service.hpp
+    ipc/audout_service.cpp
     ipc/applet_service.hpp
     ipc/applet_service.cpp
     ipc/acc_service.hpp

@@ -7,6 +7,8 @@ add_library(Nemu.Loader STATIC
     pfs0.cpp
     nca.hpp
     nca.cpp
+    romfs.hpp
+    romfs.cpp
     title_loader.hpp
     title_loader.cpp
 )

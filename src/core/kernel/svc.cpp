@@ -1,5 +1,7 @@
 #include "svc.hpp"
 #include "k_event.hpp"
+#include "k_shared_memory.hpp"
+#include "k_mutex.hpp"
 #include "ipc/ipc_dispatcher.hpp"
 #include "ipc/ipc_service.hpp"
 #include "ipc/service_registry.hpp"
@@ -28,9 +30,16 @@ void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& t
         case 0x09: SvcStartThread(state, process); break;
         case 0x0A: SvcExitThread(state, thread); break;
         case 0x0B: SvcSleepThread(state); break;
+        case 0x13: SvcCreateSharedMemory(state, process); break;
+        case 0x14: SvcMapSharedMemory(state, process); break;
+        case 0x15: SvcUnmapSharedMemory(state, process); break;
         case 0x16: SvcCloseHandle(state, process); break;
         case 0x17: SvcResetSignal(state, process); break;
         case 0x18: SvcWaitSynchronization(state, process); break;
+        case 0x1A: SvcArbitrateLock(state, process); break;
+        case 0x1B: SvcArbitrateUnlock(state, process); break;
+        case 0x1C: SvcWaitProcessWideKeyAtomic(state, process); break;
+        case 0x1E: SvcSignalProcessWideKey(state, process); break;
         case 0x21: SvcSendSyncRequest(state, process, thread); break;
         case 0x27: SvcOutputDebugString(state, process); break;
         case 0x2B: SvcConnectToPort(state, process); break;
@@ -298,6 +307,96 @@ void SvcDispatcher::SvcSendSyncRequest(cpu::CpuState& state, KProcess& process, 
 
     const u32 result = ipc::DispatchSyncRequest(process, thread, *session, *ipc_registry_);
     state.SetX(0, result);
+}
+
+void SvcDispatcher::SvcCreateSharedMemory(cpu::CpuState& state, KProcess& process) {
+    const size_t size = static_cast<size_t>(state.GetX(1));
+    const auto owner_perm = static_cast<memory::MemoryPermission>(state.GetX(2));
+    const auto user_perm = static_cast<memory::MemoryPermission>(state.GetX(3));
+
+    auto shmem = std::make_shared<KSharedMemory>(size, owner_perm, user_perm);
+    Handle handle = process.GetHandleTable().CreateHandle(shmem);
+    if (handle == InvalidHandle) {
+        state.SetX(0, static_cast<u64>(Result::OutOfMemory));
+        return;
+    }
+    state.SetX(0, static_cast<u64>(Result::Success));
+    state.SetX(1, handle);
+}
+
+void SvcDispatcher::SvcMapSharedMemory(cpu::CpuState& state, KProcess& process) {
+    const Handle handle = static_cast<Handle>(state.GetX(1));
+    const vaddr_t address = state.GetX(2);
+    const auto perm = static_cast<memory::MemoryPermission>(state.GetX(4));
+
+    auto shmem = process.GetHandleTable().GetObject<KSharedMemory>(handle);
+    if (!shmem) {
+        state.SetX(0, static_cast<u64>(Result::ResultInvalidHandle));
+        return;
+    }
+
+    if (!shmem->MapInto(process.GetVirtualMemory(), address, perm)) {
+        state.SetX(0, static_cast<u64>(Result::InvalidAddress));
+        return;
+    }
+    state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcUnmapSharedMemory(cpu::CpuState& state, KProcess& process) {
+    const Handle handle = static_cast<Handle>(state.GetX(1));
+    const vaddr_t address = state.GetX(2);
+
+    auto shmem = process.GetHandleTable().GetObject<KSharedMemory>(handle);
+    if (!shmem) {
+        state.SetX(0, static_cast<u64>(Result::ResultInvalidHandle));
+        return;
+    }
+
+    if (!shmem->UnmapFrom(process.GetVirtualMemory(), address)) {
+        state.SetX(0, static_cast<u64>(Result::InvalidAddress));
+        return;
+    }
+    state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcArbitrateLock(cpu::CpuState& state, KProcess& process) {
+    const vaddr_t mutex_addr = state.GetX(1);
+    const u32 tag = static_cast<u32>(state.GetX(2));
+    u32 cur = process.GetVirtualMemory().Read32(mutex_addr);
+    if (cur == 0) {
+        process.GetVirtualMemory().Write32(mutex_addr, tag);
+    }
+    state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcArbitrateUnlock(cpu::CpuState& state, KProcess& process) {
+    const vaddr_t mutex_addr = state.GetX(0);
+    process.GetVirtualMemory().Write32(mutex_addr, 0);
+    process.GetAddressArbiter().Signal(mutex_addr, 1);
+    state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcWaitProcessWideKeyAtomic(cpu::CpuState& state, KProcess& process) {
+    const vaddr_t key_addr = state.GetX(0);
+    const vaddr_t mutex_addr = state.GetX(1);
+    const s64 timeout_ns = static_cast<s64>(state.GetX(3));
+
+    // Release mutex
+    process.GetVirtualMemory().Write32(mutex_addr, 0);
+    process.GetAddressArbiter().Signal(mutex_addr, 1);
+
+    // Wait on key
+    u32 cur_key = process.GetVirtualMemory().Read32(key_addr);
+    bool ok = process.GetAddressArbiter().WaitForAddressIfEqual(process.GetVirtualMemory(), key_addr, cur_key, timeout_ns);
+    state.SetX(0, ok ? static_cast<u64>(Result::Success) : static_cast<u64>(Result::Timeout));
+}
+
+void SvcDispatcher::SvcSignalProcessWideKey(cpu::CpuState& state, KProcess& process) {
+    const vaddr_t key_addr = state.GetX(0);
+    const u32 count = static_cast<u32>(state.GetX(1));
+    u32 woken = process.GetAddressArbiter().Signal(key_addr, count);
+    state.SetX(0, static_cast<u64>(Result::Success));
+    state.SetX(1, woken);
 }
 
 } // namespace nemu::core::kernel

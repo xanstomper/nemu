@@ -2,6 +2,7 @@
 #include "core/loader/nso.hpp"
 #include "core/loader/pfs0.hpp"
 #include "core/loader/nca.hpp"
+#include "core/loader/romfs.hpp"
 #include "core/loader/title_loader.hpp"
 #include "core/filesystem/vfs.hpp"
 #include "core/crypto/aes.hpp"
@@ -518,6 +519,56 @@ int main() {
         }
 
         std::cout << "  - Universal TitleLoader (.nro, .nso, .nsp, .xci, .nca) tests: PASSED" << std::endl;
+    }
+
+    // 6. RomFS Archive Extraction and VFS Mounting Tests
+    {
+        std::cout << "  - Running RomFS Archive Creation, Extraction, & VFS Mount..." << std::endl;
+        std::unordered_map<std::string, std::vector<u8>> virtual_files;
+        const std::string text1 = "Hello from Switch RomFS!";
+        const std::string text2 = "Configuration settings for game title";
+        const std::vector<u8> bin_data = {0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04};
+
+        virtual_files["message.txt"] = std::vector<u8>(text1.begin(), text1.end());
+        virtual_files["config/settings.ini"] = std::vector<u8>(text2.begin(), text2.end());
+        virtual_files["data/binary.dat"] = bin_data;
+
+        std::vector<u8> romfs_blob = loader::RomfsReader::BuildRomfs(virtual_files);
+        NEMU_TEST_ASSERT(!romfs_blob.empty(), "RomFS binary image must not be empty");
+
+        loader::RomfsReader reader;
+        NEMU_TEST_ASSERT(reader.Initialize(romfs_blob), "RomfsReader must initialize successfully");
+        NEMU_TEST_ASSERT(reader.HasFile("message.txt"), "Must have message.txt");
+        NEMU_TEST_ASSERT(reader.HasFile("config/settings.ini"), "Must have config/settings.ini");
+        NEMU_TEST_ASSERT(reader.HasFile("romfs:/data/binary.dat"), "Must have romfs:/data/binary.dat with prefix");
+
+        auto msg_span = reader.OpenFile("message.txt");
+        NEMU_TEST_ASSERT(msg_span.has_value(), "Must open message.txt");
+        std::string recovered_text1(reinterpret_cast<const char*>(msg_span->data()), msg_span->size());
+        NEMU_TEST_ASSERT(recovered_text1 == text1, "Recovered text must match original");
+
+        auto bin_span = reader.OpenFile("data/binary.dat");
+        NEMU_TEST_ASSERT(bin_span.has_value(), "Must open binary.dat");
+        NEMU_TEST_ASSERT(bin_span->size() == bin_data.size(), "Binary data size match");
+        NEMU_TEST_ASSERT(std::memcmp(bin_span->data(), bin_data.data(), bin_data.size()) == 0, "Binary contents match");
+
+        // Test VFS mounting via RomFS
+        filesystem::VirtualFileSystem vfs;
+        const auto staging_dir = std::filesystem::temp_directory_path() / "nemu_romfs_mount_test";
+        std::filesystem::remove_all(staging_dir);
+
+        NEMU_TEST_ASSERT(reader.MountToVfs(vfs, staging_dir, "romfs:/"), "MountToVfs must succeed");
+        NEMU_TEST_ASSERT(vfs.IsMounted("romfs:/"), "romfs:/ must be mounted in VFS");
+        NEMU_TEST_ASSERT(vfs.FileExists("romfs:/message.txt"), "vfs must see romfs:/message.txt");
+        NEMU_TEST_ASSERT(vfs.FileExists("romfs:/config/settings.ini"), "vfs must see nested config file");
+
+        auto vfs_read = vfs.ReadFile("romfs:/config/settings.ini");
+        NEMU_TEST_ASSERT(vfs_read.has_value(), "vfs read must succeed");
+        std::string recovered_text2(reinterpret_cast<const char*>(vfs_read->data()), vfs_read->size());
+        NEMU_TEST_ASSERT(recovered_text2 == text2, "VFS recovered text match");
+
+        std::filesystem::remove_all(staging_dir);
+        std::cout << "  - RomFS Archive tests: PASSED" << std::endl;
     }
 
     std::cout << "[Test: NRO Loader & Commercial Container/Crypto Pipeline PASSED]" << std::endl;

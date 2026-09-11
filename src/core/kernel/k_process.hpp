@@ -2,6 +2,7 @@
 
 #include "k_auto_object.hpp"
 #include "k_handle_table.hpp"
+#include "k_address_arbiter.hpp"
 #include "core/memory/virtual_memory.hpp"
 #include <string>
 #include <memory>
@@ -45,6 +46,8 @@ public:
     [[nodiscard]] KHandleTable& GetHandleTable() noexcept { return handle_table_; }
     [[nodiscard]] const KHandleTable& GetHandleTable() const noexcept { return handle_table_; }
 
+    [[nodiscard]] KAddressArbiter& GetAddressArbiter() noexcept { return address_arbiter_; }
+
     // Dynamic heap management (svcSetHeapSize)
     vaddr_t SetHeapSize(size_t size);
     [[nodiscard]] vaddr_t GetHeapBase() const noexcept { return heap_base_; }
@@ -58,6 +61,7 @@ private:
 
     memory::VirtualMemory memory_;
     KHandleTable handle_table_;
+    KAddressArbiter address_arbiter_;
 
     vaddr_t heap_base_{DEFAULT_HEAP_BASE};
     size_t current_heap_size_{0};

@@ -77,25 +77,26 @@
 | **Gate 6** | Audio & Input Subsystems | **PASSED** | `test_audio` & `test_hid` pass 100% on Linux and Win/Xbox |
 | **Gate 7** | Real Switch Homebrew Boot | **PASSED** | `test_loader` & `test_vfs` pass 100%; `Nemu` executes end-to-end |
 | **Gate 8** | Xbox Hardware Deployment | **READY** | Deployable package `build-win/Nemu_1.0.0.0_x64.appx` (912 KB) generated |
-| **Gate 9** | Performance & Microbenchmarks| **PASSED** | `bench_jit_vs_interpreter` confirms **14.75x JIT speedup** (44.5 M ops/s) |
+| **Gate 9** | Performance & Microbenchmarks| **PASSED** | `bench_jit_vs_interpreter` confirms **~65-84x JIT speedup** (>330 M ops/s) |
 | **Gate 10**| Horizon OS IPC & Services HLE| **PASSED** | `test_ipc` validates `sm:`, `time:u`, `set:sys`, `hid` shared memory |
 
 ---
 
 ## 3. Subsystem Implementation Health
 
-* **Core Interpreter (`src/core/cpu`)**: ARM64 reference interpreter, opcode decoder, full register file with NZCV flags, branch/call and conditional select opcodes.
-* **JIT Recompiler (`src/core/cpu/jit`)**: Native x86-64 machine code emitter, 16 MiB RWX executable code cache, block cache, ABI-compliant SVC native thunk, 64/32-bit LDR/STR via VirtualMemory, CMP, all 15 B.cond conditions, CSEL, and BL/BLR/RET function calls.
-* **Memory (`src/core/memory`)**: 48-bit Virtual memory manager with 4 KiB paging, multi-page spanning transfers, and permission enforcement.
-* **Kernel (`src/core/kernel`)**: Horizon OS primitives (`KProcess`, `KThread`, `KEvent`, `KHandleTable`), SVC dispatcher, and IPC subsystem (`src/core/kernel/ipc/`) hosting Service Registry, `sm:`, `time:u`, `set:sys`, and `hid`.
-* **Loader (`src/core/loader`)**: NRO0 binary parser, segment mapper, and relocation setup.
-* **Filesystem (`src/core/filesystem`)**: Sandboxed VFS mounting `sdmc:/`, `romfs:/`, `save:/` with traversal attack defenses.
+* **Core Interpreter (`src/core/cpu`)**: ARM64 reference interpreter, opcode decoder, full register file with NZCV flags, FP/SIMD scalar & vector math, atomics (LDXR/STXR/CLREX), branch/call, and conditional select opcodes.
+* **JIT Recompiler (`src/core/cpu/jit`)**: Native x86-64 machine code emitter, 16 MiB RWX executable code cache, block cache, ABI-compliant SVC native thunk, 64/32-bit LDR/STR via VirtualMemory, CMP, all 15 B.cond conditions, CSEL, NEON vectors, and BL/BLR/RET function calls.
+* **Memory (`src/core/memory`)**: 48-bit Virtual memory manager with 4 KiB paging, multi-page spanning transfers, permission enforcement, and `FastmemManager` direct 64-bit host address reservation for 4GB (Retail), 6GB (OLED), and 8GB (DevKit) virtual memory spaces.
+* **Kernel (`src/core/kernel`)**: Horizon OS primitives (`KProcess`, `KThread`, `KEvent`, `KHandleTable`, `KSharedMemory`, `KMutex`, `KAddressArbiter`), full SVC dispatcher (memory, thread, sync, arbitration, shared memory), and IPC subsystem (`src/core/kernel/ipc/`) hosting Service Registry, `sm:`, `time:u`, `set:sys`, `hid`, `nvdrv`, `vi:m`, `fsp-srv`, `audren:u`, `audout:u`, `appletOE`, and `acc:u0`.
+* **Loader (`src/core/loader`)**: Universal title loader supporting NRO0, NSO0 (with LZ4 decompression), PFS0/HFS0 (.nsp/.xci packages), NCA3/2/0 container parser/decryptor, and RomFS IVFC archive extractor (`RomfsReader`).
+* **Filesystem (`src/core/filesystem`)**: Sandboxed VFS mounting `sdmc:/`, `romfs:/`, `save:/` with traversal attack defenses and RomFS in-memory/staging integration.
 * **Graphics (`src/core/gpu`)**: Maxwell 3D command processor, GM20B block-linear deswizzler, D3D12 hardware backend, and Null backend.
-* **Audio (`src/core/audio`)**: 48kHz audio ring buffer, XAudio2 hardware backend, and Null backend.
-* **Input (`src/core/hid`)**: Switch HID shared memory ring buffers, Xbox controller mapper, radial deadzone filter.
+* **Audio (`src/core/audio`)**: 48kHz audio ring buffer, XAudio2 hardware backend, Null backend, and `audren:u` / `audout:u` IPC audio pipelines.
+* **Input (`src/core/hid`)**: Switch HID shared memory ring buffers, Xbox controller mapper, radial deadzone filter, `VibrationManager` (Switch HD rumble to Xbox ERM/LRA motors & impulse triggers), and `SixAxisManager` (IMU gyro/accelerometer motion emulation).
 * **Save Data (`src/core/save`)**: FNV-1a checksum integrity verification, atomic `.tmp` staging, `.bak` backup rotation, and automatic corruption recovery.
 * **Configuration (`src/core/config`)**: INI-based configuration manager supporting resolution, audio, deadzones, button layouts, and CPU backend modes.
 * **Crash & Diagnostics (`src/core/debug`)**: Formatted diagnostic reports capturing fault addresses, register files, process states, and timestamps.
 * **Frontend UI (`src/frontend`)**: Xbox gamepad navigable interface, homebrew library scanner, settings adjustment, and GPU rendering pass.
-* **Benchmarks (`benchmarks/`)**: Automated benchmark suite verifying JIT speedup (14.75x), VirtualMemory bandwidth (3.77 M ops/s), texture deswizzling, and IPC latency (3.26 µs).
+* **Benchmarks (`benchmarks/`)**: Automated benchmark suite verifying JIT speedup (~65-84x, >330 M ops/s), VirtualMemory bandwidth (3.77 M ops/s), texture deswizzling, and IPC latency (3.26 µs).
+
 * **Packaging (`packaging/xbox`, `scripts`)**: Automated `Nemu_1.0.0.0_x64.appx` packaging with full-trust & expanded-resources manifest.

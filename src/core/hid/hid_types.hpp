@@ -64,5 +64,31 @@ struct NpadRingBuffer {
 static_assert(sizeof(AnalogStickState) == 8, "AnalogStickState size mismatch");
 static_assert(sizeof(NpadCommonState) == 40, "NpadCommonState size mismatch");
 
+struct NpadVibrationValue {
+    float amp_low{0.0f};   // Low frequency amplitude [0.0, 1.0]
+    float freq_low{160.0f}; // Low frequency in Hz [10.0, 350.0]
+    float amp_high{0.0f};  // High frequency amplitude [0.0, 1.0]
+    float freq_high{320.0f};// High frequency in Hz [50.0, 1250.0]
+};
+
+struct XboxVibrationState {
+    float left_motor{0.0f};    // Low-frequency rumble [0.0, 1.0]
+    float right_motor{0.0f};   // High-frequency rumble [0.0, 1.0]
+    float left_trigger{0.0f};  // Xbox impulse trigger [0.0, 1.0]
+    float right_trigger{0.0f}; // Xbox impulse trigger [0.0, 1.0]
+};
+
+struct SixAxisSensorState {
+    float accel_x{0.0f};
+    float accel_y{0.0f};
+    float accel_z{1.0f}; // Standard 1G earth gravity
+    float gyro_x{0.0f};  // Angular velocity in deg/sec
+    float gyro_y{0.0f};
+    float gyro_z{0.0f};
+    float orientation_x{0.0f};
+    float orientation_y{0.0f};
+    float orientation_z{0.0f};
+    float orientation_w{1.0f};
+};
 
 } // namespace nemu::core::hid

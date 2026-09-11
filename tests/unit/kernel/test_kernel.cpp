@@ -2,6 +2,8 @@
 #include "core/kernel/k_process.hpp"
 #include "core/kernel/k_thread.hpp"
 #include "core/kernel/k_event.hpp"
+#include "core/kernel/k_shared_memory.hpp"
+#include "core/kernel/k_mutex.hpp"
 #include "core/kernel/svc.hpp"
 #include "core/cpu/interpreter.hpp"
 #include <iostream>
@@ -142,6 +144,84 @@ void TestSvcExecution() {
     std::cout << "  PASSED.\n";
 }
 
+void TestSharedMemoryAndMutex() {
+    std::cout << "[TEST] Running TestSharedMemoryAndMutex...\n";
+    auto proc = std::make_shared<KProcess>(3, "SyncTestProc");
+    KThread thread(20, proc, 44, 0x71000000ULL, KProcess::DEFAULT_STACK_TOP, KProcess::DEFAULT_TLS_BASE);
+
+    // 1. Test KSharedMemory directly
+    const size_t shmem_sz = 0x2000; // 8 KiB
+    auto shmem = std::make_shared<KSharedMemory>(shmem_sz, memory::MemoryPermission::ReadWrite, memory::MemoryPermission::Read);
+    const vaddr_t shmem_va = 0x0030000000ULL;
+
+    NEMU_TEST_ASSERT(shmem->MapInto(proc->GetVirtualMemory(), shmem_va, memory::MemoryPermission::ReadWrite));
+    proc->GetVirtualMemory().Write32(shmem_va, 0xABCDEF01);
+    NEMU_TEST_ASSERT(*reinterpret_cast<const u32*>(shmem->GetBacking()) == 0xABCDEF01);
+
+    *reinterpret_cast<u32*>(shmem->GetBacking() + 4) = 0x89ABCDEF;
+    NEMU_TEST_ASSERT(proc->GetVirtualMemory().Read32(shmem_va + 4) == 0x89ABCDEF);
+    NEMU_TEST_ASSERT(shmem->UnmapFrom(proc->GetVirtualMemory(), shmem_va));
+
+    // 2. Test KMutex
+    KMutex mutex;
+    NEMU_TEST_ASSERT(!mutex.IsLocked());
+    NEMU_TEST_ASSERT(mutex.TryLock(100));
+    NEMU_TEST_ASSERT(mutex.IsLocked());
+    NEMU_TEST_ASSERT(mutex.GetOwnerTid() == 100);
+    NEMU_TEST_ASSERT(mutex.GetRecursiveCount() == 1);
+
+    // Recursive lock
+    NEMU_TEST_ASSERT(mutex.TryLock(100));
+    NEMU_TEST_ASSERT(mutex.GetRecursiveCount() == 2);
+
+    // Other thread fails
+    NEMU_TEST_ASSERT(!mutex.TryLock(200));
+
+    // Unlocks
+    NEMU_TEST_ASSERT(mutex.Unlock(100));
+    NEMU_TEST_ASSERT(mutex.IsLocked());
+    NEMU_TEST_ASSERT(mutex.Unlock(100));
+    NEMU_TEST_ASSERT(!mutex.IsLocked());
+
+    // 3. Test SVC Shared Memory Creation & Mapping
+    cpu::CpuState& cpu = thread.GetCpuState();
+    // svcCreateSharedMemory: X1 = size, X2 = owner_perm, X3 = user_perm
+    cpu.SetX(1, 0x1000);
+    cpu.SetX(2, static_cast<u64>(memory::MemoryPermission::ReadWrite));
+    cpu.SetX(3, static_cast<u64>(memory::MemoryPermission::Read));
+    SvcDispatcher::Dispatch(cpu, *proc, thread, 0x13);
+
+    NEMU_TEST_ASSERT(cpu.GetX(0) == static_cast<u64>(Result::Success));
+    Handle shmem_h = static_cast<Handle>(cpu.GetX(1));
+    NEMU_TEST_ASSERT(shmem_h != InvalidHandle);
+
+    // svcMapSharedMemory: X1 = handle, X2 = address, X3 = size, X4 = perm
+    const vaddr_t svc_map_va = 0x0040000000ULL;
+    cpu.SetX(1, shmem_h);
+    cpu.SetX(2, svc_map_va);
+    cpu.SetX(3, 0x1000);
+    cpu.SetX(4, static_cast<u64>(memory::MemoryPermission::ReadWrite));
+    SvcDispatcher::Dispatch(cpu, *proc, thread, 0x14);
+    NEMU_TEST_ASSERT(cpu.GetX(0) == static_cast<u64>(Result::Success));
+
+    // Verify mapped and writable
+    proc->GetVirtualMemory().Write64(svc_map_va, 0x1122334455667788ULL);
+    NEMU_TEST_ASSERT(proc->GetVirtualMemory().Read64(svc_map_va) == 0x1122334455667788ULL);
+
+    // svcUnmapSharedMemory: X1 = handle, X2 = address
+    cpu.SetX(1, shmem_h);
+    cpu.SetX(2, svc_map_va);
+    SvcDispatcher::Dispatch(cpu, *proc, thread, 0x15);
+    NEMU_TEST_ASSERT(cpu.GetX(0) == static_cast<u64>(Result::Success));
+
+    // svcCloseHandle: X0 = handle
+    cpu.SetX(0, shmem_h);
+    SvcDispatcher::Dispatch(cpu, *proc, thread, 0x16);
+    NEMU_TEST_ASSERT(cpu.GetX(0) == static_cast<u64>(Result::Success));
+
+    std::cout << "  PASSED.\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "    NEMU HORIZON KERNEL UNIT TESTS      \n";
@@ -151,6 +231,7 @@ int main() {
     TestDynamicHeap();
     TestSynchronizationEvent();
     TestSvcExecution();
+    TestSharedMemoryAndMutex();
 
     std::cout << "ALL KERNEL UNIT TESTS PASSED SUCCESSFULLY!\n";
     return 0;

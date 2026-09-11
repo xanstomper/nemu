@@ -21,6 +21,9 @@ void HidManager::UpdateController(size_t player_index, const XboxGamepadState& s
     if (rb.count < 17) {
         rb.count++;
     }
+
+    // Update 6-axis motion emulation from right stick deflection
+    sixaxis_.EmulateFromStick(player_index, state.thumb_rx, state.thumb_ry);
 }
 
 NpadCommonState HidManager::GetCurrentState(size_t player_index) const {

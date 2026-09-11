@@ -59,10 +59,40 @@ namespace {
 
     // Thunks bridging JIT-generated code to VirtualMemory. Fetches return u64
     // zero-extended so 32-bit loads store cleanly into a 64-bit guest register.
-    u64 JitMemRead64(memory::VirtualMemory* mem, vaddr_t addr) { return mem->Read64(addr); }
-    u64 JitMemRead32(memory::VirtualMemory* mem, vaddr_t addr) { return mem->Read32(addr); }
-    void JitMemWrite64(memory::VirtualMemory* mem, vaddr_t addr, u64 value) { mem->Write64(addr, value); }
-    void JitMemWrite32(memory::VirtualMemory* mem, vaddr_t addr, u64 value) { mem->Write32(addr, static_cast<u32>(value)); }
+    // A GetPointer-based fast path reads/writes the page's host pointer directly
+    // (O(1), 1:1 guest->host), falling back to the safe block path only when the
+    // page is not present.
+    u64 JitMemRead64(memory::VirtualMemory* mem, vaddr_t addr) {
+        if (u8* p = mem->GetPointer(addr)) {
+            u64 v;
+            std::memcpy(&v, p, sizeof(v));
+            return v;
+        }
+        return mem->Read64(addr);
+    }
+    u64 JitMemRead32(memory::VirtualMemory* mem, vaddr_t addr) {
+        if (u8* p = mem->GetPointer(addr)) {
+            u32 v;
+            std::memcpy(&v, p, sizeof(v));
+            return v;
+        }
+        return mem->Read32(addr);
+    }
+    void JitMemWrite64(memory::VirtualMemory* mem, vaddr_t addr, u64 value) {
+        if (u8* p = mem->GetPointer(addr)) {
+            std::memcpy(p, &value, sizeof(value));
+            return;
+        }
+        mem->Write64(addr, value);
+    }
+    void JitMemWrite32(memory::VirtualMemory* mem, vaddr_t addr, u64 value) {
+        if (u8* p = mem->GetPointer(addr)) {
+            const u32 v = static_cast<u32>(value);
+            std::memcpy(p, &v, sizeof(v));
+            return;
+        }
+        mem->Write32(addr, static_cast<u32>(value));
+    }
 
     // ---------------------------------------------------------------------
     // Slow-path thunks for floating-point, vector/NEON, and atomic/LSE
