@@ -318,3 +318,18 @@ target_link_libraries(test_bit_field PRIVATE
 
 target_compile_features(test_bit_field PRIVATE cxx_std_20)
 add_test(NAME test_bit_field COMMAND test_bit_field)
+
+add_executable(test_spsc_ring
+    common/test_spsc_ring.cpp
+)
+
+target_include_directories(test_spsc_ring PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_spsc_ring PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_spsc_ring PRIVATE cxx_std_20)
+add_test(NAME test_spsc_ring COMMAND test_spsc_ring)
