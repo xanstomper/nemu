@@ -243,3 +243,18 @@ target_link_libraries(test_address_space PRIVATE
 
 target_compile_features(test_address_space PRIVATE cxx_std_20)
 add_test(NAME test_address_space COMMAND test_address_space)
+
+add_executable(test_timed_wake
+    timing/test_timed_wake.cpp
+)
+
+target_include_directories(test_timed_wake PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_timed_wake PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_timed_wake PRIVATE cxx_std_20)
+add_test(NAME test_timed_wake COMMAND test_timed_wake)

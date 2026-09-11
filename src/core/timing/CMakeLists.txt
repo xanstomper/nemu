@@ -1,6 +1,8 @@
 add_library(Nemu.Timing STATIC
     core_timing.hpp
     core_timing.cpp
+    timed_wake.hpp
+    timed_wake.cpp
 )
 
 target_include_directories(Nemu.Timing PUBLIC
