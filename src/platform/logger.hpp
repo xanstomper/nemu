@@ -30,6 +30,34 @@ public:
 
     void SetMinLevel(LogLevel level) { min_level_ = level; }
 
+    // Static convenience wrappers so services can log as
+    // `Logger::Warn("...{}", x)` without holding the singleton explicitly.
+    template <typename... Args>
+    static void Warn(std::format_string<Args...> fmt, Args&&... args) {
+        std::string message = std::format(fmt, std::forward<Args>(args)...);
+        Instance().Log(LogLevel::Warn, "", message);
+    }
+    template <typename... Args>
+    static void Error(std::format_string<Args...> fmt, Args&&... args) {
+        std::string message = std::format(fmt, std::forward<Args>(args)...);
+        Instance().Log(LogLevel::Error, "", message);
+    }
+    template <typename... Args>
+    static void Info(std::format_string<Args...> fmt, Args&&... args) {
+        std::string message = std::format(fmt, std::forward<Args>(args)...);
+        Instance().Log(LogLevel::Info, "", message);
+    }
+    template <typename... Args>
+    static void Debug(std::format_string<Args...> fmt, Args&&... args) {
+        std::string message = std::format(fmt, std::forward<Args>(args)...);
+        Instance().Log(LogLevel::Debug, "", message);
+    }
+    template <typename... Args>
+    static void Trace(std::format_string<Args...> fmt, Args&&... args) {
+        std::string message = std::format(fmt, std::forward<Args>(args)...);
+        Instance().Log(LogLevel::Trace, "", message);
+    }
+
 private:
     Logger() = default;
     LogLevel min_level_{LogLevel::Info};

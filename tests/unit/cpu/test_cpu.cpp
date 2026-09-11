@@ -9,7 +9,7 @@
 using namespace nemu;
 using namespace nemu::core;
 
-#define NEMU_TEST_ASSERT(cond) do { \
+#define NEMU_TEST_ASSERT(cond, ...) do { \
     if (!(cond)) { \
         std::cerr << "[FAIL] Assertion failed: " #cond " at " << __FILE__ << ":" << __LINE__ << std::endl; \
         std::abort(); \
@@ -357,6 +357,18 @@ void TestNeonVectorOps() {
     NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
     for (u32 i = 0; i < 4; ++i) {
         NEMU_TEST_ASSERT(state.GetVectorLane32(3, i) == 5);
+    }
+
+    // Decode-regression: FADD/FSUB/FMUL (vector) must decode to distinct opcodes.
+    // FSUB shares opcode 0b11010 and u==0 with FADD, so it must be told apart
+    // by bit 23. FMUL uses opcode 0b11011. (Verified against aarch64-linux-gnu-as.)
+    {
+        const auto d_fadd = cpu::Decoder::Decode(0x4E62D420u); // FADD v0.2d, v1.2d, v2.2d
+        const auto d_fsub = cpu::Decoder::Decode(0x4EE5D483u); // FSUB v3.2d, v4.2d, v5.2d
+        const auto d_fmul = cpu::Decoder::Decode(0x6E68DCE6u); // FMUL v6.2d, v7.2d, v8.2d
+        NEMU_TEST_ASSERT(d_fadd.opcode == cpu::Opcode::FADD_vec);
+        NEMU_TEST_ASSERT(d_fsub.opcode == cpu::Opcode::FSUB_vec);
+        NEMU_TEST_ASSERT(d_fmul.opcode == cpu::Opcode::FMUL_vec);
     }
 
     std::cout << "  PASSED.\n";

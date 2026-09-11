@@ -615,6 +615,7 @@ int main() {
             0x4EA28420, // 1.  ADD v0.4s,   v1.4s,   v2.4s
             0x6EE58483, // 2.  SUB v3.2d,   v4.2d,   v5.2d
             0x4E68D4E6, // 3.  FADD v6.2d,  v7.2d,   v8.2d
+            0x4EE8D4FE, // 3b. FSUB v30.2d, v7.2d,   v8.2d
             0x6E2BDD49, // 4.  FMUL v9.4s,  v10.4s,  v11.4s
             0x4E2E1DAC, // 5.  AND v12.16b, v13.16b, v14.16b
             0x4EB11E0F, // 6.  ORR v15.16b, v16.16b, v17.16b
