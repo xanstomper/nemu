@@ -341,17 +341,28 @@ std::vector<u8> RomfsReader::BuildRomfs(const std::unordered_map<std::string, st
     hdr.data_offset = raw_data_start;
 
     // Assemble image
-    std::vector<u8> romfs_image(static_cast<size_t>(hdr.data_offset + data_section.size()), 0);
-    std::memcpy(romfs_image.data(), &hdr, sizeof(RomfsHeader));
+    const size_t total_romfs_size = static_cast<size_t>(hdr.data_offset + data_section.size());
+    std::vector<u8> romfs_image;
+    romfs_image.resize(total_romfs_size, 0);
+
+    if (sizeof(RomfsHeader) <= romfs_image.size()) {
+        std::memcpy(romfs_image.data(), &hdr, sizeof(RomfsHeader));
+    }
 
     u32 hash_zero = 0;
-    std::memcpy(romfs_image.data() + hdr.dir_hash_table_offset, &hash_zero, 4);
-    std::memcpy(romfs_image.data() + hdr.dir_meta_table_offset, dir_meta.data(), dir_meta.size());
-    std::memcpy(romfs_image.data() + hdr.file_hash_table_offset, &hash_zero, 4);
-    if (!file_meta.empty()) {
+    if (hdr.dir_hash_table_offset + sizeof(u32) <= romfs_image.size()) {
+        std::memcpy(romfs_image.data() + hdr.dir_hash_table_offset, &hash_zero, sizeof(u32));
+    }
+    if (!dir_meta.empty() && hdr.dir_meta_table_offset + dir_meta.size() <= romfs_image.size()) {
+        std::memcpy(romfs_image.data() + hdr.dir_meta_table_offset, dir_meta.data(), dir_meta.size());
+    }
+    if (hdr.file_hash_table_offset + sizeof(u32) <= romfs_image.size()) {
+        std::memcpy(romfs_image.data() + hdr.file_hash_table_offset, &hash_zero, sizeof(u32));
+    }
+    if (!file_meta.empty() && hdr.file_meta_table_offset + file_meta.size() <= romfs_image.size()) {
         std::memcpy(romfs_image.data() + hdr.file_meta_table_offset, file_meta.data(), file_meta.size());
     }
-    if (!data_section.empty()) {
+    if (!data_section.empty() && hdr.data_offset + data_section.size() <= romfs_image.size()) {
         std::memcpy(romfs_image.data() + hdr.data_offset, data_section.data(), data_section.size());
     }
 

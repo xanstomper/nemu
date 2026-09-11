@@ -426,6 +426,50 @@ void TestAtomics() {
     std::cout << "  PASSED.\n";
 }
 
+void TestSystemRegisters() {
+    std::cout << "[TEST] Running TestSystemRegisters...\n";
+    memory::VirtualMemory mem;
+    NEMU_TEST_ASSERT(mem.Map(0xB000, 0x1000, memory::MemoryPermission::All));
+
+    // 1. MRS X0, TPIDRRO_EL0   (0xD53BD060)
+    // 2. MRS X1, CNTFRQ_EL0    (0xD53BE000)
+    // 3. MSR TPIDR_EL0, X2     (0xD51BD042)
+    // 4. MRS X3, TPIDR_EL0     (0xD53BD043)
+    const u32 code[] = {
+        0xD53BD060, // MRS X0, TPIDRRO_EL0
+        0xD53BE001, // MRS X1, CNTFRQ_EL0
+        0xD51BD042, // MSR TPIDR_EL0, X2
+        0xD53BD043  // MRS X3, TPIDR_EL0
+    };
+    NEMU_TEST_ASSERT(mem.WriteBlock(0xB000, code, sizeof(code)));
+
+    cpu::CpuState state;
+    state.Reset();
+    state.pc = 0xB000;
+    state.tpidrro_el0 = 0x00C0000000ULL; // TLS base
+    state.SetX(2, 0x12345678ULL);
+
+    cpu::Interpreter interp(state, mem);
+
+    // 1. MRS X0, TPIDRRO_EL0
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetX(0) == 0x00C0000000ULL);
+
+    // 2. MRS X1, CNTFRQ_EL0 (Switch frequency 19.2MHz)
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetX(1) == 19200000);
+
+    // 3. MSR TPIDR_EL0, X2
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.tpidr_el0 == 0x12345678ULL);
+
+    // 4. MRS X3, TPIDR_EL0
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.GetX(3) == 0x12345678ULL);
+
+    std::cout << "  PASSED.\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "    NEMU CPU INSTRUCTION UNIT TESTS     \n";
@@ -440,6 +484,7 @@ int main() {
     TestFpLoadStore();
     TestNeonVectorOps();
     TestAtomics();
+    TestSystemRegisters();
 
     std::cout << "ALL CPU UNIT TESTS PASSED SUCCESSFULLY!\n";
     return 0;

@@ -241,6 +241,22 @@ DecodedInstruction Decoder::DecodeBranches(u32 raw) noexcept {
         return inst;
     }
 
+    // MRS: 1101 0101 0011 [sysreg:15] [Rt:5]
+    if ((raw & 0xFFF00000) == 0xD5300000) {
+        inst.opcode = Opcode::MRS;
+        inst.rd = static_cast<u8>(ExtractBits(raw, 0, 5));
+        inst.imm = ExtractBits(raw, 5, 15);
+        return inst;
+    }
+
+    // MSR: 1101 0101 0001 [sysreg:15] [Rt:5]
+    if ((raw & 0xFFF00000) == 0xD5100000) {
+        inst.opcode = Opcode::MSR;
+        inst.rn = static_cast<u8>(ExtractBits(raw, 0, 5));
+        inst.imm = ExtractBits(raw, 5, 15);
+        return inst;
+    }
+
     return inst;
 }
 

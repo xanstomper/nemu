@@ -1034,6 +1034,54 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             state_.pc = next_pc;
             return StepResult::Break;
 
+        case Opcode::MRS: {
+            const u32 sys_reg = static_cast<u32>(inst.imm);
+            u64 val = 0;
+            switch (sys_reg) {
+                case 0x5E83: // TPIDRRO_EL0 (TLS base register)
+                    val = state_.tpidrro_el0;
+                    break;
+                case 0x5E82: // TPIDR_EL0 (read/write thread ID)
+                    val = state_.tpidr_el0;
+                    break;
+                case 0x5F00: // CNTFRQ_EL0 (timer frequency, 19.2 MHz)
+                    val = state_.cntfrq_el0;
+                    break;
+                case 0x5F01: // CNTPCT_EL0 (physical counter)
+                case 0x5F02: // CNTVCT_EL0 (virtual counter)
+                    val = ++state_.cntpct_el0;
+                    break;
+                default:
+                    val = 0;
+                    break;
+            }
+            state_.SetX(inst.rd, val);
+            break;
+        }
+
+        case Opcode::MSR: {
+            const u32 sys_reg = static_cast<u32>(inst.imm);
+            const u64 val = state_.GetX(inst.rn);
+            switch (sys_reg) {
+                case 0x5E83: // TPIDRRO_EL0
+                    state_.tpidrro_el0 = val;
+                    break;
+                case 0x5E82: // TPIDR_EL0
+                    state_.tpidr_el0 = val;
+                    break;
+                case 0x5F00: // CNTFRQ_EL0
+                    state_.cntfrq_el0 = val;
+                    break;
+                case 0x5F01: // CNTPCT_EL0
+                case 0x5F02: // CNTVCT_EL0
+                    state_.cntpct_el0 = val;
+                    break;
+                default:
+                    break;
+            }
+            break;
+        }
+
         default:
             NEMU_LOG_ERROR("CPU", "Unhandled opcode {} at 0x{:016X}", inst.OpcodeName(), curr_pc);
             return StepResult::UndefinedInstruction;

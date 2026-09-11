@@ -49,6 +49,9 @@ bool SaveManager::WriteSaveData(u64 title_id, std::string_view filename, std::sp
     const u64 checksum = CalculateChecksum(data);
     const size_t total_size = sizeof(SAVE_MAGIC) + data.size() + sizeof(checksum);
     std::vector<u8> container(total_size);
+    if (container.empty() || container.data() == nullptr) {
+        return false;
+    }
 
     std::memcpy(container.data(), &SAVE_MAGIC, sizeof(SAVE_MAGIC));
     if (!data.empty()) {

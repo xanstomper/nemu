@@ -700,6 +700,43 @@ int main() {
         std::cout << "  - Differential Test 13 (NEON/SIMD Vector Arithmetic): PASSED" << std::endl;
     }
 
+    // 14. Differential Test 14: System Registers (MRS / MSR)
+    {
+        const vaddr_t base = 0x007000E000ULL;
+        NEMU_TEST_ASSERT(memory.Map(base, 0x1000, memory::MemoryPermission::All), "Map page for test 14");
+
+        const std::vector<u32> code = {
+            0xD53BD060, // MRS X0, TPIDRRO_EL0
+            0xD53BE001, // MRS X1, CNTFRQ_EL0
+            0xD51BD042, // MSR TPIDR_EL0, X2
+            0xD53BD043, // MRS X3, TPIDR_EL0
+            0xD65F03C0  // RET
+        };
+        const vaddr_t halt = base + code.size() * 4;
+        memory.WriteBlock(base, code.data(), code.size() * 4);
+
+        cpu::CpuState s_interp;
+        s_interp.Reset();
+        s_interp.pc = base;
+        s_interp.tpidrro_el0 = 0x00C0000000ULL;
+        s_interp.SetX(2, 0x9988776655443322ULL);
+        s_interp.SetX(30, halt);
+
+        cpu::CpuState s_jit = s_interp;
+
+        cpu::Interpreter interp(s_interp, memory);
+        RunInterpTo(interp, s_interp, halt, "Differential Test 14 (System Registers)");
+        RunJitTo(jit, s_jit, memory, halt, "Differential Test 14 (System Registers)");
+
+        AssertCpuStatesMatchFull(s_interp, s_jit, "Differential Test 14 (System Registers)");
+
+        NEMU_TEST_ASSERT(s_interp.GetX(0) == 0x00C0000000ULL, "TPIDRRO_EL0 == TLS base");
+        NEMU_TEST_ASSERT(s_interp.GetX(1) == 19200000, "CNTFRQ_EL0 == 19.2 MHz");
+        NEMU_TEST_ASSERT(s_interp.GetX(3) == 0x9988776655443322ULL, "TPIDR_EL0 round-trip");
+
+        std::cout << "  - Differential Test 14 (System Registers MRS/MSR): PASSED" << std::endl;
+    }
+
     const auto stats = jit.GetStats();
     NEMU_TEST_ASSERT(stats.blocks_compiled > 0, "Blocks compiled must be > 0");
     NEMU_TEST_ASSERT(stats.blocks_executed > 0, "Blocks executed must be > 0");

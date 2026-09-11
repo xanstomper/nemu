@@ -23,7 +23,7 @@ Nemu is a high-performance Nintendo Switch emulation platform engineered specifi
 | **Filesystem**| VFS (RomFS, PFS0/NSP, NRO, NSO, SaveFS) | **Implemented** — NRO/NSO/LZ4, PFS0/NSP, NCA loaders |
 | **Frontend** | Xbox-native Game Browser & Settings UI | **Implemented** |
 
-> **Status legend:** all 8 subsystems are implemented and verified. **14/14 automated
+> **Status legend:** all 8 subsystems are implemented and verified. **15/15 automated
 > test suites pass** on native Linux (GCC 13) and Windows/Xbox PE32+ (MinGW-w64 under
 > Wine), and a validated Xbox Developer Mode APPX package is produced for sideloading.
 > WIP roadmap items tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).

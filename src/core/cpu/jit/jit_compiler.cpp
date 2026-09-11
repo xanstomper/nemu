@@ -784,6 +784,52 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
                 break;
             }
 
+            case Opcode::MRS: {
+                const u32 sys_reg = static_cast<u32>(inst.imm);
+                s32 slot = -1;
+                switch (sys_reg) {
+                    case 0x5E83: slot = static_cast<s32>(offsetof(CpuState, tpidrro_el0)); break;
+                    case 0x5E82: slot = static_cast<s32>(offsetof(CpuState, tpidr_el0)); break;
+                    case 0x5F00: slot = static_cast<s32>(offsetof(CpuState, cntfrq_el0)); break;
+                    case 0x5F01:
+                    case 0x5F02: slot = static_cast<s32>(offsetof(CpuState, cntpct_el0)); break;
+                    default: slot = -1; break;
+                }
+                if (slot >= 0) {
+                    emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, slot);
+                } else {
+                    emitter_.XorR64R64(X64Reg::RAX, X64Reg::RAX);
+                }
+                if (inst.rd != 31) {
+                    emitter_.MovMemR64(X64Reg::R15, XSlot(inst.rd), X64Reg::RAX);
+                }
+                curr_pc += 4;
+                break;
+            }
+
+            case Opcode::MSR: {
+                const u32 sys_reg = static_cast<u32>(inst.imm);
+                s32 slot = -1;
+                switch (sys_reg) {
+                    case 0x5E83: slot = static_cast<s32>(offsetof(CpuState, tpidrro_el0)); break;
+                    case 0x5E82: slot = static_cast<s32>(offsetof(CpuState, tpidr_el0)); break;
+                    case 0x5F00: slot = static_cast<s32>(offsetof(CpuState, cntfrq_el0)); break;
+                    case 0x5F01:
+                    case 0x5F02: slot = static_cast<s32>(offsetof(CpuState, cntpct_el0)); break;
+                    default: slot = -1; break;
+                }
+                if (slot >= 0) {
+                    if (inst.rn == 31) {
+                        emitter_.XorR64R64(X64Reg::RAX, X64Reg::RAX);
+                    } else {
+                        emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, XSlot(inst.rn));
+                    }
+                    emitter_.MovMemR64(X64Reg::R15, slot, X64Reg::RAX);
+                }
+                curr_pc += 4;
+                break;
+            }
+
             case Opcode::FADD_scalar: {
                 if (inst.is_fp_double) {
                     emitter_.MovsdXmmMem(XmmReg::XMM0, X64Reg::R15, VSlot(inst.rn));
