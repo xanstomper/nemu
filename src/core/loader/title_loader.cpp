@@ -70,7 +70,8 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
             .total_size = loaded->total_mapped_size,
             .title_name = std::string(name_hint),
             .title_id = 0,
-            .is_nro = true
+            .is_nro = true,
+            .modules = {}
         };
     }
 
@@ -87,7 +88,15 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
             .total_size = loaded->total_size,
             .title_name = std::string(name_hint),
             .title_id = 0,
-            .is_nro = false
+            .is_nro = false,
+            .modules = {
+                LoadedModuleInfo{
+                    .name = std::string(name_hint),
+                    .base_address = loaded->base_address,
+                    .entry_point = loaded->entry_point,
+                    .size = loaded->total_size
+                }
+            }
         };
     }
 
@@ -121,23 +130,7 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
             return std::nullopt;
         }
 
-        auto main_opt = exefs.OpenFile("main");
-        if (!main_opt) {
-            NEMU_LOG_ERROR("Loader", "ExeFS missing 'main' executable");
-            return std::nullopt;
-        }
-
-        auto loaded = NsoLoader::Load(*main_opt, vm, base_address);
-        if (!loaded) return std::nullopt;
-
-        return LoadedTitleInfo{
-            .base_address = loaded->base_address,
-            .entry_point = loaded->entry_point,
-            .total_size = loaded->total_size,
-            .title_name = std::string(name_hint),
-            .title_id = nca.GetTitleId(),
-            .is_nro = false
-        };
+        return LoadExeFS(exefs, vm, name_hint, nca.GetTitleId(), base_address);
     }
 
     // 4. Check for PFS0 container (.nsp or raw ExeFS)
@@ -149,19 +142,9 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
             return std::nullopt;
         }
 
-        // Direct ExeFS containing 'main'
-        if (pfs0.HasFile("main")) {
-            auto main_opt = pfs0.OpenFile("main");
-            auto loaded = NsoLoader::Load(*main_opt, vm, base_address);
-            if (!loaded) return std::nullopt;
-            return LoadedTitleInfo{
-                .base_address = loaded->base_address,
-                .entry_point = loaded->entry_point,
-                .total_size = loaded->total_size,
-                .title_name = std::string(name_hint),
-                .title_id = 0,
-                .is_nro = false
-            };
+        // Direct ExeFS containing 'main' or 'rtld'
+        if (pfs0.HasFile("main") || pfs0.HasFile("rtld")) {
+            return LoadExeFS(pfs0, vm, name_hint, 0, base_address);
         }
 
         // NSP package containing NCAs: find the largest .nca (typically Program NCA)
@@ -224,6 +207,104 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
 
     NEMU_LOG_ERROR("Loader", "Unrecognized or unsupported executable/container format for '{}'", name_hint);
     return std::nullopt;
+}
+
+std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
+    const Pfs0Archive& exefs,
+    memory::VirtualMemory& vm,
+    std::string_view name_hint,
+    u64 title_id,
+    vaddr_t base_address
+) {
+    // Determine module loading order: rtld, main, subsdk0..subsdk9, sdk
+    std::vector<std::string> load_order;
+    if (exefs.HasFile("rtld")) load_order.push_back("rtld");
+    if (exefs.HasFile("main")) load_order.push_back("main");
+
+    for (int i = 0; i < 10; ++i) {
+        std::string sub = "subsdk" + std::to_string(i);
+        if (exefs.HasFile(sub)) {
+            load_order.push_back(sub);
+        }
+    }
+    if (exefs.HasFile("sdk")) load_order.push_back("sdk");
+
+    // Include any other files containing NSO0 magic
+    for (const auto& f : exefs.GetFiles()) {
+        if (std::find(load_order.begin(), load_order.end(), f.name) == load_order.end()) {
+            auto file_bytes = exefs.OpenFile(f.name);
+            if (file_bytes && file_bytes->size() >= 4) {
+                u32 magic = 0;
+                std::memcpy(&magic, file_bytes->data(), 4);
+                if (magic == NsoLoader::NSO_MAGIC) {
+                    load_order.push_back(f.name);
+                }
+            }
+        }
+    }
+
+    if (load_order.empty()) {
+        NEMU_LOG_ERROR("Loader", "ExeFS does not contain any recognizable NSO binaries");
+        return std::nullopt;
+    }
+
+    vaddr_t curr_base = base_address;
+    vaddr_t primary_entry = 0;
+    std::vector<LoadedModuleInfo> loaded_modules;
+
+    for (const auto& mod_name : load_order) {
+        auto mod_data = exefs.OpenFile(mod_name);
+        if (!mod_data) continue;
+
+        // Align module base address to 64 KiB
+        constexpr u64 MODULE_ALIGN = 0x10000;
+        curr_base = (curr_base + MODULE_ALIGN - 1) & ~(MODULE_ALIGN - 1);
+
+        auto loaded = NsoLoader::Load(*mod_data, vm, curr_base);
+        if (!loaded) {
+            NEMU_LOG_ERROR("Loader", "Failed to load module '{}' at 0x{:016X}", mod_name, curr_base);
+            continue;
+        }
+
+        NEMU_LOG_INFO("Loader", "Loaded NSO module '{}' at [0x{:016X} - 0x{:016X}], entry: 0x{:016X}",
+                      mod_name, loaded->base_address, loaded->base_address + loaded->total_size, loaded->entry_point);
+
+        loaded_modules.push_back(LoadedModuleInfo{
+            .name = mod_name,
+            .base_address = loaded->base_address,
+            .entry_point = loaded->entry_point,
+            .size = loaded->total_size
+        });
+
+        if (mod_name == "rtld") {
+            primary_entry = loaded->entry_point;
+        } else if (mod_name == "main" && primary_entry == 0) {
+            primary_entry = loaded->entry_point;
+        }
+
+        curr_base += loaded->total_size;
+    }
+
+    if (loaded_modules.empty()) {
+        NEMU_LOG_ERROR("Loader", "No modules successfully mapped from ExeFS");
+        return std::nullopt;
+    }
+
+    if (primary_entry == 0) {
+        primary_entry = loaded_modules.front().entry_point;
+    }
+
+    size_t total_size = static_cast<size_t>(curr_base - base_address);
+
+    return LoadedTitleInfo{
+        .base_address = base_address,
+        .entry_point = primary_entry,
+        .total_size = total_size,
+        .title_name = std::string(name_hint),
+        .title_id = title_id,
+        .is_nro = false,
+        .modules = std::move(loaded_modules)
+    };
 }
 
 } // namespace nemu::core::loader

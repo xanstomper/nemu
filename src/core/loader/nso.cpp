@@ -144,6 +144,9 @@ std::optional<NsoLoadedImage> NsoLoader::Load(
                       zero_bss.data(), zero_bss.size());
     }
 
+    // Apply ELF dynamic relocations (R_AARCH64_RELATIVE)
+    ApplyRelocations(vm, base_address, rodata_bytes, data_bytes);
+
     // Apply permissions
     vm.Reprotect(base_address + hdr->text.memory_offset,
                  (hdr->text.decompressed_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1),
@@ -165,6 +168,93 @@ std::optional<NsoLoadedImage> NsoLoader::Load(
         .entry_point = base_address + hdr->text.memory_offset,
         .total_size = aligned_size
     };
+}
+
+size_t NsoLoader::ApplyRelocations(
+    memory::VirtualMemory& vm,
+    vaddr_t base_address,
+    std::span<const u8> rodata_bytes,
+    [[maybe_unused]] std::span<const u8> data_bytes
+) {
+    if (rodata_bytes.size() < 0x20) {
+        return 0;
+    }
+
+    size_t mod0_offset = std::string_view::npos;
+    for (size_t i = 0; i + 4 <= rodata_bytes.size(); i += 4) {
+        u32 magic = 0;
+        std::memcpy(&magic, rodata_bytes.data() + i, sizeof(u32));
+        if (magic == 0x30444F4D) { // 'MOD0'
+            mod0_offset = i;
+            break;
+        }
+    }
+
+    if (mod0_offset == std::string_view::npos || mod0_offset + 0x1C > rodata_bytes.size()) {
+        return 0;
+    }
+
+    s32 dynamic_rel_offset = 0;
+    std::memcpy(&dynamic_rel_offset, rodata_bytes.data() + mod0_offset + 4, sizeof(s32));
+    size_t dynamic_offset = static_cast<size_t>(static_cast<s64>(mod0_offset) + dynamic_rel_offset);
+
+    if (dynamic_offset + 16 > rodata_bytes.size()) {
+        return 0;
+    }
+
+    u64 rela_offset = 0;
+    u64 rela_size = 0;
+    u64 rela_ent = 24;
+
+    size_t dyn_ptr = dynamic_offset;
+    while (dyn_ptr + 16 <= rodata_bytes.size()) {
+        s64 d_tag = 0;
+        u64 d_val = 0;
+        std::memcpy(&d_tag, rodata_bytes.data() + dyn_ptr, sizeof(s64));
+        std::memcpy(&d_val, rodata_bytes.data() + dyn_ptr + 8, sizeof(u64));
+        dyn_ptr += 16;
+
+        if (d_tag == 0) { // DT_NULL
+            break;
+        } else if (d_tag == 7) { // DT_RELA
+            rela_offset = d_val;
+        } else if (d_tag == 8) { // DT_RELASZ
+            rela_size = d_val;
+        } else if (d_tag == 9) { // DT_RELAENT
+            rela_ent = (d_val > 0) ? d_val : 24;
+        }
+    }
+
+    if (rela_offset == 0 || rela_size == 0) {
+        return 0;
+    }
+
+    size_t reloc_count = 0;
+    const size_t num_relas = rela_size / rela_ent;
+    for (size_t i = 0; i < num_relas; ++i) {
+        vaddr_t entry_addr = base_address + rela_offset + i * rela_ent;
+        if (!vm.IsValidAddress(entry_addr, rela_ent)) break;
+
+        const u64 r_offset = vm.Read64(entry_addr);
+        const u64 r_info = vm.Read64(entry_addr + 8);
+        const u64 r_addend = vm.Read64(entry_addr + 16);
+
+        const u32 type = static_cast<u32>(r_info & 0xFFFFFFFF);
+        if (type == 1027) { // R_AARCH64_RELATIVE
+            vaddr_t patch_va = base_address + r_offset;
+            u64 patched_val = base_address + r_addend;
+            if (vm.IsValidAddress(patch_va, 8)) {
+                vm.Write64(patch_va, patched_val);
+                ++reloc_count;
+            }
+        }
+    }
+
+    if (reloc_count > 0) {
+        NEMU_LOG_DEBUG("Loader", "Applied {} R_AARCH64_RELATIVE relocations to module at 0x{:016X}",
+                       reloc_count, base_address);
+    }
+    return reloc_count;
 }
 
 std::optional<NsoLoadedImage> NsoLoader::LoadFromFile(

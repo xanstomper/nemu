@@ -518,6 +518,75 @@ int main() {
             NEMU_TEST_ASSERT(res->is_nro == false, "Package is_nro == false");
         }
 
+        // D. Load NCA containing a Program ExeFS with a 'main' NSO, exercising the
+        //    full boot chain: NCA header parse -> ExtractSection(0) -> ExeFS PFS0
+        //    -> 'main' NSO -> entry point resolution.
+        {
+            const u64 game_tid = 0x0100ABCD00000001ULL;
+
+            // (1) Build a valid 3-segment, uncompressed NSO as the 'main' binary.
+            std::vector<u8> main_nso(sizeof(NsoHeader) + 0x300, 0);
+            auto* mhdr = reinterpret_cast<NsoHeader*>(main_nso.data());
+            mhdr->magic = NsoLoader::NSO_MAGIC;
+            mhdr->flags = 0; // Uncompressed
+            mhdr->text.file_offset = sizeof(NsoHeader);
+            mhdr->text.memory_offset = 0;
+            mhdr->text.decompressed_size = 0x100;
+            mhdr->text_file_size = 0x100;
+            mhdr->rodata.file_offset = sizeof(NsoHeader) + 0x100;
+            mhdr->rodata.memory_offset = 0x1000;
+            mhdr->rodata.decompressed_size = 0x100;
+            mhdr->rodata_file_size = 0x100;
+            mhdr->data.file_offset = sizeof(NsoHeader) + 0x200;
+            mhdr->data.memory_offset = 0x2000;
+            mhdr->data.decompressed_size = 0x100;
+            mhdr->data_file_size = 0x100;
+            mhdr->bss_size = 0x1000;
+            const u32 main_code[] = { 0xD2800A00, 0xD65F03C0 }; // MOVZ X0,#0x50; RET
+            std::memcpy(main_nso.data() + sizeof(NsoHeader), main_code, sizeof(main_code));
+
+            // (2) Package the NSO into an ExeFS PFS0 archive (single 'main' file).
+            const std::string main_name = "main";
+            const u32 exefs_str_size = static_cast<u32>(main_name.size() + 1);
+            const u32 exefs_hdr_size = 16 + 24 + exefs_str_size;
+            std::vector<u8> exefs(exefs_hdr_size + main_nso.size(), 0);
+            *reinterpret_cast<u32*>(exefs.data() + 0) = Pfs0Archive::PFS0_MAGIC;
+            *reinterpret_cast<u32*>(exefs.data() + 4) = 1;                    // file count
+            *reinterpret_cast<u32*>(exefs.data() + 8) = exefs_str_size;        // string table size
+            *reinterpret_cast<u64*>(exefs.data() + 16) = 0;                    // main offset
+            *reinterpret_cast<u64*>(exefs.data() + 24) = main_nso.size();      // main size
+            *reinterpret_cast<u32*>(exefs.data() + 32) = 0;                    // main name offset
+            std::memcpy(exefs.data() + 40, main_name.c_str(), main_name.size() + 1);
+            std::memcpy(exefs.data() + exefs_hdr_size, main_nso.data(), main_nso.size());
+
+            // (3) Wrap ExeFS as section 0 of a Program NCA3. Section data starts at
+            //     block 2 (offset 0x400, after the 0x400-byte header).
+            constexpr size_t nca_block = NcaReader::BLOCK_SIZE; // 0x200
+            const u32 start_block = 2;
+            const u32 end_block = static_cast<u32>(
+                2 + (exefs.size() + nca_block - 1) / nca_block);
+            std::vector<u8> nca(end_block * nca_block, 0);
+
+            *reinterpret_cast<u32*>(nca.data() + 0x200) = NcaReader::NCA3_MAGIC;
+            nca[0x204] = 0; // Distribution: Download
+            nca[0x205] = static_cast<u8>(NcaContentType::Program);
+            nca[0x206] = 0; // Key generation
+            *reinterpret_cast<u64*>(nca.data() + 0x208) = nca.size();           // Content size
+            *reinterpret_cast<u64*>(nca.data() + 0x210) = game_tid;             // Title ID
+            // Section 0 at 0x240 (relative to the full header buffer).
+            *reinterpret_cast<u32*>(nca.data() + 0x240) = start_block;
+            *reinterpret_cast<u32*>(nca.data() + 0x244) = end_block;
+            std::memcpy(nca.data() + start_block * nca_block, exefs.data(), exefs.size());
+
+            std::cout << "  - Loading NCA->ExeFS->main NSO through TitleLoader..." << std::endl;
+            nemu::core::memory::VirtualMemory vm_nca;
+            auto res = title_loader.LoadFromMemory(nca, vm_nca, "game.nca", 0x0071000000ULL);
+            NEMU_TEST_ASSERT(res.has_value(), "TitleLoader load Program NCA");
+            NEMU_TEST_ASSERT(res->is_nro == false, "NCA boot is_nro == false");
+            NEMU_TEST_ASSERT(res->title_id == game_tid, "NCA title id propagates");
+            NEMU_TEST_ASSERT(res->entry_point == 0x0071000000ULL, "NCA main NSO entry point == base");
+        }
+
         std::cout << "  - Universal TitleLoader (.nro, .nso, .nsp, .xci, .nca) tests: PASSED" << std::endl;
     }
 

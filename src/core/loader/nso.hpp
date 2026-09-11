@@ -66,6 +66,14 @@ public:
 
     /// Decompress standard LZ4 block
     static bool DecompressLZ4(std::span<const u8> src, std::span<u8> dst);
+
+    /// Parse ELF dynamic section (MOD0 / DT_RELA) and apply R_AARCH64_RELATIVE base relocations
+    static size_t ApplyRelocations(
+        memory::VirtualMemory& vm,
+        vaddr_t base_address,
+        std::span<const u8> rodata_bytes,
+        std::span<const u8> data_bytes
+    );
 };
 
 } // namespace nemu::core::loader

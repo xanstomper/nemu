@@ -11,6 +11,13 @@
 
 namespace nemu::core::loader {
 
+struct LoadedModuleInfo {
+    std::string name;
+    vaddr_t base_address{0};
+    vaddr_t entry_point{0};
+    size_t size{0};
+};
+
 struct LoadedTitleInfo {
     vaddr_t base_address{0};
     vaddr_t entry_point{0};
@@ -18,6 +25,7 @@ struct LoadedTitleInfo {
     std::string title_name;
     u64 title_id{0};
     bool is_nro{false};
+    std::vector<LoadedModuleInfo> modules;
 };
 
 class TitleLoader {
@@ -36,6 +44,15 @@ public:
         std::span<const u8> data,
         memory::VirtualMemory& vm,
         std::string_view name_hint = "",
+        vaddr_t base_address = 0x0071000000ULL
+    );
+
+    /// Load modular ExeFS containing rtld, main, subsdk*, sdk
+    std::optional<LoadedTitleInfo> LoadExeFS(
+        const class Pfs0Archive& exefs,
+        memory::VirtualMemory& vm,
+        std::string_view name_hint = "",
+        u64 title_id = 0,
         vaddr_t base_address = 0x0071000000ULL
     );
 
