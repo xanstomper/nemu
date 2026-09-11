@@ -4,6 +4,8 @@ add_library(Nemu.Memory STATIC
     virtual_memory.cpp
     fastmem.hpp
     fastmem.cpp
+    address_space.hpp
+    address_space.cpp
 )
 
 target_include_directories(Nemu.Memory PUBLIC

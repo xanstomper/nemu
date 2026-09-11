@@ -228,3 +228,18 @@ target_link_libraries(test_timing PRIVATE
 
 target_compile_features(test_timing PRIVATE cxx_std_20)
 add_test(NAME test_timing COMMAND test_timing)
+
+add_executable(test_address_space
+    memory/test_address_space.cpp
+)
+
+target_include_directories(test_address_space PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_address_space PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_address_space PRIVATE cxx_std_20)
+add_test(NAME test_address_space COMMAND test_address_space)
