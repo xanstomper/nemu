@@ -53,6 +53,18 @@ struct GpuStats {
     u64 vertices_submitted{0};
 };
 
+// A rasterizer vertex: 2D normalized-device position (x,y in [-1,1]) plus an
+// RGBA color. This is the minimal geometric primitive the software rasterizer
+// (and future guest shader output) feed into the backend.
+struct RasterVertex {
+    float x{0.0f};
+    float y{0.0f};
+    float r{1.0f};
+    float g{1.0f};
+    float b{1.0f};
+    float a{1.0f};
+};
+
 class IGpuBackend {
 public:
     virtual ~IGpuBackend() = default;
@@ -72,8 +84,24 @@ public:
     virtual void DrawArrays(PrimitiveTopology topology, u32 first_vertex, u32 vertex_count) = 0;
     virtual void DrawIndexed(PrimitiveTopology topology, u32 index_count, u32 first_index, u32 base_vertex) = 0;
 
+    // --- Vertex / material binding and host-observable frame capture ---
+    // These are the software-rasterizable entry points. Backends that only
+    // forward to a hardware API (e.g. D3D12) may leave them as no-ops; the
+    // software/Null backend rasterizes them into a host framebuffer so a first
+    // real frame is observable even in a headless/CI environment.
+    virtual void SetRasterVertices(std::span<const RasterVertex> vertices) { vertices_readonly_ = vertices; }
+    virtual void SetRasterIndices(std::span<const u32> indices) { indices_readonly_ = indices; }
+    /// Dump the current host framebuffer to a P6-binary PPM file (for headless
+    /// visual verification). Returns false if no framebuffer is available.
+    virtual bool DumpFramePPM(const char* path) { (void)path; return false; }
+
     [[nodiscard]] virtual GpuStats GetStats() const noexcept = 0;
     [[nodiscard]] virtual std::string_view GetBackendName() const noexcept = 0;
+
+protected:
+    // Retained vertex/index data for backends that rasterize on the host.
+    std::span<const RasterVertex> vertices_readonly_;
+    std::span<const u32> indices_readonly_;
 };
 
 } // namespace nemu::core::gpu
