@@ -369,7 +369,9 @@ DecodedInstruction Decoder::DecodeDataProcReg(u32 raw) noexcept {
 
     // Multiply: MADD, MSUB
     // [sf:1] 00 11011 000 [Rm:5] [o0:1] [Ra:5] [Rn:5] [Rd:5]
-    if ((raw & 0x7FE08000) == 0x1B000000) {
+    // Mask must NOT fix bit 15 (0x8000): it's the MADD(o0=0) vs MSUB(o0=1)
+    // selector and is extracted separately below.
+    if ((raw & 0x7FE00000) == 0x1B000000) {
         const bool is_sub = ExtractBit(raw, 15);
         inst.ra = static_cast<u8>(ExtractBits(raw, 10, 5));
         inst.opcode = is_sub ? Opcode::MSUB : Opcode::MADD;

@@ -737,6 +737,38 @@ int main() {
         std::cout << "  - Differential Test 14 (System Registers MRS/MSR): PASSED" << std::endl;
     }
 
+    // 15. Differential Test 15: MADD / MSUB (64-bit and 32-bit)
+    {
+        const vaddr_t base = 0x007000F000ULL;
+        NEMU_TEST_ASSERT(memory.Map(base, 0x1000, memory::MemoryPermission::All), "Map MADD page");
+        const std::vector<u32> code = {
+            0xD2800540, // MOVZ X0, #0x2A
+            0xD2807D01, // MOVZ X1, #0x3E8
+            0xD28000E2, // MOVZ X2, #0x7
+            0x9B010803, // MADD X3, X0, X1, X2  -> X3 = 7 + 42*1000 = 42007
+            0x9B018804, // MSUB X4, X0, X1, X2  -> X4 = 7 - 42*1000 = -41993
+            0x1B010805, // MADD W5, W0, W1, W2  -> W5 = 7 + 42*1000 = 42007 (low 32)
+            0x1B018806, // MSUB W6, W0, W1, W2  -> W6 = 7 - 42*1000
+            0xD65F03C0  // RET
+        };
+        const vaddr_t halt = base + code.size() * 4;
+        memory.WriteBlock(base, code.data(), code.size() * 4);
+
+        cpu::CpuState si, sj;
+        si.Reset(); si.pc = base; si.SetX(30, halt);
+        sj = si;
+
+        cpu::Interpreter interp(si, memory);
+        RunInterpTo(interp, si, halt, "Test 15 MADD/MSUB interp");
+        RunJitTo(jit, sj, memory, halt, "Test 15 MADD/MSUB JIT");
+        AssertCpuStatesMatchFull(si, sj, "Test 15 MADD/MSUB");
+
+        NEMU_TEST_ASSERT(si.GetX(3) == 42007u, "MADD X3 == 7 + 42*1000");
+        NEMU_TEST_ASSERT(si.GetX(4) == static_cast<u64>(-41993), "MSUB X4 == 7 - 42*1000");
+        NEMU_TEST_ASSERT(si.GetW(5) == static_cast<u32>(42007u), "MADD W5 low 32");
+        std::cout << "  - Differential Test 15 (MADD/MSUB): PASSED" << std::endl;
+    }
+
     const auto stats = jit.GetStats();
     NEMU_TEST_ASSERT(stats.blocks_compiled > 0, "Blocks compiled must be > 0");
     NEMU_TEST_ASSERT(stats.blocks_executed > 0, "Blocks executed must be > 0");

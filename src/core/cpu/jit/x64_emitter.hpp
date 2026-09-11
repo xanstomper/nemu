@@ -103,6 +103,8 @@ public:
 
     void AddR64R64(X64Reg dst, X64Reg src);
     void SubR64R64(X64Reg dst, X64Reg src);
+    void ImulR64R64(X64Reg dst, X64Reg src);
+    void ImulR32R32(X64Reg dst, X64Reg src);
     void AndR64R64(X64Reg dst, X64Reg src);
     void OrR64R64(X64Reg dst, X64Reg src);
     void XorR64R64(X64Reg dst, X64Reg src);

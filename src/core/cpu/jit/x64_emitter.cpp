@@ -115,6 +115,27 @@ void X64Emitter::SubR64R64(X64Reg dst, X64Reg src) {
     EmitModRM(3, s, d);
 }
 
+void X64Emitter::ImulR64R64(X64Reg dst, X64Reg src) {
+    // imul dst, src  (dst = dst * src, low 64 bits)  ->  REX.W 0F AF /r
+    // IMUL r64, r/m64 puts the destination in the REG field; the source in RM.
+    const u8 d = static_cast<u8>(dst);
+    const u8 s = static_cast<u8>(src);
+    EmitRex(true, d >= 8, false, s >= 8);
+    EmitByte(0x0F);
+    EmitByte(0xAF);
+    EmitModRM(3, d, s);
+}
+
+void X64Emitter::ImulR32R32(X64Reg dst, X64Reg src) {
+    // imul r32, r32 (dst = dst * src, low 32 bits)  ->  0F AF /r
+    const u8 d = static_cast<u8>(dst);
+    const u8 s = static_cast<u8>(src);
+    EmitRex(false, d >= 8, false, s >= 8);
+    EmitByte(0x0F);
+    EmitByte(0xAF);
+    EmitModRM(3, d, s);
+}
+
 void X64Emitter::AndR64R64(X64Reg dst, X64Reg src) {
     const u8 d = static_cast<u8>(dst);
     const u8 s = static_cast<u8>(src);

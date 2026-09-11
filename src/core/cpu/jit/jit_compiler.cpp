@@ -637,6 +637,41 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
                 break;
             }
 
+            case Opcode::MADD:
+            case Opcode::MSUB: {
+                // Rd = Ra ± Rn*Rm (low width). For 64-bit use full 64-bit imul;
+                // for 32-bit use the 32-bit imul and store 32-bit.
+                if (inst.is_64bit) {
+                    emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, static_cast<s32>(inst.rn * 8));
+                    emitter_.MovR64Mem(X64Reg::RDX, X64Reg::R15, static_cast<s32>(inst.rm * 8));
+                    emitter_.ImulR64R64(X64Reg::RAX, X64Reg::RDX);       // RAX = Rn*Rm
+                    emitter_.MovR64Mem(X64Reg::RDX, X64Reg::R15, static_cast<s32>(inst.ra * 8));
+                    if (inst.opcode == Opcode::MSUB) {
+                        emitter_.SubR64R64(X64Reg::RDX, X64Reg::RAX);    // Ra - Rn*Rm
+                    } else {
+                        emitter_.AddR64R64(X64Reg::RDX, X64Reg::RAX);    // Ra + Rn*Rm
+                    }
+                    if (inst.rd != 31) {
+                        emitter_.MovMemR64(X64Reg::R15, static_cast<s32>(inst.rd * 8), X64Reg::RDX);
+                    }
+                } else {
+                    emitter_.MovR32Mem(X64Reg::RAX, X64Reg::R15, static_cast<s32>(inst.rn * 8));
+                    emitter_.MovR32Mem(X64Reg::RDX, X64Reg::R15, static_cast<s32>(inst.rm * 8));
+                    emitter_.ImulR32R32(X64Reg::RAX, X64Reg::RDX);       // RAX = Rn*Rm (low 32)
+                    emitter_.MovR32Mem(X64Reg::RDX, X64Reg::R15, static_cast<s32>(inst.ra * 8));
+                    if (inst.opcode == Opcode::MSUB) {
+                        emitter_.SubR64R64(X64Reg::RDX, X64Reg::RAX);
+                    } else {
+                        emitter_.AddR64R64(X64Reg::RDX, X64Reg::RAX);
+                    }
+                    if (inst.rd != 31) {
+                        emitter_.MovMemR32(X64Reg::R15, static_cast<s32>(inst.rd * 8), X64Reg::RDX);
+                    }
+                }
+                curr_pc += 4;
+                break;
+            }
+
             case Opcode::NOP: {
                 curr_pc += 4;
                 break;
