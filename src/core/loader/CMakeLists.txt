@@ -1,6 +1,14 @@
 add_library(Nemu.Loader STATIC
     nro.hpp
     nro.cpp
+    nso.hpp
+    nso.cpp
+    pfs0.hpp
+    pfs0.cpp
+    nca.hpp
+    nca.cpp
+    title_loader.hpp
+    title_loader.cpp
 )
 
 target_include_directories(Nemu.Loader PUBLIC
@@ -10,6 +18,8 @@ target_include_directories(Nemu.Loader PUBLIC
 target_link_libraries(Nemu.Loader PUBLIC
     Nemu.Memory
     Nemu.Cpu
+    Nemu.Crypto
+    Nemu.FileSystem
     Nemu.Platform
 )
 

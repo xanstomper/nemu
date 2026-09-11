@@ -14,6 +14,15 @@
 #include "core/kernel/ipc/set_sys_service.hpp"
 #include "core/kernel/ipc/hid_service.hpp"
 #include "core/kernel/ipc/k_shared_memory.hpp"
+#include "core/kernel/ipc/nvdrv_service.hpp"
+#include "core/kernel/ipc/vi_service.hpp"
+#include "core/kernel/ipc/fsp_srv_service.hpp"
+#include "core/kernel/ipc/audren_service.hpp"
+#include "core/kernel/ipc/applet_service.hpp"
+#include "core/kernel/ipc/acc_service.hpp"
+#include "core/filesystem/vfs.hpp"
+#include "core/audio/null_audio_backend.hpp"
+#include "core/gpu/null_backend.hpp"
 #include <iostream>
 #include <cstdlib>
 #include <cstring>
@@ -351,6 +360,284 @@ void TestHidService() {
     std::cout << "  PASSED.\n";
 }
 
+// ---------------------------------------------------------------------------
+// Test 7: nvdrv GPU Driver Service
+// ---------------------------------------------------------------------------
+void TestNvDrvService() {
+    std::cout << "[TEST] nvdrv GPU driver service ...\n";
+    auto backend = std::make_shared<gpu::NullGpuBackend>();
+    backend->Initialize(1280, 720);
+    auto maxwell = std::make_shared<gpu::Maxwell3D>(backend);
+
+    auto proc = std::make_shared<KProcess>(5, "NvDrvTest");
+    KThread thread(5, proc, 45, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+
+    auto dev_mgr = std::make_shared<gpu::nvhost::NvDeviceManager>(maxwell, &proc->GetVirtualMemory());
+    ServiceRegistry reg;
+    reg.Register(std::make_shared<NvDrvService>("nvdrv:a", dev_mgr));
+
+    auto session = std::make_shared<KClientSession>();
+    session->SetService(reg.Find("nvdrv:a"));
+
+    // 1. Initialize (cmd 3)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 3, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+
+    // 2. Open /dev/nvmap (cmd 0)
+    char path[] = "/dev/nvmap";
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 0, path, sizeof(path));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const s32 fd = static_cast<s32>(ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload)));
+    NEMU_IPC_ASSERT(fd > 0);
+
+    // 3. Ioctl NVMAP_IOC_CREATE (cmd 1)
+    struct { u32 fd; u32 cmd; u32 size; u32 handle; } ioctl_args{static_cast<u32>(fd), 0xC0180101, 0x10000, 0};
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 1, &ioctl_args, sizeof(ioctl_args));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const u32 created_handle = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 12);
+    NEMU_IPC_ASSERT(created_handle != 0);
+
+    // 4. Close (cmd 2)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 2, &fd, sizeof(fd));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+
+    backend->Shutdown();
+    std::cout << "  PASSED.\n";
+}
+
+// ---------------------------------------------------------------------------
+// Test 8: vi Display & Presentation Service
+// ---------------------------------------------------------------------------
+void TestViService() {
+    std::cout << "[TEST] vi display service ...\n";
+    auto backend = std::make_shared<gpu::NullGpuBackend>();
+    backend->Initialize(1280, 720);
+    auto flinger = std::make_shared<gpu::presentation::Nvnflinger>(backend);
+
+    auto proc = std::make_shared<KProcess>(6, "ViTest");
+    KThread thread(6, proc, 46, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+
+    ServiceRegistry reg;
+    reg.Register(std::make_shared<ViService>("vi:u", flinger));
+
+    auto session = std::make_shared<KClientSession>();
+    session->SetService(reg.Find("vi:u"));
+
+    // 1. GetDisplayService (cmd 0)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 0, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle disp_srv_handle = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(disp_srv_handle != InvalidHandle);
+
+    auto disp_session = proc->GetHandleTable().GetObject<KClientSession>(disp_srv_handle);
+    NEMU_IPC_ASSERT(disp_session != nullptr);
+
+    // 2. OpenDisplay (cmd 101)
+    char disp_name[] = "Default";
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 101, disp_name, sizeof(disp_name));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *disp_session, reg) == static_cast<u32>(IpcResult::Success));
+    const u64 disp_id = ReadReply<u64>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(disp_id != 0);
+
+    // 3. CreateStrayLayer (cmd 2030)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 2030, &disp_id, sizeof(disp_id));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *disp_session, reg) == static_cast<u32>(IpcResult::Success));
+    const u64 layer_id = ReadReply<u64>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    const u32 binder_id = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 12);
+    NEMU_IPC_ASSERT(layer_id != 0 && binder_id != 0);
+
+    // 4. GetRelayService (cmd 100)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 100, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *disp_session, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle relay_handle = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(relay_handle != InvalidHandle);
+
+    auto binder_session = proc->GetHandleTable().GetObject<KClientSession>(relay_handle);
+    NEMU_IPC_ASSERT(binder_session != nullptr);
+
+    // 5. TransactParcel DequeueBuffer (code 3)
+    struct { u32 binder_id; u32 code; } parcel_args{binder_id, 3};
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 0, &parcel_args, sizeof(parcel_args));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *binder_session, reg) == static_cast<u32>(IpcResult::Success));
+    const s32 slot = static_cast<s32>(ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4));
+    NEMU_IPC_ASSERT(slot >= 0 && slot < 64);
+
+    // 6. TransactParcel QueueBuffer (code 4)
+    struct { u32 binder_id; u32 code; u32 slot; } queue_args{binder_id, 4, static_cast<u32>(slot)};
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 0, &queue_args, sizeof(queue_args));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *binder_session, reg) == static_cast<u32>(IpcResult::Success));
+
+    // 7. Compose and present frame via flinger
+    NEMU_IPC_ASSERT(flinger->ComposeAndPresent());
+    NEMU_IPC_ASSERT(flinger->GetTotalFramesPresented() == 1);
+
+    backend->Shutdown();
+    std::cout << "  PASSED.\n";
+}
+
+void TestFspSrvService() {
+    std::cout << "[TEST] fsp-srv filesystem proxy ...\n";
+    auto vfs = std::make_shared<filesystem::VirtualFileSystem>();
+    const auto temp_dir = std::filesystem::temp_directory_path() / "nemu_test_fsp";
+    std::filesystem::create_directories(temp_dir);
+    vfs->Mount("sdmc:/", temp_dir);
+
+    ServiceRegistry reg;
+    reg.Register(std::make_shared<FspSrvService>(vfs));
+
+    auto proc = std::make_shared<KProcess>(1, "Ipctest");
+    KThread thread(1, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+
+    auto port = reg.CreatePort("fsp-srv");
+    NEMU_IPC_ASSERT(port.has_value());
+    auto session = std::make_shared<KClientSession>();
+    session->SetService((*port)->GetService());
+    const Handle fsp_handle = proc->GetHandleTable().CreateHandle(session);
+    (void)fsp_handle;
+
+    // 1. SetCurrentProcess (cmd 1)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 1, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+
+    // 2. OpenSdCardFileSystem (cmd 101 / 0x65)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 0x65, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle sd_handle = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(sd_handle != InvalidHandle);
+
+    auto sd_session = std::dynamic_pointer_cast<KClientSession>(proc->GetHandleTable().GetObject(sd_handle));
+    NEMU_IPC_ASSERT(sd_session != nullptr);
+
+    // 3. CreateFile on SD (cmd 0)
+    char fname[64]{};
+    std::strncpy(fname + 8, "test.txt", 16);
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 0, fname, sizeof(fname));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *sd_session, reg) == static_cast<u32>(IpcResult::Success));
+
+    // 4. GetEntryType (cmd 11)
+    char check_name[64]{};
+    std::strncpy(check_name, "test.txt", 16);
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 11, check_name, sizeof(check_name));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *sd_session, reg) == static_cast<u32>(IpcResult::Success));
+    const u32 entry_type = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(entry_type == 1); // 1 = file
+
+    std::filesystem::remove_all(temp_dir);
+    std::cout << "  PASSED.\n";
+}
+
+void TestAudrenService() {
+    std::cout << "[TEST] audren:u audio renderer ...\n";
+    auto backend = std::make_shared<audio::NullAudioBackend>();
+    backend->Initialize(48000, 2);
+
+    ServiceRegistry reg;
+    reg.Register(std::make_shared<AudrenManagerService>(backend));
+
+    auto proc = std::make_shared<KProcess>(1, "Ipctest");
+    KThread thread(1, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+
+    auto port = reg.CreatePort("audren:u");
+    NEMU_IPC_ASSERT(port.has_value());
+    auto session = std::make_shared<KClientSession>();
+    session->SetService((*port)->GetService());
+
+    // 1. OpenAudioRenderer (cmd 0)
+    struct { u32 rate; u32 count; } ren_args{48000, 160};
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 0, &ren_args, sizeof(ren_args));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle ren_handle = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(ren_handle != InvalidHandle);
+
+    auto ren_session = std::dynamic_pointer_cast<KClientSession>(proc->GetHandleTable().GetObject(ren_handle));
+    NEMU_IPC_ASSERT(ren_session != nullptr);
+
+    // 2. Start (cmd 5)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 5, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *ren_session, reg) == static_cast<u32>(IpcResult::Success));
+
+    // 3. RequestUpdate (cmd 4)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 4, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *ren_session, reg) == static_cast<u32>(IpcResult::Success));
+    const u64 rendered = ReadReply<u64>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(rendered == 160);
+
+    // 4. Stop (cmd 6)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 6, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *ren_session, reg) == static_cast<u32>(IpcResult::Success));
+
+    backend->Shutdown();
+    std::cout << "  PASSED.\n";
+}
+
+void TestAppletService() {
+    std::cout << "[TEST] appletOE application service ...\n";
+    ServiceRegistry reg;
+    reg.Register(std::make_shared<AppletManagerService>("appletOE"));
+
+    auto proc = std::make_shared<KProcess>(1, "Ipctest");
+    KThread thread(1, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+
+    auto port = reg.CreatePort("appletOE");
+    NEMU_IPC_ASSERT(port.has_value());
+    auto session = std::make_shared<KClientSession>();
+    session->SetService((*port)->GetService());
+
+    // 1. OpenSession (cmd 0)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 0, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle sess_h = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(sess_h != InvalidHandle);
+
+    auto applet_sess = std::dynamic_pointer_cast<KClientSession>(proc->GetHandleTable().GetObject(sess_h));
+    NEMU_IPC_ASSERT(applet_sess != nullptr);
+
+    // 2. OpenApplicationFunctions (cmd 20)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 20, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *applet_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle funcs_h = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(funcs_h != InvalidHandle);
+
+    auto funcs_sess = std::dynamic_pointer_cast<KClientSession>(proc->GetHandleTable().GetObject(funcs_h));
+    NEMU_IPC_ASSERT(funcs_sess != nullptr);
+
+    // 3. NotifyRunning (cmd 20 on funcs)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 20, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *funcs_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const u32 running = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(running == 1);
+
+    std::cout << "  PASSED.\n";
+}
+
+void TestAccountService() {
+    std::cout << "[TEST] acc:u0 account service ...\n";
+    ServiceRegistry reg;
+    reg.Register(std::make_shared<AccountService>());
+
+    auto proc = std::make_shared<KProcess>(1, "Ipctest");
+    KThread thread(1, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+
+    auto port = reg.CreatePort("acc:u0");
+    NEMU_IPC_ASSERT(port.has_value());
+    auto session = std::make_shared<KClientSession>();
+    session->SetService((*port)->GetService());
+
+    // 1. GetUserCount (cmd 0)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 0, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const u32 count = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(count == 1);
+
+    // 2. ListOpenUsers (cmd 2)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 2, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const u64 uid_low = ReadReply<u64>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(uid_low == 1);
+
+    std::cout << "  PASSED.\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "   NEMU HORIZON OS IPC ENGINE TESTS     \n";
@@ -362,6 +649,12 @@ int main() {
     TestTimeService();
     TestSetSys();
     TestHidService();
+    TestNvDrvService();
+    TestViService();
+    TestFspSrvService();
+    TestAudrenService();
+    TestAppletService();
+    TestAccountService();
 
     std::cout << "ALL IPC TESTS PASSED SUCCESSFULLY!\n";
     return 0;

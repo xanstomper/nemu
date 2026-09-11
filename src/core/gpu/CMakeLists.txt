@@ -8,6 +8,24 @@ set(GPU_SOURCES
     maxwell_3d.cpp
     gpu_factory.hpp
     gpu_factory.cpp
+    nvhost/nvmap.hpp
+    nvhost/nvmap.cpp
+    nvhost/nvhost_ctrl.hpp
+    nvhost/nvhost_ctrl.cpp
+    nvhost/nvhost_as_gpu.hpp
+    nvhost/nvhost_as_gpu.cpp
+    nvhost/nvhost_channel.hpp
+    nvhost/nvhost_channel.cpp
+    nvhost/nvdevice.hpp
+    nvhost/nvdevice.cpp
+    presentation/buffer_queue.hpp
+    presentation/buffer_queue.cpp
+    presentation/nvnflinger.hpp
+    presentation/nvnflinger.cpp
+    texture/astc_decoder.hpp
+    texture/astc_decoder.cpp
+    shader/maxwell_shader_decoder.hpp
+    shader/maxwell_shader_decoder.cpp
 )
 
 if(WIN32)
@@ -24,6 +42,7 @@ target_include_directories(Nemu.Gpu PUBLIC
 )
 
 target_link_libraries(Nemu.Gpu PUBLIC
+    Nemu.Memory
     Nemu.Platform
 )
 

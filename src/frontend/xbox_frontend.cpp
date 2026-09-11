@@ -17,12 +17,16 @@ void XboxFrontend::RefreshLibrary() {
     if (sdmc_host && std::filesystem::exists(*sdmc_host)) {
         std::error_code ec;
         for (const auto& entry : std::filesystem::directory_iterator(*sdmc_host, ec)) {
-            if (entry.is_regular_file(ec) && entry.path().extension() == ".nro") {
-                library_.push_back(HomebrewEntry{
-                    .filename = entry.path().filename().string(),
-                    .virtual_path = "sdmc:/" + entry.path().filename().string(),
-                    .file_size = entry.file_size(ec)
-                });
+            if (entry.is_regular_file(ec)) {
+                auto ext = entry.path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+                if (ext == ".nro" || ext == ".nsp" || ext == ".xci" || ext == ".nca") {
+                    library_.push_back(HomebrewEntry{
+                        .filename = entry.path().filename().string(),
+                        .virtual_path = "sdmc:/" + entry.path().filename().string(),
+                        .file_size = entry.file_size(ec)
+                    });
+                }
             }
         }
     }

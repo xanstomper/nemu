@@ -29,6 +29,7 @@ public:
 
     [[nodiscard]] u64 GetPid() const noexcept { return pid_; }
     [[nodiscard]] const std::string& GetName() const noexcept { return name_; }
+    void SetName(std::string name) noexcept { name_ = std::move(name); }
     [[nodiscard]] ProcessState GetState() const noexcept { return state_; }
     [[nodiscard]] s32 GetExitCode() const noexcept { return exit_code_; }
 

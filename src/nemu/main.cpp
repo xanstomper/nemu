@@ -7,6 +7,9 @@
 #include "core/kernel/k_thread.hpp"
 #include "core/kernel/svc.hpp"
 #include "core/loader/nro.hpp"
+#include "core/loader/nso.hpp"
+#include "core/loader/title_loader.hpp"
+#include "core/crypto/key_store.hpp"
 #include "core/filesystem/vfs.hpp"
 #include "core/gpu/gpu_factory.hpp"
 #include "core/gpu/maxwell_3d.hpp"
@@ -80,33 +83,55 @@ int main(int argc, char** argv) {
     frontend.Render(*gpu_backend);
 
     // 8. Determine Executable to Run
-    std::string target_nro;
+    std::string target_title;
     if (argc > 1) {
-        target_nro = argv[1];
+        target_title = argv[1];
     } else {
         auto req = frontend.ConsumeLaunchRequest();
         if (req) {
-            target_nro = *req;
+            target_title = *req;
         } else if (!frontend.GetLibrary().empty()) {
-            target_nro = frontend.GetLibrary()[0].virtual_path;
+            target_title = frontend.GetLibrary()[0].virtual_path;
         }
     }
 
+    // Initialize Cryptographic Keystore for commercial content (.nsp, .xci, .nca)
+    crypto::KeyStore key_store;
+    const std::vector<std::filesystem::path> candidate_keys = {
+        save_root / "prod.keys",
+        sdmc_root / "switch" / "prod.keys",
+        std::filesystem::current_path() / "prod.keys"
+    };
+    for (const auto& kp : candidate_keys) {
+        if (std::filesystem::exists(kp)) {
+            key_store.LoadFromFile(kp.string());
+            break;
+        }
+    }
+
+    loader::TitleLoader title_loader(key_store, vfs);
+
     // 9. Initialize Horizon Kernel Process and Address Space
-    auto process = std::make_shared<kernel::KProcess>(1, "SwitchHomebrew");
+    auto process = std::make_shared<kernel::KProcess>(1, "SwitchProcess");
     process->SetState(kernel::ProcessState::Running);
     memory::VirtualMemory& memory = process->GetVirtualMemory();
 
     vaddr_t entry_point = 0;
+    bool is_nro = true;
 
-    if (!target_nro.empty() && target_nro != "builtin:/demo.nro") {
-        NEMU_LOG_INFO("Loader", "Loading homebrew executable: {}", target_nro);
-        auto loaded = loader::NroLoader::LoadFromFile(target_nro, memory);
+    if (!target_title.empty() && target_title != "builtin:/demo.nro") {
+        NEMU_LOG_INFO("Loader", "Loading title executable/package: {}", target_title);
+        auto loaded = title_loader.LoadTitle(target_title, memory);
         if (loaded) {
             entry_point = loaded->entry_point;
-            NEMU_LOG_INFO("Loader", "Loaded NRO successfully at entry point 0x{:016X}", entry_point);
+            is_nro = loaded->is_nro;
+            if (!loaded->title_name.empty()) {
+                process->SetName(loaded->title_name);
+            }
+            NEMU_LOG_INFO("Loader", "Loaded title '{}' successfully at entry point 0x{:016X}",
+                          loaded->title_name, entry_point);
         } else {
-            NEMU_LOG_ERROR("Loader", "Failed to load NRO from '{}'. Falling back to internal demo.", target_nro);
+            NEMU_LOG_ERROR("Loader", "Failed to load title from '{}'. Falling back to internal demo.", target_title);
         }
     }
 
@@ -164,7 +189,7 @@ int main(int argc, char** argv) {
 
     cpu::CpuState& cpu = thread->GetCpuState();
     cpu.SetX(0, 0);     // X0 = thread handle / context
-    cpu.SetX(1, ~0ULL); // X1 = standalone homebrew flag
+    cpu.SetX(1, is_nro ? ~0ULL : 0); // X1 = standalone homebrew flag (~0) or standard process (0)
     cpu.SetX(30, 0x0071000000ULL); // Return address
 
     // 11. Render a startup frame via GPU

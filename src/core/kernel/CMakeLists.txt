@@ -26,6 +26,18 @@ add_library(Nemu.Kernel STATIC
     ipc/set_sys_service.cpp
     ipc/hid_service.hpp
     ipc/hid_service.cpp
+    ipc/nvdrv_service.hpp
+    ipc/nvdrv_service.cpp
+    ipc/vi_service.hpp
+    ipc/vi_service.cpp
+    ipc/fsp_srv_service.hpp
+    ipc/fsp_srv_service.cpp
+    ipc/audren_service.hpp
+    ipc/audren_service.cpp
+    ipc/applet_service.hpp
+    ipc/applet_service.cpp
+    ipc/acc_service.hpp
+    ipc/acc_service.cpp
 )
 
 target_include_directories(Nemu.Kernel PUBLIC
@@ -35,6 +47,9 @@ target_include_directories(Nemu.Kernel PUBLIC
 target_link_libraries(Nemu.Kernel PUBLIC
     Nemu.Cpu
     Nemu.Memory
+    Nemu.Gpu
+    Nemu.Audio
+    Nemu.FileSystem
     Nemu.Platform
 )
 
