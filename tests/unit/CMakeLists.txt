@@ -333,3 +333,18 @@ target_link_libraries(test_spsc_ring PRIVATE
 
 target_compile_features(test_spsc_ring PRIVATE cxx_std_20)
 add_test(NAME test_spsc_ring COMMAND test_spsc_ring)
+
+add_executable(test_render_pipeline
+    gpu/test_render_pipeline.cpp
+)
+
+target_include_directories(test_render_pipeline PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_render_pipeline PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_render_pipeline PRIVATE cxx_std_20)
+add_test(NAME test_render_pipeline COMMAND test_render_pipeline)

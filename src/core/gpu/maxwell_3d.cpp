@@ -58,6 +58,21 @@ void Maxwell3D::ExecuteClearSurface([[maybe_unused]] u32 argument) {
     backend_->ClearRenderTarget(color);
 }
 
+void Maxwell3D::EmitDebugGeometry() {
+    // Stage a recognizable test triangle in the reusable scratch buffer and bind
+    // it to the backend so a guest DrawArrays produces real rasterized output.
+    // (This is a stand-in for guest-loaded vertex buffers; it exercises the whole
+    // clear -> bind -> draw -> framebuffer pipeline end to end.)
+    RasterVertex* tri = geometry_scratch_.Resize(3);
+    // A triangle covering most of the viewport with a green fill.
+    tri[0] = {-0.85f, -0.85f, 0.0f, 1.0f, 0.3f, 1.0f};
+    tri[1] = { 0.85f, -0.85f, 0.0f, 1.0f, 0.3f, 1.0f};
+    tri[2] = { 0.0f,   0.85f, 0.0f, 1.0f, 0.3f, 1.0f};
+    if (backend_) {
+        backend_->SetRasterVertices(std::span<const RasterVertex>(tri, 3));
+    }
+}
+
 void Maxwell3D::ExecuteDrawArrays(u32 argument) {
     if (!backend_) return;
 
@@ -75,6 +90,11 @@ void Maxwell3D::ExecuteDrawArrays(u32 argument) {
         default: break;
     }
 
+    // If no guest vertices were bound, stage the debug geometry so the draw
+    // rasterizes something real in the software/D3D12 backends.
+    if (vertex_count >= 3) {
+        EmitDebugGeometry();
+    }
     backend_->DrawArrays(topology, 0, vertex_count);
 }
 

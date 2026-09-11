@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "core/common/scratch_buffer.hpp"
 #include "gpu_interface.hpp"
 #include <span>
 #include <array>
@@ -62,9 +63,14 @@ public:
 private:
     void ExecuteDrawArrays(u32 argument);
     void ExecuteClearSurface(u32 argument);
+    void EmitDebugGeometry(); // stage a recognizable test triangle for draws
 
     std::shared_ptr<IGpuBackend> backend_;
     Maxwell3DRegisters regs_{};
+    // Reusable scratch buffer staging guest-draw vertex data (clean-room port of
+    // the emulator scratch-buffer technique to keep steady-state frames
+    // allocation-free).
+    mutable common::ScratchBuffer<RasterVertex> geometry_scratch_;
 };
 
 } // namespace nemu::core::gpu
