@@ -12,3 +12,8 @@ target_link_libraries(Nemu PRIVATE
 )
 
 target_compile_features(Nemu PRIVATE cxx_std_20)
+
+if (WIN32)
+    set_target_properties(Nemu PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+
