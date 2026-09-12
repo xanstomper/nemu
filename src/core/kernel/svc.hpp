@@ -79,6 +79,15 @@ private:
     static void SvcSignalEvent(cpu::CpuState& state, KProcess& process);
     static void SvcClearEvent(cpu::CpuState& state, KProcess& process);
 
+    // Extended Horizon System & Timing SVCs
+    static void SvcSetMemoryAttribute(cpu::CpuState& state);
+    static void SvcMapMemory(cpu::CpuState& state);
+    static void SvcUnmapMemory(cpu::CpuState& state);
+    static void SvcCancelSynchronization(cpu::CpuState& state);
+    static void SvcSetThreadCoreMask(cpu::CpuState& state);
+    static void SvcGetThreadCoreMask(cpu::CpuState& state);
+    static void SvcGetSystemTick(cpu::CpuState& state);
+
     /// Shared service manager (injected once at boot).
     static std::shared_ptr<ipc::ServiceRegistry> ipc_registry_;
 };

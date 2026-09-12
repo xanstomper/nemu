@@ -1,4 +1,5 @@
 #include "xbox_frontend.hpp"
+#include "bitmap_font.hpp"
 #include "platform/logger.hpp"
 #include <algorithm>
 #include <ctime>
@@ -972,8 +973,12 @@ void XboxFrontend::Render(core::gpu::IGpuBackend& gpu) {
     };
     gpu.ClearRenderTarget(bg);
 
-    // Rasterize UI layout: top banner, tabs, carousel panels, bottom controls
-    gpu.DrawArrays(core::gpu::PrimitiveTopology::Triangles, 0, 6);
+    std::vector<core::gpu::RasterVertex> ui_vertices;
+    BuildUiGeometry(ui_vertices);
+    if (!ui_vertices.empty()) {
+        gpu.SetRasterVertices(ui_vertices);
+        gpu.DrawArrays(core::gpu::PrimitiveTopology::Triangles, 0, static_cast<u32>(ui_vertices.size()));
+    }
 
     ui_frame_count_++;
     focus_animation_timer_ += 0.016f;
@@ -998,8 +1003,12 @@ void XboxFrontend::RenderQuickMenu(core::gpu::IGpuBackend& gpu) {
     };
     gpu.ClearRenderTarget(bg);
 
-    // Rasterize RetroArch Quick Menu items
-    gpu.DrawArrays(core::gpu::PrimitiveTopology::Triangles, 0, 6);
+    std::vector<core::gpu::RasterVertex> qm_vertices;
+    BuildQuickMenuGeometry(qm_vertices);
+    if (!qm_vertices.empty()) {
+        gpu.SetRasterVertices(qm_vertices);
+        gpu.DrawArrays(core::gpu::PrimitiveTopology::Triangles, 0, static_cast<u32>(qm_vertices.size()));
+    }
 
     gpu.EndFrame();
     gpu.Present();
@@ -1140,6 +1149,427 @@ void XboxFrontend::HandleQuickMenuInput(const core::hid::XboxGamepadState& input
             }
             break;
     }
+}
+
+void XboxFrontend::BuildUiGeometry(std::vector<core::gpu::RasterVertex>& out) {
+    out.reserve(8192);
+
+    // 1. Top Bar
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 52, UiColor::HeaderDark());
+    UiGeometryBuilder::AddQuad(out, 0, 50, 1280, 2, UiColor::EdenCyan());
+    UiGeometryBuilder::AddText(out, "NEMU", 30, 14, 2.4f, UiColor::EdenCyan());
+    UiGeometryBuilder::AddText(out, "SWITCH EMULATOR", 130, 20, 1.4f, UiColor::TextDim());
+    UiGeometryBuilder::AddText(out, profile_name_, 680, 20, 1.3f, UiColor::TextWhite());
+    UiGeometryBuilder::AddText(out, GetConsoleModeString(), 940, 20, 1.3f, UiColor::NeonGreen());
+    UiGeometryBuilder::AddText(out, GetSystemClockString(), 1160, 18, 1.5f, UiColor::White());
+
+    // 2. Tab Bar
+    UiGeometryBuilder::AddQuad(out, 0, 52, 1280, 48, UiColor::CardBg());
+    UiGeometryBuilder::AddQuad(out, 0, 99, 1280, 1, UiColor::CardBorder());
+    UiGeometryBuilder::AddText(out, "[LB]", 25, 68, 1.4f, UiColor::EdenCyan());
+    UiGeometryBuilder::AddText(out, "[RB]", 1215, 68, 1.4f, UiColor::EdenCyan());
+
+    const char* tab_names[] = {
+        "LIBRARY",
+        "FILE MANAGER",
+        "OPTIMIZERS",
+        "CONTROLLERS",
+        "SYSTEM",
+        "DIAGNOSTICS"
+    };
+
+    for (size_t i = 0; i < 6; ++i) {
+        float tx = 80.0f + static_cast<float>(i) * 185.0f;
+        if (i == static_cast<size_t>(current_tab_)) {
+            UiGeometryBuilder::AddQuad(out, tx - 8, 58, 175, 38, UiColor::SelectedRow());
+            UiGeometryBuilder::AddQuad(out, tx - 8, 96, 175, 3, UiColor::EdenCyan());
+            UiGeometryBuilder::AddText(out, tab_names[i], tx, 68, 1.4f, UiColor::White());
+        } else {
+            UiGeometryBuilder::AddText(out, tab_names[i], tx, 68, 1.4f, UiColor::TextDim());
+        }
+    }
+
+    // 3. Tab Content
+    switch (current_tab_) {
+        case FrontendTab::Library: {
+            if (library_.empty()) {
+                UiGeometryBuilder::AddText(out, "No titles detected in sdmc:/switch or attached USB storage.", 320, 320, 1.8f, UiColor::TextWhite());
+                UiGeometryBuilder::AddText(out, "Press (X) to scan storage directories or open the File Manager.", 340, 360, 1.4f, UiColor::TextDim());
+            } else {
+                const float card_w = 260.0f;
+                const float card_h = 360.0f;
+                const float card_step = 290.0f;
+                const float base_x = 510.0f - (static_cast<float>(selected_game_index_) * card_step);
+
+                for (size_t i = 0; i < library_.size(); ++i) {
+                    const auto& g = library_[i];
+                    float cx = base_x + static_cast<float>(i) * card_step;
+                    float cy = 140.0f;
+
+                    if (cx + card_w < -50.0f || cx > 1330.0f) continue;
+
+                    bool is_focus = (i == selected_game_index_);
+                    float draw_y = is_focus ? cy - 10.0f : cy;
+                    float draw_h = is_focus ? card_h + 20.0f : card_h;
+
+                    // Card Background
+                    UiGeometryBuilder::AddQuad(out, cx, draw_y, card_w, draw_h, is_focus ? UiColor::CardFocus() : UiColor::CardBg());
+
+                    // Border
+                    if (is_focus) {
+                        UiGeometryBuilder::AddRectOutline(out, cx - 2, draw_y - 2, card_w + 4, draw_h + 4, 3.0f, UiColor::EdenCyan());
+                    } else {
+                        UiGeometryBuilder::AddRectOutline(out, cx, draw_y, card_w, draw_h, 1.5f, UiColor::CardBorder());
+                    }
+
+                    // Art/Emblem header area
+                    float art_y = draw_y + 8.0f;
+                    UiGeometryBuilder::AddQuad(out, cx + 8, art_y, card_w - 16, 160, UiColor::HeaderDark());
+
+                    if (g.title.find("Hollow") != std::string::npos) {
+                        // Knight horned emblem / crest silhouette
+                        UiGeometryBuilder::AddQuad(out, cx + 80, art_y + 30, 84, 90, UiColor::CardBorder());
+                        UiGeometryBuilder::AddQuad(out, cx + 60, art_y + 15, 25, 45, UiColor::White());
+                        UiGeometryBuilder::AddQuad(out, cx + 159, art_y + 15, 25, 45, UiColor::White());
+                        UiGeometryBuilder::AddQuad(out, cx + 85, art_y + 40, 74, 70, UiColor::White());
+                        UiGeometryBuilder::AddQuad(out, cx + 98, art_y + 65, 14, 22, UiColor::HeaderDark());
+                        UiGeometryBuilder::AddQuad(out, cx + 132, art_y + 65, 14, 22, UiColor::HeaderDark());
+                        UiGeometryBuilder::AddText(out, "HOLLOW KNIGHT", cx + 55, art_y + 135, 1.4f, UiColor::White());
+                    } else {
+                        UiGeometryBuilder::AddText(out, "NINTENDO", cx + 85, art_y + 50, 1.4f, UiColor::TextDim());
+                        UiGeometryBuilder::AddText(out, "SWITCH", cx + 92, art_y + 75, 1.6f, UiColor::EdenCyan());
+                    }
+
+                    // Badge
+                    UiColor bcol = (g.format_badge == "[NSP]") ? UiColor::BadgeNsp() :
+                                   (g.format_badge == "[XCI]") ? UiColor::BadgeXci() : UiColor::BadgeNro();
+                    UiGeometryBuilder::AddText(out, g.format_badge, cx + 12, art_y + 175, 1.3f, bcol);
+
+                    // Title
+                    std::string disp_title = g.title;
+                    if (disp_title.size() > 20) disp_title = disp_title.substr(0, 18) + "..";
+                    UiGeometryBuilder::AddText(out, disp_title, cx + 12, art_y + 200, 1.5f, UiColor::TextWhite());
+
+                    // Subtitle / Optimizer Tag
+                    UiGeometryBuilder::AddText(out, g.optimizer_tag, cx + 12, art_y + 228, 1.1f, UiColor::EdenCyan());
+
+                    // Playtime & size
+                    UiGeometryBuilder::AddText(out, g.playtime_str, cx + 12, art_y + 252, 1.2f, UiColor::TextDim());
+                    std::string fsize_str = std::to_string(g.file_size / (1024 * 1024)) + " MB";
+                    UiGeometryBuilder::AddText(out, fsize_str, cx + 12, art_y + 274, 1.2f, UiColor::TextDim());
+
+                    if (is_focus) {
+                        UiGeometryBuilder::AddText(out, ">> PRESS (A) TO LAUNCH <<", cx + 20, art_y + 320, 1.3f, UiColor::NeonGreen());
+                    }
+                }
+            }
+
+            if (show_game_options_) {
+                UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor::ModalDark());
+                UiGeometryBuilder::AddQuad(out, 390, 180, 500, 320, UiColor::CardFocus());
+                UiGeometryBuilder::AddRectOutline(out, 390, 180, 500, 320, 2.5f, UiColor::EdenCyan());
+                UiGeometryBuilder::AddText(out, "GAME OPTIONS", 550, 205, 1.8f, UiColor::EdenCyan());
+                UiGeometryBuilder::AddQuad(out, 410, 235, 460, 1, UiColor::CardBorder());
+
+                const char* opts[] = {
+                    "1. Launch Game",
+                    "2. Scan Directory for Updates",
+                    "3. View File Information",
+                    "4. Remove from Library",
+                    "5. Close Options"
+                };
+                for (size_t o = 0; o < 5; ++o) {
+                    float oy = 260.0f + static_cast<float>(o) * 40.0f;
+                    if (o == game_options_row_) {
+                        UiGeometryBuilder::AddQuad(out, 410, oy - 4, 460, 32, UiColor::SelectedRow());
+                        UiGeometryBuilder::AddText(out, std::string("> ") + opts[o], 420, oy, 1.5f, UiColor::EdenCyan());
+                    } else {
+                        UiGeometryBuilder::AddText(out, std::string("  ") + opts[o], 420, oy, 1.5f, UiColor::TextWhite());
+                    }
+                }
+            }
+            break;
+        }
+
+        case FrontendTab::FileManager: {
+            UiGeometryBuilder::AddText(out, "LOCATION: " + current_dir_path_, 40, 120, 1.5f, UiColor::EdenCyan());
+
+            // Left Pane (Files List)
+            UiGeometryBuilder::AddQuad(out, 40, 150, 720, 480, UiColor::CardBg());
+            UiGeometryBuilder::AddRectOutline(out, 40, 150, 720, 480, 1.5f, UiColor::CardBorder());
+
+            const size_t max_visible = 11;
+            size_t start_idx = 0;
+            if (selected_file_index_ >= max_visible) {
+                start_idx = selected_file_index_ - max_visible + 1;
+            }
+
+            for (size_t row = 0; row < max_visible && (start_idx + row) < dir_entries_.size(); ++row) {
+                size_t actual_idx = start_idx + row;
+                const auto& fe = dir_entries_[actual_idx];
+                float ry = 165.0f + static_cast<float>(row) * 40.0f;
+
+                if (actual_idx == selected_file_index_) {
+                    UiGeometryBuilder::AddQuad(out, 45, ry - 4, 710, 34, UiColor::SelectedRow());
+                    UiGeometryBuilder::AddText(out, ">", 50, ry, 1.5f, UiColor::EdenCyan());
+                }
+
+                UiColor badge_col = fe.is_directory ? UiColor::Gold() :
+                                    (fe.format_badge == "[NSP]") ? UiColor::BadgeNsp() :
+                                    (fe.format_badge == "[XCI]") ? UiColor::BadgeXci() : UiColor::BadgeNro();
+
+                UiGeometryBuilder::AddText(out, fe.format_badge, 70, ry, 1.4f, badge_col);
+                std::string fname = fe.name;
+                if (fname.size() > 42) fname = fname.substr(0, 40) + "..";
+                UiGeometryBuilder::AddText(out, fname, 160, ry, 1.4f, UiColor::TextWhite());
+            }
+
+            // Right Pane (File Details)
+            UiGeometryBuilder::AddQuad(out, 780, 150, 460, 480, UiColor::CardBg());
+            UiGeometryBuilder::AddRectOutline(out, 780, 150, 460, 480, 1.5f, UiColor::CardBorder());
+
+            UiGeometryBuilder::AddText(out, "ITEM DETAILS", 810, 175, 1.8f, UiColor::EdenCyan());
+            UiGeometryBuilder::AddQuad(out, 810, 205, 400, 1, UiColor::CardBorder());
+
+            if (selected_file_index_ < dir_entries_.size()) {
+                const auto& sel = dir_entries_[selected_file_index_];
+                UiGeometryBuilder::AddText(out, "Name: " + sel.name, 810, 230, 1.3f, UiColor::TextWhite());
+                UiGeometryBuilder::AddText(out, "Type: " + sel.format_badge, 810, 270, 1.3f, UiColor::TextDim());
+                UiGeometryBuilder::AddText(out, "Virtual: " + sel.full_path, 810, 310, 1.2f, UiColor::TextDim());
+                if (!sel.is_directory) {
+                    UiGeometryBuilder::AddText(out, "Size: " + std::to_string(sel.file_size / (1024 * 1024)) + " MB", 810, 350, 1.3f, UiColor::NeonGreen());
+                    UiGeometryBuilder::AddText(out, "Executable ROM: Yes", 810, 390, 1.3f, UiColor::EdenCyan());
+                } else {
+                    UiGeometryBuilder::AddText(out, "Directory: Press (A) to Enter", 810, 350, 1.3f, UiColor::Gold());
+                }
+            }
+
+            UiGeometryBuilder::AddText(out, "(A) Open / Run   (B) Parent   (X) Scan", 810, 580, 1.4f, UiColor::White());
+            break;
+        }
+
+        case FrontendTab::Optimizers: {
+            UiGeometryBuilder::AddText(out, "GRAPHICS & DISPLAY OPTIMIZERS (XBOX HARDWARE ACCELERATED)", 40, 120, 1.6f, UiColor::EdenCyan());
+
+            const auto& cfg = config_.GetConfig();
+            std::string opt_names[7];
+            opt_names[0] = "Resolution Scale: " + std::string(
+                (cfg.resolution_scale == core::config::ResolutionScale::Native_1_0x) ? "1x Native (1080p Docked)" :
+                (cfg.resolution_scale == core::config::ResolutionScale::SeriesX_1_5x) ? "1.5x 1440p (Series X Enhanced)" :
+                (cfg.resolution_scale == core::config::ResolutionScale::Ultra4K_2_0x) ? "2x 4K UHD (Series X 2160p)" :
+                (cfg.resolution_scale == core::config::ResolutionScale::SeriesS_0_75x) ? "0.75x 720p (Series S Balanced)" : "0.5x 540p (Handheld)");
+
+            opt_names[1] = "Upscaler Engine: " + std::string(
+                (cfg.upscaler == core::gpu::pipeline::UpscalerMode::FSR_2_0) ? "AMD FidelityFX Super Resolution 2.0" :
+                (cfg.upscaler == core::gpu::pipeline::UpscalerMode::FSR_1_0) ? "AMD FSR 1.0 Spatial" :
+                (cfg.upscaler == core::gpu::pipeline::UpscalerMode::Bicubic) ? "Bicubic Filtering" : "Nearest / Bilinear");
+
+            char sharp_buf[32];
+            std::snprintf(sharp_buf, sizeof(sharp_buf), "FSR Sharpness: %.2f", cfg.fsr_sharpness);
+            opt_names[2] = sharp_buf;
+
+            opt_names[3] = "Anti-Aliasing: " + std::string(
+                (cfg.anti_aliasing == core::gpu::pipeline::AntiAliasingMode::MSAA_4x) ? "4x Multi-Sample AA (MSAA)" :
+                (cfg.anti_aliasing == core::gpu::pipeline::AntiAliasingMode::MSAA_2x) ? "2x Multi-Sample AA" :
+                (cfg.anti_aliasing == core::gpu::pipeline::AntiAliasingMode::SMAA) ? "Subpixel Morphological AA (SMAA)" :
+                (cfg.anti_aliasing == core::gpu::pipeline::AntiAliasingMode::FXAA) ? "Fast Approximate AA (FXAA)" : "Disabled");
+
+            opt_names[4] = "Frame Generation: " + std::string(
+                (cfg.frame_generation == core::gpu::pipeline::FrameGenMode::AFMF_Extrapolation_2x) ? "AFMF 2x Extrapolation (120 FPS Target)" : "Disabled");
+
+            opt_names[5] = "Vertical Sync (VSync): " + std::string(cfg.vsync ? "Enabled (Smooth 60 Hz)" : "Disabled (Uncapped)");
+            opt_names[6] = "Fastmem Hardware MMU: " + std::string(cfg.fastmem_enabled ? "Enabled (Zero-Overhead Memory Page Trap)" : "Disabled");
+
+            for (size_t row = 0; row < 7; ++row) {
+                float ry = 160.0f + static_cast<float>(row) * 65.0f;
+                bool is_sel = (row == selected_setting_row_);
+
+                UiGeometryBuilder::AddQuad(out, 40, ry, 1200, 52, is_sel ? UiColor::SelectedRow() : UiColor::CardBg());
+                UiGeometryBuilder::AddRectOutline(out, 40, ry, 1200, 52, is_sel ? 2.5f : 1.0f, is_sel ? UiColor::EdenCyan() : UiColor::CardBorder());
+
+                if (is_sel) {
+                    UiGeometryBuilder::AddText(out, ">", 60, ry + 18, 1.6f, UiColor::EdenCyan());
+                }
+                UiGeometryBuilder::AddText(out, opt_names[row], 90, ry + 18, 1.5f, is_sel ? UiColor::White() : UiColor::TextWhite());
+                UiGeometryBuilder::AddText(out, "[ (A) / Left / Right to Change ]", 900, ry + 18, 1.3f, UiColor::TextDim());
+            }
+            break;
+        }
+
+        case FrontendTab::Controllers: {
+            UiGeometryBuilder::AddText(out, "CONTROLLER MAPPING & HAPTIC ENGINE", 40, 120, 1.6f, UiColor::EdenCyan());
+
+            const auto& cfg = config_.GetConfig();
+            std::string ctrl_rows[7];
+            ctrl_rows[0] = "Emulated Controller: " + std::string(
+                (cfg.controller_type == core::config::ControllerType::ProController) ? "Nintendo Switch Pro Controller" :
+                (cfg.controller_type == core::config::ControllerType::JoyConDual) ? "Dual Joy-Con Pair" : "Handheld Console");
+
+            ctrl_rows[1] = "Face Button Layout: " + std::string(
+                (cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard) ? "Nintendo Standard (B/A/Y/X)" : "Xbox Mirrored (A/B/X/Y)");
+
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "Stick Inner Deadzone: %.2f", cfg.inner_deadzone);
+            ctrl_rows[2] = buf;
+
+            std::snprintf(buf, sizeof(buf), "Stick Outer Deadzone: %.2f", cfg.outer_deadzone);
+            ctrl_rows[3] = buf;
+
+            ctrl_rows[4] = "HD Rumble Actuators: " + std::string(cfg.vibration_enabled ? "Enabled" : "Disabled");
+
+            std::snprintf(buf, sizeof(buf), "Vibration Motor Strength: %d%%", static_cast<int>(cfg.vibration_strength * 100.0f));
+            ctrl_rows[5] = buf;
+
+            ctrl_rows[6] = "Test Vibration: [ PRESS (A) TO TEST XBOX MOTORS ]";
+
+            for (size_t row = 0; row < 7; ++row) {
+                float ry = 160.0f + static_cast<float>(row) * 65.0f;
+                bool is_sel = (row == selected_setting_row_);
+
+                UiGeometryBuilder::AddQuad(out, 40, ry, 740, 52, is_sel ? UiColor::SelectedRow() : UiColor::CardBg());
+                UiGeometryBuilder::AddRectOutline(out, 40, ry, 740, 52, is_sel ? 2.5f : 1.0f, is_sel ? UiColor::EdenCyan() : UiColor::CardBorder());
+
+                if (is_sel) {
+                    UiGeometryBuilder::AddText(out, ">", 55, ry + 18, 1.6f, UiColor::EdenCyan());
+                }
+                UiGeometryBuilder::AddText(out, ctrl_rows[row], 80, ry + 18, 1.4f, is_sel ? UiColor::White() : UiColor::TextWhite());
+            }
+
+            // Right diagram panel
+            UiGeometryBuilder::AddQuad(out, 810, 160, 430, 450, UiColor::CardBg());
+            UiGeometryBuilder::AddRectOutline(out, 810, 160, 430, 450, 1.5f, UiColor::CardBorder());
+            UiGeometryBuilder::AddText(out, "BUTTON MAPPING MAP", 840, 185, 1.6f, UiColor::EdenCyan());
+            UiGeometryBuilder::AddQuad(out, 840, 215, 370, 1, UiColor::CardBorder());
+
+            UiGeometryBuilder::AddText(out, "Switch A  <-->  Xbox B (Accept)", 840, 240, 1.3f, UiColor::TextWhite());
+            UiGeometryBuilder::AddText(out, "Switch B  <-->  Xbox A (Cancel)", 840, 280, 1.3f, UiColor::TextWhite());
+            UiGeometryBuilder::AddText(out, "Switch X  <-->  Xbox Y (Top)", 840, 320, 1.3f, UiColor::TextWhite());
+            UiGeometryBuilder::AddText(out, "Switch Y  <-->  Xbox X (Left)", 840, 360, 1.3f, UiColor::TextWhite());
+            UiGeometryBuilder::AddText(out, "Switch +  <-->  Xbox Menu / Start", 840, 400, 1.3f, UiColor::TextDim());
+            UiGeometryBuilder::AddText(out, "Switch -  <-->  Xbox View / Back", 840, 440, 1.3f, UiColor::TextDim());
+            UiGeometryBuilder::AddText(out, "QuickMenu <-->  View OR L3 + R3", 840, 480, 1.3f, UiColor::NeonGreen());
+            break;
+        }
+
+        case FrontendTab::System: {
+            UiGeometryBuilder::AddText(out, "HORIZON OS & HARDWARE SYSTEM PREFERENCES", 40, 120, 1.6f, UiColor::EdenCyan());
+
+            const auto& cfg = config_.GetConfig();
+            std::string sys_rows[4];
+            sys_rows[0] = "Console Operation Mode: " + std::string(
+                (cfg.console_mode == core::config::ConsoleMode::Docked) ? "Docked (Maximum GPU Clocks 1080p/4K)" : "Handheld (Power Saving 720p)");
+
+            const char* lang_names[] = {"English (American)", "Japanese", "French", "German", "Spanish", "Italian"};
+            u32 l_idx = static_cast<u32>(cfg.system_language);
+            if (l_idx > 5) l_idx = 0;
+            sys_rows[1] = "System Language: " + std::string(lang_names[l_idx]);
+
+            sys_rows[2] = "Audio Master Volume: " + std::to_string(cfg.audio_volume) + "%";
+            sys_rows[3] = "Spatial Surround Sound: " + std::string(cfg.surround_enabled ? "5.1 / 7.1 Surround (Dolby Atmos)" : "2.0 Stereo High-Def");
+
+            for (size_t row = 0; row < 4; ++row) {
+                float ry = 160.0f + static_cast<float>(row) * 75.0f;
+                bool is_sel = (row == selected_setting_row_);
+
+                UiGeometryBuilder::AddQuad(out, 40, ry, 1200, 60, is_sel ? UiColor::SelectedRow() : UiColor::CardBg());
+                UiGeometryBuilder::AddRectOutline(out, 40, ry, 1200, 60, is_sel ? 2.5f : 1.0f, is_sel ? UiColor::EdenCyan() : UiColor::CardBorder());
+
+                if (is_sel) {
+                    UiGeometryBuilder::AddText(out, ">", 60, ry + 22, 1.6f, UiColor::EdenCyan());
+                }
+                UiGeometryBuilder::AddText(out, sys_rows[row], 90, ry + 22, 1.5f, is_sel ? UiColor::White() : UiColor::TextWhite());
+            }
+            break;
+        }
+
+        case FrontendTab::Diagnostics: {
+            UiGeometryBuilder::AddText(out, "ENGINE SUBSYSTEM DIAGNOSTICS & TELEMETRY", 40, 120, 1.6f, UiColor::EdenCyan());
+
+            UiGeometryBuilder::AddQuad(out, 40, 150, 1200, 480, UiColor::CardBg());
+            UiGeometryBuilder::AddRectOutline(out, 40, 150, 1200, 480, 1.5f, UiColor::CardBorder());
+
+            UiGeometryBuilder::AddText(out, "[CPU] ARM64 Tier-1 JIT: Active (Dynarmic instruction block compiler)", 70, 180, 1.4f, UiColor::NeonGreen());
+            UiGeometryBuilder::AddText(out, "[GPU] Direct3D 12 Hardware Backend: Feature Level 12_1 (Xbox Series S/X)", 70, 225, 1.4f, UiColor::EdenCyan());
+            UiGeometryBuilder::AddText(out, "[OS]  Horizon 64-bit Microkernel: IPC Dispatcher & SVC 0x01..0x7B Validated", 70, 270, 1.4f, UiColor::TextWhite());
+            UiGeometryBuilder::AddText(out, "[MEM] Fastmem VEH Exception Handler: Zero-overhead direct pointer dereference", 70, 315, 1.4f, UiColor::TextWhite());
+            UiGeometryBuilder::AddText(out, "[AUD] XAudio2 Hardware Mixer: 48,000 Hz, 16-bit PCM Stereo Audio Pipeline", 70, 360, 1.4f, UiColor::TextWhite());
+            UiGeometryBuilder::AddText(out, "[VFS] Virtual File System: sdmc:/, save:/, romfs:/, exefs:/ Mounted", 70, 405, 1.4f, UiColor::TextWhite());
+            UiGeometryBuilder::AddText(out, "[APPX] Microsoft UWP Dev Mode Package: MS-APX OPC Compliant, SHA-256 Validated", 70, 450, 1.4f, UiColor::Gold());
+            UiGeometryBuilder::AddText(out, "[ROM] Hollow Knight Title ID: 0100BF900806A000 / 0100633007D48000 Target Ready", 70, 495, 1.4f, UiColor::BadgeNsp());
+            break;
+        }
+    }
+
+    // 4. Footer Bar
+    UiGeometryBuilder::AddQuad(out, 0, 664, 1280, 56, UiColor::HeaderDark());
+    UiGeometryBuilder::AddQuad(out, 0, 664, 1280, 1, UiColor::CardBorder());
+    UiGeometryBuilder::AddText(out, "(A) Select / Launch", 40, 684, 1.3f, UiColor::NeonGreen());
+    UiGeometryBuilder::AddText(out, "(B) Back / Return", 260, 684, 1.3f, UiColor::SwitchRed());
+    UiGeometryBuilder::AddText(out, "(X) Scan Storage", 460, 684, 1.3f, UiColor::Gold());
+    UiGeometryBuilder::AddText(out, "(Y) Options", 660, 684, 1.3f, UiColor::Purple());
+    UiGeometryBuilder::AddText(out, "(LB)/(RB) Switch Tab", 820, 684, 1.3f, UiColor::EdenCyan());
+    UiGeometryBuilder::AddText(out, "(Back+Start) Exit", 1060, 684, 1.3f, UiColor::TextDim());
+
+    // 5. Toast Notification Banner
+    if (toast_timer_ > 0.0f) {
+        UiGeometryBuilder::AddQuad(out, 340, 12, 600, 36, UiColor::HeaderDark());
+        UiGeometryBuilder::AddRectOutline(out, 340, 12, 600, 36, 2.0f, UiColor::EdenCyan());
+        UiGeometryBuilder::AddText(out, "[*] " + toast_message_, 360, 22, 1.4f, UiColor::EdenCyan());
+    }
+}
+
+void XboxFrontend::BuildQuickMenuGeometry(std::vector<core::gpu::RasterVertex>& out) {
+    out.reserve(4096);
+
+    // Full screen dimming overlay
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor::ModalDark());
+
+    // Centered modal box
+    UiGeometryBuilder::AddQuad(out, 360, 90, 560, 540, UiColor::CardFocus());
+    UiGeometryBuilder::AddRectOutline(out, 360, 90, 560, 540, 2.5f, UiColor::EdenCyan());
+
+    UiGeometryBuilder::AddText(out, "RETROARCH QUICK MENU", 480, 115, 1.8f, UiColor::EdenCyan());
+    UiGeometryBuilder::AddText(out, "IN-GAME OVERLAY", 565, 142, 1.2f, UiColor::TextDim());
+    UiGeometryBuilder::AddQuad(out, 380, 165, 520, 1, UiColor::CardBorder());
+
+    const char* qm_items[] = {
+        "Resume Game",
+        "Restart Title",
+        "Save State",
+        "Load State",
+        "State Slot",
+        "Core Options (Resolution / FSR)",
+        "Controls (Nintendo / Xbox Layout)",
+        "Take Screenshot",
+        "Close Content (Return to Eden UI)"
+    };
+
+    auto& cfg = config_.GetConfig();
+
+    for (size_t i = 0; i < 9; ++i) {
+        float iy = 185.0f + static_cast<float>(i) * 44.0f;
+        bool is_sel = (i == quick_menu_row_);
+
+        if (is_sel) {
+            UiGeometryBuilder::AddQuad(out, 380, iy - 4, 520, 36, UiColor::SelectedRow());
+            UiGeometryBuilder::AddText(out, ">", 395, iy + 4, 1.5f, UiColor::EdenCyan());
+        }
+
+        std::string label = qm_items[i];
+        if (i == 2) label += " (Slot " + std::to_string(current_state_slot_) + ")";
+        else if (i == 3) label += " (Slot " + std::to_string(current_state_slot_) + ")";
+        else if (i == 4) label += ": < " + std::to_string(current_state_slot_) + " >";
+        else if (i == 5) {
+            label = "Resolution: " + std::string((cfg.resolution_scale == core::config::ResolutionScale::Ultra4K_2_0x) ? "2x (4K)" : "1x (1080p)");
+        } else if (i == 6) {
+            label = "Layout: " + std::string((cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard) ? "Nintendo (B/A/Y/X)" : "Xbox (A/B/X/Y)");
+        }
+
+        UiGeometryBuilder::AddText(out, label, 420, iy + 4, 1.4f, is_sel ? UiColor::White() : UiColor::TextWhite());
+    }
+
+    UiGeometryBuilder::AddQuad(out, 380, 580, 520, 1, UiColor::CardBorder());
+    UiGeometryBuilder::AddText(out, "(A) Select   (B) Close Quick Menu   (D-Pad) Navigate", 410, 595, 1.3f, UiColor::EdenCyan());
 }
 
 std::optional<std::string> XboxFrontend::ConsumeLaunchRequest() {

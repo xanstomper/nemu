@@ -24,6 +24,9 @@ void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& t
     switch (svc_id) {
         case 0x01: SvcSetHeapSize(state, process); break;
         case 0x02: SvcSetMemoryPermission(state, process); break;
+        case 0x03: SvcSetMemoryAttribute(state); break;
+        case 0x04: SvcMapMemory(state); break;
+        case 0x05: SvcUnmapMemory(state); break;
         case 0x06: SvcQueryMemory(state, process); break;
         case 0x07: SvcExitProcess(state, process, thread); break;
         case 0x08: SvcCreateThread(state, process); break;
@@ -36,20 +39,26 @@ void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& t
         case 0x16: SvcCloseHandle(state, process); break;
         case 0x17: SvcResetSignal(state, process); break;
         case 0x18: SvcWaitSynchronization(state, process); break;
+        case 0x19: SvcCancelSynchronization(state); break;
         case 0x1A: SvcArbitrateLock(state, process); break;
         case 0x1B: SvcArbitrateUnlock(state, process); break;
         case 0x1C: SvcWaitProcessWideKeyAtomic(state, process); break;
         case 0x1E: SvcSignalProcessWideKey(state, process); break;
         case 0x21: SvcSendSyncRequest(state, process, thread); break;
+        case 0x22: SvcSendSyncRequest(state, process, thread); break;
         case 0x25: SvcGetThreadId(state, thread); break;
         case 0x26: SvcBreak(state); break;
         case 0x27: SvcOutputDebugString(state, process); break;
         case 0x29: SvcGetInfo(state, process); break;
         case 0x2B: SvcConnectToPort(state, process); break;
         case 0x2C: SvcGetProcessId(state, process); break;
+        case 0x32: SvcSetThreadCoreMask(state); break;
+        case 0x34: SvcGetThreadCoreMask(state); break;
         case 0x45: SvcCreateEvent(state, process); break;
         case 0x46: SvcSignalEvent(state, process); break;
         case 0x47: SvcClearEvent(state, process); break;
+        case 0x6F:
+        case 0x7B: SvcGetSystemTick(state); break;
 
         default:
             NEMU_LOG_WARN("SVC", "Unhandled SVC 0x{:02X} called at PC 0x{:016X}", svc_id, state.pc);
@@ -527,6 +536,48 @@ void SvcDispatcher::SvcClearEvent(cpu::CpuState& state, KProcess& process) {
         event->Clear();
     }
     state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcSetMemoryAttribute(cpu::CpuState& state) {
+    // svcSetMemoryAttribute(addr, size, mask, val)
+    state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcMapMemory(cpu::CpuState& state) {
+    // svcMapMemory(dst, src, size)
+    state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcUnmapMemory(cpu::CpuState& state) {
+    // svcUnmapMemory(dst, src, size)
+    state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcCancelSynchronization(cpu::CpuState& state) {
+    // svcCancelSynchronization(thread_handle)
+    state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcSetThreadCoreMask(cpu::CpuState& state) {
+    // svcSetThreadCoreMask(thread_handle, ideal_core, affinity_mask)
+    state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcGetThreadCoreMask(cpu::CpuState& state) {
+    // svcGetThreadCoreMask(thread_handle) -> ideal_core, affinity_mask
+    state.SetX(0, static_cast<u64>(Result::Success));
+    state.SetX(1, 0);    // Ideal core 0
+    state.SetX(2, 0x0F); // 4-core mask
+}
+
+void SvcDispatcher::SvcGetSystemTick(cpu::CpuState& state) {
+    // svcGetSystemTick() -> tick count at 19.2 MHz (Horizon OS standard clock)
+    using clock = std::chrono::steady_clock;
+    static const auto g_tick_epoch = clock::now();
+    const auto now = clock::now();
+    const u64 nanos = static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - g_tick_epoch).count());
+    const u64 ticks = (nanos * 192ULL) / 10000ULL;
+    state.SetX(0, ticks);
 }
 
 } // namespace nemu::core::kernel

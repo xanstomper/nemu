@@ -144,6 +144,9 @@ private:
     void ScanDirectoryRecursive(const std::filesystem::path& host_path, std::string_view vpath_prefix);
     void ShowToast(std::string message);
 
+    void BuildUiGeometry(std::vector<core::gpu::RasterVertex>& out);
+    void BuildQuickMenuGeometry(std::vector<core::gpu::RasterVertex>& out);
+
     core::filesystem::VirtualFileSystem& vfs_;
     core::config::ConfigManager& config_;
 
