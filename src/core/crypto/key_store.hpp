@@ -47,8 +47,27 @@ public:
     /// Retrieve title key associated with a 32-character hex rights ID
     [[nodiscard]] std::optional<std::vector<u8>> GetTitleKey(std::string_view rights_id_hex) const;
 
+    /// Attempt to resolve the title key for a Rights ID, first from an already
+    /// derived key, then by decrypting an encrypted title-key blob with the
+    /// matching titlekek (titlekek_index or titlekek_XX names).
+    [[nodiscard]] std::optional<std::vector<u8>> GetTitleKeyDecrypted(
+        std::string_view rights_id_hex, std::span<const u8> encrypted_title_key = {}) const;
+
     /// Auto-detect and load keys from standard paths (save:/keys/, sdmc:/switch/, etc.)
     bool LoadDefaultKeys();
+
+    /// Summary of which critical prod.keys/title.keys entries are present.
+    struct KeyCompleteness {
+        bool has_header_key{false};
+        bool has_master_key{false};
+        bool has_key_area_key{false};
+        bool has_titlekek{false};
+        size_t title_key_count{0};
+    };
+
+    /// Probe which boot-critical key families are available (for diagnostics).
+    /// Never logs keys themselves, only presence.
+    [[nodiscard]] KeyCompleteness GetKeyCompleteness() const;
 
     /// Convert a 32-hex character string to a 16-byte array
     static std::optional<std::vector<u8>> HexToBytes(std::string_view hex);
@@ -57,6 +76,8 @@ public:
     static std::string BytesToHex(std::span<const u8> bytes);
 
 private:
+    /// Resolve the titlekek for a rights ID (titlekek_XX / titlekek_index / titlekek).
+    [[nodiscard]] std::optional<std::vector<u8>> GetTitleKek(std::string_view rights_id_hex) const;
     mutable std::shared_mutex mutex_;
     std::unordered_map<std::string, std::vector<u8>> keys_;
 };

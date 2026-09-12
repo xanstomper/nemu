@@ -1,8 +1,10 @@
 #include "key_store.hpp"
+#include "aes.hpp"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <cstdio>
 #include <shared_mutex>
 
 namespace nemu::core::crypto {
@@ -165,6 +167,76 @@ std::optional<std::vector<u8>> KeyStore::GetTitleKey(std::string_view rights_id_
     if (key.has_value()) return key;
 
     return std::nullopt;
+}
+
+std::optional<std::vector<u8>> KeyStore::GetTitleKeyDecrypted(
+    std::string_view rights_id_hex, std::span<const u8> encrypted_title_key) const {
+    // 1. Already-derived key wins.
+    auto derived = GetTitleKey(rights_id_hex);
+    if (derived.has_value()) return derived;
+
+    // 2. Otherwise decrypt an encrypted title-key blob with the matching
+    //    titlekek. The title key is AES-128-ECB-encrypted under the titlekek;
+    //    decryption recovers the plaintext key used to decrypt the NCA body.
+    if (encrypted_title_key.size() != 16) {
+        return std::nullopt;
+    }
+    auto kek = GetTitleKek(rights_id_hex);
+    if (!kek.has_value() || kek->size() != 16) {
+        return std::nullopt;
+    }
+    crypto::Aes128 kek_cipher(std::span<const u8, 16>(kek->data(), 16));
+    std::array<u8, 16> plain{};
+    kek_cipher.DecryptBlock(std::span<const u8, 16>(encrypted_title_key.data(), 16), plain);
+    return std::vector<u8>(plain.begin(), plain.end());
+}
+
+/// Resolve the titlekek for a Rights ID (titlekek_<index> or titlekek_index,
+/// falling back to the base titlekek name). Index is derived from the rights id
+/// nibble when no explicit index is available.
+std::optional<std::vector<u8>> KeyStore::GetTitleKek(std::string_view rights_id_hex) const {
+    // Preference order: titlekek_XX (two-digit), titlekek_X (one-digit),
+    // titlekek_index, titlekek_.
+    if (rights_id_hex.size() >= 2) {
+        std::string idx = ToLower(std::string(rights_id_hex.substr(0, 2)));
+        auto by_idx = GetKey("titlekek_" + idx);
+        if (by_idx.has_value()) return by_idx;
+    }
+    if (rights_id_hex.size() >= 1) {
+        std::string idx = ToLower(std::string(rights_id_hex.substr(0, 1)));
+        auto by_idx = GetKey("titlekek_" + idx);
+        if (by_idx.has_value()) return by_idx;
+    }
+    auto by_index = GetKey("titlekek_index");
+    if (by_index.has_value()) return by_index;
+    return GetKey("titlekek");
+}
+
+KeyStore::KeyCompleteness KeyStore::GetKeyCompleteness() const {
+    KeyCompleteness c;
+    c.has_header_key = HasKey("header_key") || HasKey("header_key_00");
+    for (u8 g = 0; g < 32 && !c.has_master_key; ++g) {
+        if (HasKey("master_key_00") || HasKey("kermit_master_key_00")) {
+            c.has_master_key = true;
+        }
+    }
+    for (u8 g = 0; g < 32 && !c.has_key_area_key; ++g) {
+        char buf[40];
+        std::snprintf(buf, sizeof(buf), "key_area_key_application_%02X", g);
+        if (HasKey(buf)) {
+            c.has_key_area_key = true;
+        }
+    }
+    c.has_titlekek = HasKey("titlekek") || HasKey("titlekek_index");
+    for (const auto& [name, bytes] : keys_) {
+        (void)bytes;
+        // Title keys may be stored under the bare rights-id hex or a
+        // title_key_/titlekey_ prefix.
+        if (name.size() == 32 || name.rfind("title_key_", 0) == 0 || name.rfind("titlekey_", 0) == 0) {
+            ++c.title_key_count;
+        }
+    }
+    return c;
 }
 
 bool KeyStore::LoadDefaultKeys() {
