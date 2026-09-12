@@ -313,9 +313,42 @@ u32 FspSrvService::HandleRequest(
 
         case OpenSaveDataFileSystem:
         case OpenDirectorySaveDataFileSystem: {
-            auto save_svc = std::make_shared<FileSystemSubService>(vfs_, "save:/");
+            u64 title_id = 0;
+            if (request.GetDataSize() >= 16) {
+                title_id = request.Payload<u64>(8);
+                if (title_id == 0 && request.GetDataSize() >= 24) {
+                    title_id = request.Payload<u64>(16);
+                }
+            }
+            if (title_id == 0) {
+                title_id = 0x0100000000010000ULL;
+            }
+
+            char save_dir[64];
+            std::snprintf(save_dir, sizeof(save_dir), "save:/%016llx/", static_cast<unsigned long long>(title_id));
+            if (vfs_) {
+                vfs_->CreateDirectories(save_dir);
+            }
+
+            auto save_svc = std::make_shared<FileSystemSubService>(vfs_, save_dir);
             auto session = std::make_shared<KClientSession>();
             session->SetService(save_svc);
+
+            Handle session_handle = 0;
+            if (ctx.handle_table) {
+                session_handle = ctx.handle_table->CreateHandle(session);
+            }
+
+            reply.Begin(0, 8);
+            reply.Payload<u32>(0, 0);
+            reply.Payload<u32>(4, session_handle);
+            return static_cast<u32>(IpcResult::Success);
+        }
+
+        case OpenSaveDataInfoReader: {
+            auto info_svc = std::make_shared<FileSystemSubService>(vfs_, "save:/");
+            auto session = std::make_shared<KClientSession>();
+            session->SetService(info_svc);
 
             Handle session_handle = 0;
             if (ctx.handle_table) {

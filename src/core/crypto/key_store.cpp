@@ -271,6 +271,12 @@ bool KeyStore::LoadDefaultKeys() {
         std::string home_str(home);
         if (LoadFromFile(home_str + "/.switch/prod.keys")) any_loaded = true;
         if (LoadFromFile(home_str + "/.switch/title.keys")) any_loaded = true;
+        if (LoadFromFile(home_str + "/.config/yuzu/keys/prod.keys")) any_loaded = true;
+        if (LoadFromFile(home_str + "/.config/yuzu/keys/title.keys")) any_loaded = true;
+        if (LoadFromFile(home_str + "/.local/share/yuzu/keys/prod.keys")) any_loaded = true;
+        if (LoadFromFile(home_str + "/.local/share/yuzu/keys/title.keys")) any_loaded = true;
+        if (LoadFromFile(home_str + "/.config/Ryujinx/system/prod.keys")) any_loaded = true;
+        if (LoadFromFile(home_str + "/.config/Ryujinx/system/title.keys")) any_loaded = true;
     }
 
     const char* user_profile = std::getenv("USERPROFILE");
@@ -278,6 +284,23 @@ bool KeyStore::LoadDefaultKeys() {
         std::string up_str(user_profile);
         if (LoadFromFile(up_str + "/.switch/prod.keys")) any_loaded = true;
         if (LoadFromFile(up_str + "/.switch/title.keys")) any_loaded = true;
+    }
+
+    const char* app_data = std::getenv("APPDATA");
+    if (app_data != nullptr && app_data[0] != '\0') {
+        std::string ad_str(app_data);
+        if (LoadFromFile(ad_str + "/yuzu/keys/prod.keys")) any_loaded = true;
+        if (LoadFromFile(ad_str + "/yuzu/keys/title.keys")) any_loaded = true;
+        if (LoadFromFile(ad_str + "/Ryujinx/system/prod.keys")) any_loaded = true;
+        if (LoadFromFile(ad_str + "/Ryujinx/system/title.keys")) any_loaded = true;
+    }
+
+    const char* local_app_data = std::getenv("LOCALAPPDATA");
+    if (local_app_data != nullptr && local_app_data[0] != '\0') {
+        std::string lad_str(local_app_data);
+        if (LoadFromFile(lad_str + "/nemu/keys/prod.keys")) any_loaded = true;
+        if (LoadFromFile(lad_str + "/nemu/keys/title.keys")) any_loaded = true;
+        if (LoadFromFile(lad_str + "/yuzu/keys/prod.keys")) any_loaded = true;
     }
 
     return any_loaded;

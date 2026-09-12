@@ -24,6 +24,10 @@ set(GPU_SOURCES
     presentation/nvnflinger.cpp
     texture/astc_decoder.hpp
     texture/astc_decoder.cpp
+    texture/texture_types.hpp
+    texture/texture_types.cpp
+    texture/texture_cache.hpp
+    texture/texture_cache.cpp
     shader/maxwell_shader_decoder.hpp
     shader/maxwell_shader_decoder.cpp
     shader/shader_translator.hpp

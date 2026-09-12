@@ -140,6 +140,10 @@ bool Emulator::LoadTitle(const std::string& path) {
         if (!Initialize()) return false;
     }
 
+    if (path == "builtin:/demo.nro" || path.rfind("builtin:", 0) == 0) {
+        return LoadBuiltinDemo();
+    }
+
     NEMU_LOG_INFO("System", "Loading title into runtime: {}", path);
     auto loaded = title_loader_->LoadTitle(path, process_->GetVirtualMemory());
     if (!loaded) {

@@ -1,5 +1,6 @@
 #include "jit_compiler.hpp"
 #include "core/cpu/decoder.hpp"
+#include "core/memory/fastmem.hpp"
 #include "platform/logger.hpp"
 #include <cmath>
 #include <cstring>
@@ -1530,6 +1531,37 @@ void JitCompiler::EmitMemAccess(bool is_load, bool is_64bit, u8 rn, u64 offset, 
     // Effective address = GetRegOrSP(rn) + offset, held in SCR_ADDR (R8).
     emitter_.MovR64Mem(SCR_ADDR, X64Reg::R15, RegOrSpSlot(rn));
     emitter_.AddR64Imm32(SCR_ADDR, static_cast<s32>(offset));
+
+    const auto& fastmem = memory::FastmemManager::Instance();
+    const bool use_fastmem = fastmem.IsEnabled() && (fastmem.GetBase() != nullptr);
+
+    if (use_fastmem) {
+        const u64 base_addr = reinterpret_cast<u64>(fastmem.GetBase());
+        emitter_.MovR64Imm(SCR_TMP, base_addr);
+        emitter_.AddR64R64(SCR_ADDR, SCR_TMP);
+
+        if (is_load) {
+            if (is_64bit) {
+                emitter_.MovR64Mem(X64Reg::RAX, SCR_ADDR, 0);
+                EmitSetX(rt, X64Reg::RAX);
+            } else {
+                emitter_.MovR32Mem(X64Reg::RAX, SCR_ADDR, 0);
+                EmitSetW(rt, X64Reg::RAX);
+            }
+        } else {
+            if (rt == 31) {
+                emitter_.MovR64Imm(X64Reg::RAX, 0);
+            } else {
+                emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, XSlot(rt));
+            }
+            if (is_64bit) {
+                emitter_.MovMemR64(SCR_ADDR, 0, X64Reg::RAX);
+            } else {
+                emitter_.MovMemR32(SCR_ADDR, 0, X64Reg::RAX);
+            }
+        }
+        return;
+    }
 
     if (is_load) {
         const u64 thunk = reinterpret_cast<u64>(is_64bit ? &JitMemRead64 : &JitMemRead32);

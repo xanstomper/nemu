@@ -51,6 +51,22 @@ public:
     [[nodiscard]] bool IsRunning() const noexcept { return running_.load(); }
     [[nodiscard]] u64 GetTotalFramesRendered() const noexcept { return frames_rendered_.load(); }
 
+    struct AudioVoice {
+        bool active{false};
+        bool playing{false};
+        u32 sample_rate{48000};
+        u32 channels{2};
+        float volume{1.0f};
+        float mix_volume[2]{1.0f, 1.0f};
+        vaddr_t wave_buffer_addr{0};
+        size_t wave_buffer_size{0};
+        size_t play_offset{0};
+    };
+
+    static constexpr size_t kMaxVoices = 32;
+    void SetVoice(size_t index, const AudioVoice& voice);
+    [[nodiscard]] const AudioVoice& GetVoice(size_t index) const noexcept;
+
 private:
     std::shared_ptr<audio::IAudioBackend> backend_;
     u32 sample_rate_{48000};
@@ -59,6 +75,8 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<u64> frames_rendered_{0};
     std::shared_ptr<KEvent> system_event_;
+    std::array<AudioVoice, kMaxVoices> voices_{};
+    mutable std::mutex voice_mutex_;
 };
 
 class AudrenManagerService final : public IIpcService {

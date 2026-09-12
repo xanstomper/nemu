@@ -89,6 +89,7 @@ public:
         OpenDataStorageByProgramId = 0x14,        // 20
         OpenSaveDataFileSystem = 0x33,            // 51
         OpenDirectorySaveDataFileSystem = 0x34,   // 52
+        OpenSaveDataInfoReader = 0x35,            // 53
         OpenSdCardFileSystem = 0x65,              // 101
     };
 

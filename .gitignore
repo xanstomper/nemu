@@ -38,3 +38,10 @@ Makefile
 *.log
 test_reports/
 benchmarks_out/
+
+# Local data & keys (clean-room isolation)
+*.keys
+keys/
+save/
+sdmc/
+switch/

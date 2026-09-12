@@ -34,6 +34,14 @@ cp "${ROOT_DIR}/packaging/xbox/AppxManifest.xml" "${STAGING_DIR}/AppxManifest.xm
 # Copy visual assets
 cp -r "${ROOT_DIR}/packaging/xbox/Assets/"* "${STAGING_DIR}/Assets/"
 
+# Copy cryptographic keys into package
+if [[ -d "${ROOT_DIR}/keys" ]]; then
+    echo "  -> Bundling production keys into AppX package..."
+    mkdir -p "${STAGING_DIR}/keys"
+    cp -r "${ROOT_DIR}/keys/"* "${STAGING_DIR}/keys/"
+    cp "${ROOT_DIR}/keys/prod.keys" "${STAGING_DIR}/prod.keys" || true
+fi
+
 # 3. Create APPX Package
 echo "[3/4] Compressing into APPX package container..."
 rm -f "${OUTPUT_APPX}"
