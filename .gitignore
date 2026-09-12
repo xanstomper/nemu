@@ -40,6 +40,9 @@ Makefile
 *.log
 test_reports/
 benchmarks_out/
+__pycache__/
+*.pyc
+
 
 # Local data & keys (clean-room isolation)
 *.keys

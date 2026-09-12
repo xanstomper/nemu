@@ -23,7 +23,10 @@ CONTENT_TYPES_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <Default Extension="dll" ContentType="application/x-msdownload"/>
   <Default Extension="keys" ContentType="application/octet-stream"/>
   <Default Extension="cer" ContentType="application/x-x509-ca-cert"/>
+  <Default Extension="dat" ContentType="application/octet-stream"/>
+  <Default Extension="bin" ContentType="application/octet-stream"/>
   <Override PartName="/AppxBlockMap.xml" ContentType="application/vnd.ms-appx.blockmap+xml"/>
+  <Override PartName="/AppxSignature.p7x" ContentType="application/vnd.ms-appx.signature"/>
 </Types>
 """
 
@@ -105,6 +108,15 @@ def sign_appx(appx_path: Path, cert_path: Path, key_path: Path) -> bool:
         
     signed_tmp.replace(appx_path)
     print(f"[+] Package signed successfully: AppxSignature.p7x added.")
+
+    # Verify complete ZIP container integrity
+    with zipfile.ZipFile(appx_path, 'r') as test_zf:
+        for info in test_zf.infolist():
+            try:
+                _ = test_zf.read(info.filename)
+            except Exception as e:
+                raise RuntimeError(f"Package ZIP corruption detected on {info.filename}: {e}")
+    print("[+] All package files verified: 100% readable with valid CRC-32.")
     
     # Verify signature
     cmd_verify = [
