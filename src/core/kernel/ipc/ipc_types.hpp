@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 namespace nemu::core::kernel::ipc {
 
@@ -34,9 +35,28 @@ enum class IpcField : size_t {
 
 /// HLE IPC command types (subset of the Horizon CMIF type field).
 enum class IpcCommandType : u32 {
-    Request      = 0x2, ///< Request an action on a service interface (cmd + in/out buffers).
-    Control      = 0x6, ///< Control request against the service (domain / metadata).
-    Close        = 0xF, ///< Close the session.
+    Invalid       = 0x0,
+    Request       = 0x2, ///< Request an action on a service interface.
+    Control       = 0x3, ///< Control request
+    DomainRequest = 0x4, ///< Domain command request (SendMessage / CloseVirtualHandle).
+    DomainControl = 0x5, ///< Domain control
+    ControlCmd    = 0x6, ///< Control request (ConvertSessionToDomain, DuplicateSessionEx, QueryPointerBufferSize).
+    Close         = 0xF, ///< Close the session.
+};
+
+enum class IpcBufferType : u32 {
+    X_Pointer,  ///< Type X: In pointer buffer
+    A_Send,     ///< Type A: In data buffer
+    B_Receive,  ///< Type B: Out data buffer
+    C_Receive,  ///< Type C: Out pointer buffer
+    W_Exchange, ///< Type W: In/Out buffer
+};
+
+struct IpcBufferDescriptor {
+    IpcBufferType type{IpcBufferType::A_Send};
+    vaddr_t address{0};
+    size_t size{0};
+    u32 flags{0};
 };
 
 /// Reader wrapper over a guest-resident command buffer. Exposes type-safe
@@ -83,6 +103,109 @@ public:
         const size_t avail = IpcBufferSize - start;
         const size_t n = std::min(string_len, avail);
         return std::string_view(reinterpret_cast<const char*>(base_) + start, n);
+    }
+
+    /// Return the raw CMIF command type (low 16 bits of word 0)
+    [[nodiscard]] IpcCommandType GetCommandType() const noexcept {
+        return static_cast<IpcCommandType>(PeekU32(0) & 0xFFFF);
+    }
+
+    /// Check if this is a domain command
+    [[nodiscard]] bool IsDomainRequest() const noexcept {
+        return GetCommandType() == IpcCommandType::DomainRequest;
+    }
+
+    /// For domain requests: 1 = SendMessage, 2 = CloseVirtualHandle
+    [[nodiscard]] u8 GetDomainCommandType() const noexcept {
+        return Payload<u8>(0);
+    }
+
+    /// For domain requests: target domain object ID
+    [[nodiscard]] u32 GetDomainObjectId() const noexcept {
+        return Payload<u32>(4);
+    }
+
+    /// Extract buffer descriptors passed in this IPC command
+    [[nodiscard]] std::vector<IpcBufferDescriptor> GetBufferDescriptors() const {
+        std::vector<IpcBufferDescriptor> desc_list;
+        const u32 w0 = PeekU32(0);
+        const u32 w1 = PeekU32(4);
+
+        const u32 num_x = (w0 >> 16) & 0x0F;
+        const u32 num_a = (w0 >> 20) & 0x0F;
+        const u32 num_b = (w0 >> 24) & 0x0F;
+        const u32 num_w = (w0 >> 28) & 0x0F;
+        const u32 c_flags = (w1 >> 10) & 0x0F;
+        const bool has_handle_desc = ((w1 >> 31) & 0x1) != 0;
+
+        size_t cur_offset = 8;
+        if (has_handle_desc) {
+            u32 h_hdr = Read<u32>(cur_offset);
+            cur_offset += 4;
+            u32 copy_count = (h_hdr >> 1) & 0x0F;
+            u32 move_count = (h_hdr >> 5) & 0x0F;
+            cur_offset += (copy_count + move_count) * 4;
+        }
+
+        // Parse Type X (Pointer) descriptors: 2 words each
+        for (u32 i = 0; i < num_x && cur_offset + 8 <= IpcBufferSize; ++i) {
+            u32 word0 = Read<u32>(cur_offset);
+            u32 word1 = Read<u32>(cur_offset + 4);
+            cur_offset += 8;
+            u64 addr = (static_cast<u64>((word0 >> 16) & 0x07) << 36) |
+                       (static_cast<u64>((word0 >> 24) & 0x0F) << 32) |
+                       static_cast<u64>(word1);
+            size_t size = static_cast<size_t>(word0 & 0xFFFF);
+            desc_list.push_back({IpcBufferType::X_Pointer, addr, size, 0});
+        }
+
+        // Parse Type A (Send) descriptors: 3 words each
+        for (u32 i = 0; i < num_a && cur_offset + 12 <= IpcBufferSize; ++i) {
+            u32 word0 = Read<u32>(cur_offset);
+            u32 word1 = Read<u32>(cur_offset + 4);
+            u32 word2 = Read<u32>(cur_offset + 8);
+            cur_offset += 12;
+            u64 addr = (static_cast<u64>((word2 >> 24) & 0x0F) << 32) | static_cast<u64>(word1);
+            size_t size = (static_cast<size_t>((word2 >> 28) & 0x0F) << 32) | static_cast<size_t>(word0);
+            desc_list.push_back({IpcBufferType::A_Send, addr, size, word2 & 0x03});
+        }
+
+        // Parse Type B (Receive) descriptors: 3 words each
+        for (u32 i = 0; i < num_b && cur_offset + 12 <= IpcBufferSize; ++i) {
+            u32 word0 = Read<u32>(cur_offset);
+            u32 word1 = Read<u32>(cur_offset + 4);
+            u32 word2 = Read<u32>(cur_offset + 8);
+            cur_offset += 12;
+            u64 addr = (static_cast<u64>((word2 >> 24) & 0x0F) << 32) | static_cast<u64>(word1);
+            size_t size = (static_cast<size_t>((word2 >> 28) & 0x0F) << 32) | static_cast<size_t>(word0);
+            desc_list.push_back({IpcBufferType::B_Receive, addr, size, word2 & 0x03});
+        }
+
+        // Parse Type W (Exchange) descriptors: 3 words each
+        for (u32 i = 0; i < num_w && cur_offset + 12 <= IpcBufferSize; ++i) {
+            u32 word0 = Read<u32>(cur_offset);
+            u32 word1 = Read<u32>(cur_offset + 4);
+            u32 word2 = Read<u32>(cur_offset + 8);
+            cur_offset += 12;
+            u64 addr = (static_cast<u64>((word2 >> 24) & 0x0F) << 32) | static_cast<u64>(word1);
+            size_t size = (static_cast<size_t>((word2 >> 28) & 0x0F) << 32) | static_cast<size_t>(word0);
+            desc_list.push_back({IpcBufferType::W_Exchange, addr, size, word2 & 0x03});
+        }
+
+        // Parse Type C (Receive pointer) descriptors: 2 words each
+        if (c_flags > 1) {
+            u32 num_c = c_flags - 1;
+            for (u32 i = 0; i < num_c && cur_offset + 8 <= IpcBufferSize; ++i) {
+                u32 word0 = Read<u32>(cur_offset);
+                u32 word1 = Read<u32>(cur_offset + 4);
+                cur_offset += 8;
+                u64 addr = (static_cast<u64>(word1 & 0xFFFF) << 32) | static_cast<u64>(word0);
+                size_t size = static_cast<size_t>(word1 >> 16);
+                desc_list.push_back({IpcBufferType::C_Receive, addr, size, 0});
+            }
+        }
+
+        return desc_list;
     }
 
 private:

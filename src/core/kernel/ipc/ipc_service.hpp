@@ -6,6 +6,7 @@
 #include <string>
 #include <memory>
 #include <string_view>
+#include <unordered_map>
 
 namespace nemu::core::kernel {
 class KHandleTable;
@@ -134,8 +135,49 @@ public:
     [[nodiscard]] const std::shared_ptr<IIpcService>& GetService() const noexcept { return service_; }
     [[nodiscard]] const std::string& GetServiceName() const noexcept { return service_->GetName(); }
 
+    [[nodiscard]] bool IsDomain() const noexcept { return is_domain_; }
+
+    u32 ConvertToDomain() {
+        if (!is_domain_) {
+            is_domain_ = true;
+            if (service_) {
+                domain_objects_[1] = service_;
+                next_domain_object_id_ = 2;
+            }
+        }
+        return 1;
+    }
+
+    u32 RegisterDomainObject(std::shared_ptr<IIpcService> object) {
+        u32 id = next_domain_object_id_++;
+        domain_objects_[id] = std::move(object);
+        return id;
+    }
+
+    [[nodiscard]] std::shared_ptr<IIpcService> GetDomainObject(u32 object_id) const {
+        if (object_id == 0 || object_id == 1) {
+            return service_;
+        }
+        auto it = domain_objects_.find(object_id);
+        if (it != domain_objects_.end()) {
+            return it->second;
+        }
+        return nullptr;
+    }
+
+    bool CloseDomainObject(u32 object_id) {
+        return domain_objects_.erase(object_id) > 0;
+    }
+
+    [[nodiscard]] size_t GetDomainObjectCount() const noexcept {
+        return domain_objects_.size();
+    }
+
 private:
     std::shared_ptr<IIpcService> service_;
+    bool is_domain_{false};
+    u32 next_domain_object_id_{1};
+    std::unordered_map<u32, std::shared_ptr<IIpcService>> domain_objects_;
 };
 
 } // namespace nemu::core::kernel::ipc

@@ -49,15 +49,68 @@ u32 DispatchSyncRequest(KProcess& process, KThread& thread, KClientSession& sess
         result = static_cast<u32>(IpcResult::InvalidRequest);
     } else {
         switch (cmd_type) {
-            case IpcCommandType::Request:
-                result = service->HandleRequest(ctx, request, writer, x_id);
+            case IpcCommandType::Request: {
+                if (session.IsDomain()) {
+                    const u8 domain_cmd = request.GetDomainCommandType();
+                    const u32 obj_id = request.GetDomainObjectId();
+                    if (domain_cmd == 2) {
+                        session.CloseDomainObject(obj_id);
+                        writer.Begin(0, 0);
+                        result = static_cast<u32>(IpcResult::Success);
+                        break;
+                    }
+                    auto target = session.GetDomainObject(obj_id);
+                    if (!target) {
+                        result = static_cast<u32>(IpcResult::InvalidRequest);
+                    } else {
+                        result = target->HandleRequest(ctx, request, writer, x_id);
+                    }
+                } else {
+                    result = service->HandleRequest(ctx, request, writer, x_id);
+                }
                 break;
+            }
+
+            case IpcCommandType::DomainRequest: {
+                const u8 domain_cmd = request.GetDomainCommandType();
+                const u32 obj_id = request.GetDomainObjectId();
+                if (domain_cmd == 2) {
+                    session.CloseDomainObject(obj_id);
+                    writer.Begin(0, 0);
+                    result = static_cast<u32>(IpcResult::Success);
+                } else {
+                    auto target = session.GetDomainObject(obj_id);
+                    if (!target) {
+                        result = static_cast<u32>(IpcResult::InvalidRequest);
+                    } else {
+                        const u32 cmd_id = (x_id != 0) ? x_id : request.Read<u32>(static_cast<size_t>(IpcField::Payload) + 0x10);
+                        result = target->HandleRequest(ctx, request, writer, cmd_id);
+                    }
+                }
+                break;
+            }
+
             case IpcCommandType::Control:
-                result = service->HandleControl(ctx, request, writer, x_id);
+            case IpcCommandType::ControlCmd: {
+                if (x_id == 0) { // ConvertSessionToDomain
+                    u32 root_id = session.ConvertToDomain();
+                    writer.Begin(0, 8);
+                    writer.Payload(4, root_id);
+                    result = static_cast<u32>(IpcResult::Success);
+                } else if (x_id == 2) { // QueryPointerBufferSize
+                    writer.Begin(0, 8);
+                    writer.Payload(4, static_cast<u32>(0x1000));
+                    result = static_cast<u32>(IpcResult::Success);
+                } else {
+                    result = service->HandleControl(ctx, request, writer, x_id);
+                }
                 break;
+            }
+
             case IpcCommandType::Close:
                 result = static_cast<u32>(IpcResult::Success);
                 break;
+
             default:
                 NEMU_LOG_WARN("IPC", "'{}' unexpected IPC command type 0x{:X}", service->GetName(),
                               request.GetType());

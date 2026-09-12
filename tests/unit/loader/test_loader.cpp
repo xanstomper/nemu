@@ -640,6 +640,155 @@ int main() {
         std::cout << "  - RomFS Archive tests: PASSED" << std::endl;
     }
 
+    // 7. Multi-NSO Modular Loading (rtld + main) & Dynamic Relocations
+    {
+        std::cout << "  - Running Multi-NSO Modular Loader & ELF Relocation Tests..." << std::endl;
+        std::vector<u8> rtld_nso(sizeof(loader::NsoHeader) + 0x1000, 0);
+        auto* rhdr = reinterpret_cast<loader::NsoHeader*>(rtld_nso.data());
+        rhdr->magic = loader::NsoLoader::NSO_MAGIC;
+        rhdr->flags = 0;
+        rhdr->text.file_offset = sizeof(loader::NsoHeader);
+        rhdr->text.memory_offset = 0;
+        rhdr->text.decompressed_size = 0x200;
+        rhdr->text_file_size = 0x200;
+        rhdr->rodata.file_offset = sizeof(loader::NsoHeader) + 0x200;
+        rhdr->rodata.memory_offset = 0x1000;
+        rhdr->rodata.decompressed_size = 0x200;
+        rhdr->rodata_file_size = 0x200;
+        rhdr->data.file_offset = sizeof(loader::NsoHeader) + 0x400;
+        rhdr->data.memory_offset = 0x2000;
+        rhdr->data.decompressed_size = 0x200;
+        rhdr->data_file_size = 0x200;
+        const u32 rtld_code[] = { 0xD2800020, 0xD65F03C0 }; // MOVZ X0, #1; RET
+        std::memcpy(rtld_nso.data() + sizeof(loader::NsoHeader), rtld_code, sizeof(rtld_code));
+
+        std::vector<u8> main_nso(sizeof(loader::NsoHeader) + 0x2000, 0);
+        auto* mhdr = reinterpret_cast<loader::NsoHeader*>(main_nso.data());
+        mhdr->magic = loader::NsoLoader::NSO_MAGIC;
+        mhdr->flags = 0;
+        mhdr->text.file_offset = sizeof(loader::NsoHeader);
+        mhdr->text.memory_offset = 0;
+        mhdr->text.decompressed_size = 0x200;
+        mhdr->text_file_size = 0x200;
+        mhdr->rodata.file_offset = sizeof(loader::NsoHeader) + 0x200;
+        mhdr->rodata.memory_offset = 0x1000;
+        mhdr->rodata.decompressed_size = 0x600;
+        mhdr->rodata_file_size = 0x600;
+        mhdr->data.file_offset = sizeof(loader::NsoHeader) + 0x800;
+        mhdr->data.memory_offset = 0x2000;
+        mhdr->data.decompressed_size = 0x200;
+        mhdr->data_file_size = 0x200;
+
+        u8* rodata_ptr = main_nso.data() + sizeof(loader::NsoHeader) + 0x200;
+        *reinterpret_cast<u32*>(rodata_ptr + 4) = 0x30444F4D; // 'MOD0'
+        *reinterpret_cast<s32*>(rodata_ptr + 8) = 0x24; // dynamic section at +0x24 (offset 0x28)
+
+        // ELF Dynamic entries
+        *reinterpret_cast<s64*>(rodata_ptr + 0x28) = 7;
+        *reinterpret_cast<u64*>(rodata_ptr + 0x30) = 0x1100;
+        *reinterpret_cast<s64*>(rodata_ptr + 0x38) = 8;
+        *reinterpret_cast<u64*>(rodata_ptr + 0x40) = 24;
+        *reinterpret_cast<s64*>(rodata_ptr + 0x48) = 9;
+        *reinterpret_cast<u64*>(rodata_ptr + 0x50) = 24;
+        *reinterpret_cast<s64*>(rodata_ptr + 0x58) = 0;
+        *reinterpret_cast<u64*>(rodata_ptr + 0x60) = 0;
+
+        // Elf64_Rela entry
+        *reinterpret_cast<u64*>(rodata_ptr + 0x100) = 0x2010; // r_offset
+        *reinterpret_cast<u64*>(rodata_ptr + 0x108) = 1027;   // r_info (R_AARCH64_RELATIVE)
+        *reinterpret_cast<s64*>(rodata_ptr + 0x110) = 0x4242; // r_addend
+
+        // Pack into ExeFS PFS0 archive containing 'rtld' and 'main'
+        std::vector<u8> exefs_pfs0(16 + 2 * 24 + 10 + rtld_nso.size() + main_nso.size(), 0);
+        *reinterpret_cast<u32*>(exefs_pfs0.data() + 0) = loader::Pfs0Archive::PFS0_MAGIC;
+        *reinterpret_cast<u32*>(exefs_pfs0.data() + 4) = 2; // 2 files
+        *reinterpret_cast<u32*>(exefs_pfs0.data() + 8) = 10; // "rtld\0main\0"
+
+        // Entry 0: rtld
+        *reinterpret_cast<u64*>(exefs_pfs0.data() + 16) = 0;
+        *reinterpret_cast<u64*>(exefs_pfs0.data() + 24) = rtld_nso.size();
+        *reinterpret_cast<u32*>(exefs_pfs0.data() + 32) = 0; // "rtld"
+
+        // Entry 1: main
+        *reinterpret_cast<u64*>(exefs_pfs0.data() + 40) = rtld_nso.size();
+        *reinterpret_cast<u64*>(exefs_pfs0.data() + 48) = main_nso.size();
+        *reinterpret_cast<u32*>(exefs_pfs0.data() + 56) = 5; // "main"
+
+        std::memcpy(exefs_pfs0.data() + 64, "rtld\0main\0", 10);
+        std::memcpy(exefs_pfs0.data() + 74, rtld_nso.data(), rtld_nso.size());
+        std::memcpy(exefs_pfs0.data() + 74 + rtld_nso.size(), main_nso.data(), main_nso.size());
+
+        loader::Pfs0Archive exefs_archive;
+        NEMU_TEST_ASSERT(exefs_archive.Initialize(exefs_pfs0), "ExeFS PFS0 must initialize");
+        NEMU_TEST_ASSERT(exefs_archive.HasFile("rtld"), "ExeFS must contain rtld");
+        NEMU_TEST_ASSERT(exefs_archive.HasFile("main"), "ExeFS must contain main");
+
+        crypto::KeyStore ks;
+        filesystem::VirtualFileSystem vfs;
+        loader::TitleLoader tloader(ks, vfs);
+        memory::VirtualMemory vm;
+
+        auto loaded_title = tloader.LoadExeFS(exefs_archive, vm, "TestModularTitle", 0x0100000000010000ULL, 0x0071000000ULL);
+        NEMU_TEST_ASSERT(loaded_title.has_value(), "LoadExeFS must succeed");
+        NEMU_TEST_ASSERT(loaded_title->modules.size() == 2, "Must have 2 loaded modules");
+        NEMU_TEST_ASSERT(loaded_title->modules[0].name == "rtld", "Module 0 is rtld");
+        NEMU_TEST_ASSERT(loaded_title->modules[1].name == "main", "Module 1 is main");
+        NEMU_TEST_ASSERT(loaded_title->entry_point == loaded_title->modules[0].entry_point, "Entry point is rtld");
+
+        vaddr_t main_base = loaded_title->modules[1].base_address;
+        u64 patched_val = vm.Read64(main_base + 0x2010);
+        NEMU_TEST_ASSERT(patched_val == main_base + 0x4242, "R_AARCH64_RELATIVE relocation applied successfully");
+
+        std::cout << "  - Multi-NSO Modular Loader & Relocation tests: PASSED" << std::endl;
+    }
+
+    // 8. NCA Rights ID and Title Key Extraction
+    {
+        std::cout << "  - Running NCA Rights ID & Title Key Decryption Tests..." << std::endl;
+        crypto::KeyStore ks;
+        const std::string rights_id_hex = "01000000000100000000000000000000";
+        const std::vector<u8> title_key = {
+            0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80,
+            0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0, 0xF0, 0x01
+        };
+        ks.SetKey("title_key_" + rights_id_hex, title_key);
+        NEMU_TEST_ASSERT(ks.GetTitleKey(rights_id_hex).has_value(), "Title key must be retrieved by rights ID");
+
+        std::vector<u8> nca(0x400 + 0x200, 0);
+        *reinterpret_cast<u32*>(nca.data() + 0x200) = loader::NcaReader::NCA3_MAGIC;
+        nca[0x205] = static_cast<u8>(loader::NcaContentType::Program);
+        *reinterpret_cast<u64*>(nca.data() + 0x210) = 0x0100000000010000ULL;
+
+        auto rid_bytes = crypto::KeyStore::HexToBytes(rights_id_hex);
+        NEMU_TEST_ASSERT(rid_bytes.has_value() && rid_bytes->size() == 16, "HexToBytes rights id");
+        std::memcpy(nca.data() + 0x230, rid_bytes->data(), 16);
+
+        *reinterpret_cast<u32*>(nca.data() + 0x240) = 2;
+        *reinterpret_cast<u32*>(nca.data() + 0x244) = 3;
+
+        std::vector<u8> plaintext(0x200, 0x5A);
+        std::memcpy(plaintext.data(), "NEMU_ENCRYPTED_NCA_PAYLOAD_OK", 30);
+
+        crypto::Aes128 cipher(std::span<const u8, 16>(title_key.data(), 16));
+        std::array<u8, 16> ctr{};
+        for (size_t b = 0; b < 8; ++b) {
+            ctr[b] = static_cast<u8>((0x400ULL >> ((7 - b) * 8)) & 0xFF);
+        }
+        cipher.DecryptCtr(plaintext, std::span<u8>(nca.data() + 0x400, 0x200), ctr, 0);
+
+        loader::NcaReader nca_reader;
+        NEMU_TEST_ASSERT(nca_reader.Initialize(nca, &ks), "NcaReader initialize");
+        NEMU_TEST_ASSERT(nca_reader.HasRightsId(), "NCA must have rights ID");
+        NEMU_TEST_ASSERT(nca_reader.GetRightsIdHex() == rights_id_hex, "Rights ID hex match");
+
+        auto decrypted_sec = nca_reader.ExtractSection(0, &ks);
+        NEMU_TEST_ASSERT(decrypted_sec.has_value(), "ExtractSection with title key");
+        NEMU_TEST_ASSERT(std::memcmp(decrypted_sec->data(), "NEMU_ENCRYPTED_NCA_PAYLOAD_OK", 30) == 0,
+                         "Decrypted section matches expected plaintext");
+
+        std::cout << "  - NCA Rights ID & Title Key tests: PASSED" << std::endl;
+    }
+
     std::cout << "[Test: NRO Loader & Commercial Container/Crypto Pipeline PASSED]" << std::endl;
     return 0;
 }

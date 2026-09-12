@@ -175,7 +175,11 @@ int main() {
         std::FILE* f = std::fopen(path, "rb");
         NEMU_TEST_ASSERT(f != nullptr, "SW rasterizer: PPM file opened");
         char magic[3] = {0};
-        if (f) { std::fread(magic, 1, 2, f); std::fclose(f); }
+        if (f) {
+            size_t bytes_read = std::fread(magic, 1, 2, f);
+            (void)bytes_read;
+            std::fclose(f);
+        }
         NEMU_TEST_ASSERT(magic[0] == 'P' && magic[1] == '6', "SW rasterizer: P6 magic");
 
         sw.Shutdown();
@@ -501,6 +505,96 @@ int main() {
         NEMU_TEST_ASSERT(decomp.glsl_source.find("gl_Position") != std::string::npos, "GLSL has gl_Position");
 
         std::cout << "  - Maxwell SM 5.3 shader decompiler (HLSL SM 6.0/5.1) tests: PASSED" << std::endl;
+    }
+
+    // 13. Test Maxwell Pushbuffer Multi-Mode Decoding and ASTC Integration
+    {
+        using namespace nemu::core::gpu;
+        using namespace nemu::core::gpu::texture;
+
+        // A. Test Maxwell3D::DecompressAstc
+        std::array<u8, 16> void_block{};
+        void_block[0] = 0x03 | (1 << 7);
+        void_block[1] = 0x01;
+        void_block[8] = 0x20;  void_block[9] = 0x20;
+        void_block[10] = 0x80; void_block[11] = 0x80;
+        void_block[12] = 0xC0; void_block[13] = 0xC0;
+        void_block[14] = 0xFF; void_block[15] = 0xFF;
+
+        std::vector<u8> surface_data(4 * AstcDecoder::BLOCK_SIZE_BYTES, 0);
+        for (int i = 0; i < 4; ++i) {
+            std::memcpy(surface_data.data() + i * 16, void_block.data(), 16);
+        }
+
+        std::vector<u32> out_surface;
+        bool surface_ok = Maxwell3D::DecompressAstc(surface_data, 8, 8, 4, 4, out_surface, false);
+        NEMU_TEST_ASSERT(surface_ok, "Maxwell3D::DecompressAstc 8x8");
+        NEMU_TEST_ASSERT(out_surface.size() == 64, "Out surface size == 64");
+        NEMU_TEST_ASSERT((out_surface[0] & 0xFF) == 0x20, "DecompressAstc R channel");
+        NEMU_TEST_ASSERT(((out_surface[0] >> 8) & 0xFF) == 0x80, "DecompressAstc G channel");
+        NEMU_TEST_ASSERT(((out_surface[0] >> 16) & 0xFF) == 0xC0, "DecompressAstc B channel");
+        NEMU_TEST_ASSERT(((out_surface[0] >> 24) & 0xFF) == 0xFF, "DecompressAstc A channel");
+
+        // B. Test Pushbuffer Multi-Mode Decoding & DrawElements
+        auto backend = std::make_shared<NullGpuBackend>();
+        backend->Initialize(1280, 720);
+        Maxwell3D maxwell(backend);
+
+        // Mode 0: Inc (0 << 29)
+        std::vector<u32> pb_inc = {
+            (0u << 29) | (3 << 16) | MaxwellMethod::ClearColorR,
+            0x3F800000, // ClearColorR
+            0x3F000000, // ClearColorG
+            0x3E800000, // ClearColorB
+        };
+        maxwell.SubmitPushbuffer(pb_inc);
+        const auto& regs = maxwell.GetRegisters();
+        NEMU_TEST_ASSERT(regs.regs[MaxwellMethod::ClearColorR] == 0x3F800000, "Inc ClearColorR");
+        NEMU_TEST_ASSERT(regs.regs[MaxwellMethod::ClearColorG] == 0x3F000000, "Inc ClearColorG");
+        NEMU_TEST_ASSERT(regs.regs[MaxwellMethod::ClearColorB] == 0x3E800000, "Inc ClearColorB");
+
+        // Mode 1: NonInc (1 << 29)
+        std::vector<u32> pb_noninc = {
+            (1u << 29) | (2 << 16) | MaxwellMethod::Nop,
+            0xAAAAAAAA,
+            0xBBBBBBBB,
+        };
+        maxwell.SubmitPushbuffer(pb_noninc);
+        NEMU_TEST_ASSERT(maxwell.GetRegisters().regs[MaxwellMethod::Nop] == 0xBBBBBBBB, "NonInc Nop");
+
+        // Mode 2: InlineData (2 << 29)
+        std::vector<u32> pb_inline = {
+            (2u << 29) | (0x1234 << 16) | MaxwellMethod::ClearColorA,
+        };
+        maxwell.SubmitPushbuffer(pb_inline);
+        NEMU_TEST_ASSERT(maxwell.GetRegisters().regs[MaxwellMethod::ClearColorA] == 0x1234, "InlineData ClearColorA");
+
+        // Mode 3: IncreaseOnce (3 << 29)
+        std::vector<u32> pb_once = {
+            (3u << 29) | (3 << 16) | MaxwellMethod::ViewportScaleX,
+            0x1111, // ViewportScaleX
+            0x2222, // ViewportScaleX + 1 (ViewportScaleY)
+            0x3333, // ViewportScaleX + 1 (ViewportScaleY)
+        };
+        maxwell.SubmitPushbuffer(pb_once);
+        NEMU_TEST_ASSERT(maxwell.GetRegisters().regs[MaxwellMethod::ViewportScaleX] == 0x1111, "IncreaseOnce first");
+        NEMU_TEST_ASSERT(maxwell.GetRegisters().regs[MaxwellMethod::ViewportScaleY] == 0x3333, "IncreaseOnce rest");
+
+        // C. Test DrawElements (method 0x0675)
+        const u64 draws_before = backend->GetStats().draw_calls;
+        std::vector<u32> pb_draw = {
+            (0u << 29) | (2 << 16) | MaxwellMethod::IndexFormat,
+            1,                                    // IndexFormat (UnsignedShort)
+            3,                                    // IndexCount
+            (0u << 29) | (1 << 16) | MaxwellMethod::DrawElements,
+            (3 << 8) | 3,                         // 3 indices, Triangles topology
+        };
+        maxwell.SubmitPushbuffer(pb_draw);
+        const u64 draws_after = backend->GetStats().draw_calls;
+        NEMU_TEST_ASSERT(draws_after == draws_before + 1, "DrawElements triggered DrawIndexed");
+
+        backend->Shutdown();
+        std::cout << "  - Maxwell pushbuffer multi-mode & ASTC decompress tests: PASSED" << std::endl;
     }
 
     std::cout << "[Test: Tegra X1 Maxwell GPU & Texture Pipeline PASSED]" << std::endl;

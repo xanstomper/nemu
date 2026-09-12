@@ -25,7 +25,17 @@ namespace MaxwellMethod {
     constexpr u32 ClearSurface = 0x036C;
     constexpr u32 VertexArrayAddressHigh = 0x0587;
     constexpr u32 VertexArrayAddressLow = 0x0588;
+    constexpr u32 IndexAddressHigh = 0x05F2;
+    constexpr u32 IndexAddressLow = 0x05F3;
+    constexpr u32 IndexFormat = 0x05F4;
+    constexpr u32 IndexCount = 0x05F5;
     constexpr u32 DrawArrays = 0x0674;
+    constexpr u32 DrawElements = 0x0675;
+    constexpr u32 TextureAddressHigh = 0x0585;
+    constexpr u32 TextureAddressLow = 0x0586;
+    constexpr u32 TextureFormat = 0x0589;
+    constexpr u32 TextureWidth = 0x058A;
+    constexpr u32 TextureHeight = 0x058B;
 } // namespace MaxwellMethod
 
 struct Maxwell3DRegisters {
@@ -53,24 +63,35 @@ public:
     /// Process a single Maxwell 3D command method + argument
     void ProcessMethod(u32 method, u32 argument);
 
-    /// Submit a command stream pushbuffer
-    /// Command format: header (method + count) followed by arguments
+    /// Submit a command stream pushbuffer with multi-mode decoding
     void SubmitPushbuffer(std::span<const u32> pushbuffer);
+
+    /// Decompress an ASTC compressed texture into a contiguous RGBA8 surface
+    static bool DecompressAstc(
+        std::span<const u8> astc_data,
+        u32 width,
+        u32 height,
+        u32 block_width,
+        u32 block_height,
+        std::vector<u32>& out_rgba8,
+        bool is_srgb = false
+    );
 
     [[nodiscard]] const Maxwell3DRegisters& GetRegisters() const noexcept { return regs_; }
     [[nodiscard]] std::shared_ptr<IGpuBackend> GetBackend() const noexcept { return backend_; }
 
 private:
     void ExecuteDrawArrays(u32 argument);
+    void ExecuteDrawElements(u32 argument);
     void ExecuteClearSurface(u32 argument);
     void EmitDebugGeometry(); // stage a recognizable test triangle for draws
+    void EmitDebugIndexedGeometry(); // stage indexed test geometry
 
     std::shared_ptr<IGpuBackend> backend_;
     Maxwell3DRegisters regs_{};
-    // Reusable scratch buffer staging guest-draw vertex data (clean-room port of
-    // the emulator scratch-buffer technique to keep steady-state frames
-    // allocation-free).
+    // Reusable scratch buffer staging guest-draw vertex data
     mutable common::ScratchBuffer<RasterVertex> geometry_scratch_;
+    mutable common::ScratchBuffer<u32> index_scratch_;
 };
 
 } // namespace nemu::core::gpu

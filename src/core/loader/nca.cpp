@@ -71,7 +71,7 @@ bool NcaReader::Initialize(std::span<const u8> data, const crypto::KeyStore* key
             sections_[s].section_index = s;
             sections_[s].offset = static_cast<u64>(start_block) * BLOCK_SIZE;
             sections_[s].size = static_cast<u64>(end_block - start_block) * BLOCK_SIZE;
-            sections_[s].encryption_type = is_encrypted_ ? NcaEncryptionType::Ctr : NcaEncryptionType::None;
+            sections_[s].encryption_type = (is_encrypted_ || has_rights_id_) ? NcaEncryptionType::Ctr : NcaEncryptionType::None;
 
             // Compute default CTR from section index and generation
             for (size_t b = 0; b < 8; ++b) {
@@ -124,7 +124,7 @@ std::optional<std::vector<u8>> NcaReader::ExtractSection(
     std::vector<u8> output(static_cast<size_t>(sec.size));
     std::span<const u8> src_slice(raw_data_.data() + sec.offset, static_cast<size_t>(sec.size));
 
-    if (!is_encrypted_ || sec.encryption_type == NcaEncryptionType::None) {
+    if (sec.encryption_type == NcaEncryptionType::None) {
         std::copy(src_slice.begin(), src_slice.end(), output.begin());
         return output;
     }
