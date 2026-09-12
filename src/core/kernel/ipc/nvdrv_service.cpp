@@ -59,25 +59,57 @@ u32 NvDrvService::HandleOpen(const IpcContext& ctx, const IpcRequestReader& requ
 }
 
 u32 NvDrvService::HandleIoctl(const IpcContext& ctx, const IpcRequestReader& request, IpcReplyWriter& reply) {
-    (void)ctx;
     const s32 fd  = static_cast<s32>(request.Payload<u32>(0));
     const u32 cmd = request.Payload<u32>(4);
 
-    std::vector<u8> in_buf(64, 0);
-    for (size_t i = 0; i < in_buf.size(); ++i) {
-        in_buf[i] = request.Read<u8>(static_cast<size_t>(IpcField::Payload) + 8 + i);
+    std::vector<u8> in_buf;
+    vaddr_t out_addr = 0;
+    size_t out_size = 0;
+
+    for (const auto& desc : request.GetBufferDescriptors()) {
+        if (desc.type == IpcBufferType::A_Send || desc.type == IpcBufferType::X_Pointer) {
+            if (ctx.memory && desc.address != 0 && desc.size > 0) {
+                in_buf.resize(desc.size);
+                ctx.memory->ReadBlock(desc.address, in_buf.data(), desc.size);
+            }
+        } else if (desc.type == IpcBufferType::B_Receive || desc.type == IpcBufferType::C_Receive) {
+            out_addr = desc.address;
+            out_size = desc.size;
+        } else if (desc.type == IpcBufferType::W_Exchange) {
+            if (ctx.memory && desc.address != 0 && desc.size > 0) {
+                in_buf.resize(desc.size);
+                ctx.memory->ReadBlock(desc.address, in_buf.data(), desc.size);
+                out_addr = desc.address;
+                out_size = desc.size;
+            }
+        }
     }
 
-    std::vector<u8> out_buf(64, 0);
+    if (in_buf.empty()) {
+        in_buf.resize(64, 0);
+        for (size_t i = 0; i < in_buf.size(); ++i) {
+            in_buf[i] = request.Read<u8>(static_cast<size_t>(IpcField::Payload) + 8 + i);
+        }
+    }
+
+    const size_t allocated_out = (out_size > 0) ? out_size : 64;
+    std::vector<u8> out_buf(allocated_out, 0);
+
     u32 nv_res = 0;
     if (device_manager_) {
         nv_res = device_manager_->Ioctl(fd, cmd, in_buf, out_buf);
     }
 
-    reply.Begin(static_cast<u32>(IpcCommandType::Request), 8 + out_buf.size());
+    if (ctx.memory && out_addr != 0 && out_size > 0) {
+        const size_t bytes_to_write = std::min(out_size, out_buf.size());
+        ctx.memory->WriteBlock(out_addr, out_buf.data(), bytes_to_write);
+    }
+
+    const size_t inline_bytes = std::min<size_t>(out_buf.size(), 64);
+    reply.Begin(static_cast<u32>(IpcCommandType::Request), 8 + inline_bytes);
     reply.Payload<u32>(0, nv_res);
     reply.Payload<u32>(4, 0);
-    for (size_t i = 0; i < out_buf.size(); ++i) {
+    for (size_t i = 0; i < inline_bytes; ++i) {
         reply.Write<u8>(static_cast<size_t>(IpcField::Payload) + 8 + i, out_buf[i]);
     }
     return static_cast<u32>(IpcResult::Success);

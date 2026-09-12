@@ -147,6 +147,7 @@ void SvcDispatcher::SvcCreateThread(cpu::CpuState& state, KProcess& process) {
 
     auto thread = std::make_shared<KThread>(tid, std::shared_ptr<KProcess>(&process, [](KProcess*){}), priority, entry_point, stack_top, tls);
     thread->GetCpuState().SetX(0, arg);
+    thread->GetCpuState().SetX(30, 0x00000000DEAD0000ULL); // Jump to exit stub on thread return
 
     const Handle h = process.GetHandleTable().CreateHandle(thread);
     if (h != InvalidHandle && process.GetVirtualMemory().WriteBlock(out_handle_ptr, &h, sizeof(h))) {

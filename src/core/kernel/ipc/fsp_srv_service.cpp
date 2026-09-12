@@ -1,6 +1,7 @@
 #include "fsp_srv_service.hpp"
 #include "core/kernel/k_handle_table.hpp"
 #include "core/kernel/ipc/ipc_service.hpp"
+#include "core/memory/virtual_memory.hpp"
 #include "platform/logger.hpp"
 #include <algorithm>
 #include <cstring>
@@ -36,9 +37,21 @@ u32 FileSystemFileService::HandleRequest(
             if (file_bytes.has_value() && offset < file_bytes->size()) {
                 const u64 avail = file_bytes->size() - offset;
                 bytes_read = std::min(size, avail);
-                // If destination pointer is provided in payload or caller wants inline
-                // Write inline into reply payload at offset 8 if small enough
-                if (bytes_read <= 128) {
+
+                // Write to guest memory via IPC Receive Buffer Descriptors (Type B or C)
+                bool wrote_to_descriptor = false;
+                for (const auto& desc : request.GetBufferDescriptors()) {
+                    if ((desc.type == IpcBufferType::B_Receive || desc.type == IpcBufferType::C_Receive) &&
+                        ctx.memory && desc.address != 0) {
+                        const size_t write_sz = std::min(static_cast<size_t>(bytes_read), desc.size);
+                        ctx.memory->WriteBlock(desc.address, file_bytes->data() + offset, write_sz);
+                        wrote_to_descriptor = true;
+                        break;
+                    }
+                }
+
+                // Fallback inline copy for small payloads if no descriptor was supplied
+                if (!wrote_to_descriptor && bytes_read <= 128) {
                     for (u64 i = 0; i < bytes_read; ++i) {
                         reply.Write<u8>(static_cast<size_t>(IpcField::Payload) + 8 + i, (*file_bytes)[offset + i]);
                     }
@@ -127,6 +140,15 @@ u32 FileSystemStorageService::HandleRequest(
             if (file_bytes.has_value() && offset < file_bytes->size()) {
                 const u64 avail = file_bytes->size() - offset;
                 bytes_read = std::min(size, avail);
+
+                for (const auto& desc : request.GetBufferDescriptors()) {
+                    if ((desc.type == IpcBufferType::B_Receive || desc.type == IpcBufferType::C_Receive) &&
+                        ctx.memory && desc.address != 0) {
+                        const size_t write_sz = std::min(static_cast<size_t>(bytes_read), desc.size);
+                        ctx.memory->WriteBlock(desc.address, file_bytes->data() + offset, write_sz);
+                        break;
+                    }
+                }
             }
 
             reply.Begin(0, 16);
