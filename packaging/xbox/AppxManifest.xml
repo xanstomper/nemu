@@ -12,6 +12,10 @@
     Version="1.0.0.0"
     ProcessorArchitecture="x64" />
 
+  <mp:PhoneIdentity
+    PhoneProductId="d83cb2b1-6a20-4e50-9c42-d83cb2b16a20"
+    PhonePublisherId="00000000-0000-0000-0000-000000000000" />
+
   <Properties>
     <DisplayName>Nemu</DisplayName>
     <PublisherDisplayName>Nemu Project</PublisherDisplayName>

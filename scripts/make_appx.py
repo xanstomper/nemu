@@ -15,20 +15,21 @@ from pathlib import Path
 
 BLOCK_SIZE = 65536  # 64 KiB per MS-APX spec
 
-CONTENT_TYPES_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="png" ContentType="image/png"/>
-  <Default Extension="xml" ContentType="application/vnd.ms-appx.manifest+xml"/>
-  <Default Extension="exe" ContentType="application/x-msdownload"/>
-  <Default Extension="dll" ContentType="application/x-msdownload"/>
-  <Default Extension="keys" ContentType="application/octet-stream"/>
-  <Default Extension="cer" ContentType="application/x-x509-ca-cert"/>
-  <Default Extension="dat" ContentType="application/octet-stream"/>
-  <Default Extension="bin" ContentType="application/octet-stream"/>
-  <Override PartName="/AppxBlockMap.xml" ContentType="application/vnd.ms-appx.blockmap+xml"/>
-  <Override PartName="/AppxSignature.p7x" ContentType="application/vnd.ms-appx.signature"/>
-</Types>
-"""
+CONTENT_TYPES_XML = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    '<Default Extension="png" ContentType="image/png"/>'
+    '<Default Extension="xml" ContentType="application/vnd.ms-appx.manifest+xml"/>'
+    '<Default Extension="exe" ContentType="application/x-msdownload"/>'
+    '<Default Extension="dll" ContentType="application/x-msdownload"/>'
+    '<Default Extension="keys" ContentType="application/octet-stream"/>'
+    '<Default Extension="cer" ContentType="application/x-x509-ca-cert"/>'
+    '<Default Extension="dat" ContentType="application/octet-stream"/>'
+    '<Default Extension="bin" ContentType="application/octet-stream"/>'
+    '<Override PartName="/AppxBlockMap.xml" ContentType="application/vnd.ms-appx.blockmap+xml"/>'
+    '<Override PartName="/AppxSignature.p7x" ContentType="application/vnd.ms-appx.signature"/>'
+    '</Types>\n'
+)
 
 def sha256_b64(data: bytes) -> str:
     return base64.b64encode(hashlib.sha256(data).digest()).decode('ascii')
@@ -36,39 +37,41 @@ def sha256_b64(data: bytes) -> str:
 def compute_block_map(files: list[tuple[str, bytes]]) -> str:
     """
     Generate AppxBlockMap.xml from list of (arcname, data).
-    Conforms to MS-APX Section 2.1:
+    Conforms strictly to MS-APX Section 2.1:
     - Excludes [Content_Types].xml, AppxBlockMap.xml, AppxSignature.p7x
     - For uncompressed blocks: Size attribute MUST NOT be present on <Block>
-    - Includes b4:FileHash for full-file integrity validation
+    - Includes b4:FileHash ONLY for multi-block files (> 64 KiB), matching official Microsoft tools
+    - Formats canonically without extra line breaks/indentation to strictly comply with AppX parsers
     """
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8" standalone="no"?>',
+    xml_parts = [
+        '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n',
         '<BlockMap xmlns="http://schemas.microsoft.com/appx/2010/blockmap" xmlns:b4="http://schemas.microsoft.com/appx/2021/blockmap" IgnorableNamespaces="b4" HashMethod="http://www.w3.org/2001/04/xmlenc#sha256">'
     ]
-    
+
     for arcname, data in files:
-        # Windows path separators inside block map
         name_win = arcname.replace('/', '\\')
         file_size = len(data)
         lfh_size = 30 + len(arcname.encode('utf-8'))
-        full_file_hash = sha256_b64(data)
-        
-        lines.append(f'  <File Name="{name_win}" Size="{file_size}" LfhSize="{lfh_size}">')
-        
+
+        xml_parts.append(f'<File Name="{name_win}" Size="{file_size}" LfhSize="{lfh_size}">')
+
         if file_size == 0:
             empty_hash = sha256_b64(b'')
-            lines.append(f'    <Block Hash="{empty_hash}"/>')
+            xml_parts.append(f'<Block Hash="{empty_hash}"/>')
         else:
+            num_blocks = (file_size + BLOCK_SIZE - 1) // BLOCK_SIZE
             for offset in range(0, file_size, BLOCK_SIZE):
                 chunk = data[offset:offset + BLOCK_SIZE]
                 chunk_hash = sha256_b64(chunk)
-                lines.append(f'    <Block Hash="{chunk_hash}"/>')
-        
-        lines.append(f'    <b4:FileHash Hash="{full_file_hash}"/>')
-        lines.append('  </File>')
-        
-    lines.append('</BlockMap>')
-    return '\n'.join(lines) + '\n'
+                xml_parts.append(f'<Block Hash="{chunk_hash}"/>')
+            if num_blocks > 1:
+                full_file_hash = sha256_b64(data)
+                xml_parts.append(f'<b4:FileHash Hash="{full_file_hash}"/>')
+
+        xml_parts.append('</File>')
+
+    xml_parts.append('</BlockMap>')
+    return ''.join(xml_parts)
 
 import shutil
 import subprocess
