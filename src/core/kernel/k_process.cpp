@@ -1,5 +1,7 @@
 #include "k_process.hpp"
+#include "k_thread.hpp"
 #include "platform/logger.hpp"
+#include <algorithm>
 
 namespace nemu::core::kernel {
 
@@ -50,6 +52,42 @@ vaddr_t KProcess::SetHeapSize(size_t size) {
     }
 
     return heap_base_;
+}
+
+void KProcess::AddThread(std::shared_ptr<KThread> thread) {
+    if (!thread) return;
+    std::lock_guard lock(process_mutex_);
+    for (const auto& t : threads_) {
+        if (t && t->GetTid() == thread->GetTid()) {
+            return;
+        }
+    }
+    threads_.push_back(std::move(thread));
+}
+
+void KProcess::RemoveThread(u64 tid) {
+    std::lock_guard lock(process_mutex_);
+    threads_.erase(
+        std::remove_if(threads_.begin(), threads_.end(),
+                       [tid](const std::shared_ptr<KThread>& t) {
+                           return !t || t->GetTid() == tid;
+                       }),
+        threads_.end());
+}
+
+std::vector<std::shared_ptr<KThread>> KProcess::GetThreads() const {
+    std::lock_guard lock(const_cast<std::mutex&>(process_mutex_));
+    return threads_;
+}
+
+std::shared_ptr<KThread> KProcess::GetThread(u64 tid) const {
+    std::lock_guard lock(const_cast<std::mutex&>(process_mutex_));
+    for (const auto& t : threads_) {
+        if (t && t->GetTid() == tid) {
+            return t;
+        }
+    }
+    return nullptr;
 }
 
 } // namespace nemu::core::kernel

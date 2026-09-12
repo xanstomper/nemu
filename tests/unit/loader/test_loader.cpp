@@ -261,6 +261,51 @@ int main() {
         auto kak = ks.GetKeyAreaKey(0, 0);
         NEMU_TEST_ASSERT(kak.has_value() && kak->size() == 16, "Key area key 00 size == 16");
 
+        // Titlekek-based title-key decryption: encrypt a known title key with
+        // the titlekek, then recover it via the KeyStore.
+        {
+            const std::string rid = "00abcdef000000000000000000000000";
+            const std::vector<u8> plain_title_key = {
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
+            };
+            const std::vector<u8> kek = {
+                0xFE, 0xED, 0xFA, 0xCE, 0xCA, 0xFE, 0xBE, 0xEF,
+                0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF
+            };
+            Aes128 enc(std::span<const u8, 16>(kek.data(), 16));
+            std::array<u8, 16> cipher{};
+            enc.EncryptBlock(std::span<const u8, 16>(plain_title_key.data(), 16), cipher);
+
+            // Only the titlekek_00 is present; no derived title key exists.
+            KeyStore ks2;
+            ks2.SetKey("titlekek_00", kek);
+            NEMU_TEST_ASSERT(!ks2.GetTitleKey(rid).has_value(), "No derived title key yet");
+            auto recovered = ks2.GetTitleKeyDecrypted(rid, cipher);
+            NEMU_TEST_ASSERT(recovered.has_value(), "Title key decrypted via titlekek");
+            NEMU_TEST_ASSERT(std::vector<u8>(recovered->begin(), recovered->end()) == plain_title_key,
+                             "Decrypted title key matches plaintext");
+
+            // A derived key in the store takes precedence over the kek path.
+            ks2.SetKey("title_key_" + rid, plain_title_key);
+            NEMU_TEST_ASSERT(ks2.GetTitleKeyDecrypted(rid, cipher) == plain_title_key,
+                             "Derived title key wins");
+        }
+
+        // Key completeness diagnostic.
+        {
+            KeyStore ks3;
+            auto empty = ks3.GetKeyCompleteness();
+            NEMU_TEST_ASSERT(!empty.has_header_key && !empty.has_master_key, "No keys present yet");
+            ks3.SetKey("header_key", std::vector<u8>(32, 0x11));
+            ks3.SetKey("master_key_00", std::vector<u8>(16, 0x22));
+            ks3.SetKey("key_area_key_application_00", std::vector<u8>(16, 0x33));
+            auto c = ks3.GetKeyCompleteness();
+            NEMU_TEST_ASSERT(c.has_header_key, "Completeness sees header_key");
+            NEMU_TEST_ASSERT(c.has_master_key, "Completeness sees master_key_00");
+            NEMU_TEST_ASSERT(c.has_key_area_key, "Completeness sees key_area_key_application_00");
+        }
+
         std::cout << "  - KeyStore prod.keys parser & retrieval tests: PASSED" << std::endl;
     }
 

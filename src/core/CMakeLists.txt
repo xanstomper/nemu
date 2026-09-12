@@ -12,6 +12,7 @@ add_subdirectory(hid)
 add_subdirectory(debug)
 add_subdirectory(save)
 add_subdirectory(config)
+add_subdirectory(system)
 
 add_library(Nemu.Core INTERFACE)
 target_link_libraries(Nemu.Core INTERFACE
@@ -29,6 +30,7 @@ target_link_libraries(Nemu.Core INTERFACE
     Nemu.Debug
     Nemu.Save
     Nemu.Config
+    Nemu.System
     Nemu.Platform
 )
 

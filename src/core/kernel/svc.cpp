@@ -143,6 +143,7 @@ void SvcDispatcher::SvcCreateThread(cpu::CpuState& state, KProcess& process) {
 
     const Handle h = process.GetHandleTable().CreateHandle(thread);
     if (h != InvalidHandle && process.GetVirtualMemory().WriteBlock(out_handle_ptr, &h, sizeof(h))) {
+        process.AddThread(thread);
         state.SetX(0, static_cast<u64>(Result::Success));
     } else {
         state.SetX(0, static_cast<u64>(Result::OutOfMemory));

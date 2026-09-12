@@ -2,6 +2,7 @@
 #include "core/hid/deadzone.hpp"
 #include "core/hid/controller_mapping.hpp"
 #include "core/hid/hid_manager.hpp"
+#include "core/hid/xbox_controller_driver.hpp"
 #include <iostream>
 #include <cstdlib>
 
@@ -141,6 +142,41 @@ int main() {
         NEMU_TEST_ASSERT(motion.accel_x > 0.4f, "Right stick deflection tilts accelerometer X");
 
         std::cout << "  - SixAxisManager IMU & gyro emulation: PASSED" << std::endl;
+    }
+
+    // 6. Test XboxControllerDriver Hardware Polling & Injection
+    {
+        XboxControllerDriver driver;
+
+        // Verify bounds check
+        auto out_of_bounds = driver.Poll(99);
+        NEMU_TEST_ASSERT(!out_of_bounds.has_value(), "Out of bounds controller returns nullopt");
+
+        // Test software injection and state fidelity
+        XboxGamepadState test_state{};
+        test_state.a = true;
+        test_state.x = true;
+        test_state.trigger_r = 0.85f;
+        test_state.thumb_lx = -16000;
+        test_state.thumb_ly = 24000;
+
+        driver.InjectState(0, test_state);
+        NEMU_TEST_ASSERT(driver.IsConnected(0), "Player 0 is connected after injection");
+
+        auto polled = driver.Poll(0);
+        NEMU_TEST_ASSERT(polled.has_value(), "Polled player 0 has value");
+        NEMU_TEST_ASSERT(polled->a, "Button A state preserved");
+        NEMU_TEST_ASSERT(polled->x, "Button X state preserved");
+        NEMU_TEST_ASSERT(polled->trigger_r == 0.85f, "Trigger R state preserved");
+        NEMU_TEST_ASSERT(polled->thumb_lx == -16000, "Thumbstick LX state preserved");
+        NEMU_TEST_ASSERT(polled->thumb_ly == 24000, "Thumbstick LY state preserved");
+
+        // Clear injection
+        driver.ClearInjectedState(0);
+        driver.SetConnected(0, false);
+        NEMU_TEST_ASSERT(!driver.IsConnected(0), "Player 0 is disconnected after clear");
+
+        std::cout << "  - XboxControllerDriver polling & state injection: PASSED" << std::endl;
     }
 
     std::cout << "[Test: Input / HID Subsystem & Gamepad Mapping PASSED]" << std::endl;

@@ -10,6 +10,8 @@ add_library(Nemu.Hid STATIC
     vibration.cpp
     sixaxis.hpp
     sixaxis.cpp
+    xbox_controller_driver.hpp
+    xbox_controller_driver.cpp
 )
 
 target_include_directories(Nemu.Hid PUBLIC

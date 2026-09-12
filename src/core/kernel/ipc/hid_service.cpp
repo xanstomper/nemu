@@ -116,4 +116,16 @@ void HidService::CommitSharedImage(memory::VirtualMemory& mem) const {
     mem.WriteBlock(shared_addr_, &header, sizeof(header));
 }
 
+void HidService::UpdatePadState(memory::VirtualMemory& mem, u32 buttons, s16 lx, s16 ly, s16 rx, s16 ry) {
+    debug_buttons_ = buttons;
+    debug_lx_ = lx;
+    debug_ly_ = ly;
+    debug_rx_ = rx;
+    debug_ry_ = ry;
+    ++sample_counter_;
+    if (shared_created_ && shared_addr_ != 0) {
+        CommitSharedImage(mem);
+    }
+}
+
 } // namespace nemu::core::kernel::ipc

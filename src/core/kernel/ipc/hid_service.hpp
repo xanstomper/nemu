@@ -39,6 +39,9 @@ public:
     void SetDebugButtons(u32 buttons) noexcept { debug_buttons_ = buttons; }
     [[nodiscard]] u32 GetDebugButtons() const noexcept { return debug_buttons_; }
 
+    /// Updates the guest shared memory pad state directly from host gamepad polling
+    void UpdatePadState(memory::VirtualMemory& mem, u32 buttons, s16 lx, s16 ly, s16 rx, s16 ry);
+
 private:
     u32 HandleGetSharedMemoryHandle(const IpcContext& ctx, IpcReplyWriter& reply);
     u32 HandleSetButtonState(const IpcContext& ctx, const IpcRequestReader& request,

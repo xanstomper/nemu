@@ -363,3 +363,18 @@ target_link_libraries(test_aligned_alloc PRIVATE
 
 target_compile_features(test_aligned_alloc PRIVATE cxx_std_20)
 add_test(NAME test_aligned_alloc COMMAND test_aligned_alloc)
+
+add_executable(test_emulator
+    system/test_emulator.cpp
+)
+
+target_include_directories(test_emulator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_emulator PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_emulator PRIVATE cxx_std_20)
+add_test(NAME test_emulator COMMAND test_emulator)

@@ -6,8 +6,11 @@
 #include "core/memory/virtual_memory.hpp"
 #include <string>
 #include <memory>
+#include <vector>
 
 namespace nemu::core::kernel {
+
+class KThread;
 
 enum class ProcessState {
     Created,
@@ -53,6 +56,12 @@ public:
     [[nodiscard]] vaddr_t GetHeapBase() const noexcept { return heap_base_; }
     [[nodiscard]] size_t GetHeapSize() const noexcept { return current_heap_size_; }
 
+    // Thread management
+    void AddThread(std::shared_ptr<KThread> thread);
+    void RemoveThread(u64 tid);
+    [[nodiscard]] std::vector<std::shared_ptr<KThread>> GetThreads() const;
+    [[nodiscard]] std::shared_ptr<KThread> GetThread(u64 tid) const;
+
 private:
     u64 pid_{0};
     std::string name_;
@@ -62,6 +71,7 @@ private:
     memory::VirtualMemory memory_;
     KHandleTable handle_table_;
     KAddressArbiter address_arbiter_;
+    std::vector<std::shared_ptr<KThread>> threads_;
 
     vaddr_t heap_base_{DEFAULT_HEAP_BASE};
     size_t current_heap_size_{0};

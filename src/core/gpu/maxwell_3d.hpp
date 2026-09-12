@@ -9,6 +9,10 @@
 #include <cstring>
 
 
+namespace nemu::core::memory {
+class VirtualMemory;
+}
+
 namespace nemu::core::gpu {
 
 namespace MaxwellMethod {
@@ -23,6 +27,12 @@ namespace MaxwellMethod {
     constexpr u32 ClearColorB = 0x036A;
     constexpr u32 ClearColorA = 0x036B;
     constexpr u32 ClearSurface = 0x036C;
+    constexpr u32 ClearDepth = 0x036D;
+    constexpr u32 ScissorEnable = 0x0380;
+    constexpr u32 ScissorX = 0x0381;
+    constexpr u32 ScissorY = 0x0382;
+    constexpr u32 ScissorWidth = 0x0383;
+    constexpr u32 ScissorHeight = 0x0384;
     constexpr u32 VertexArrayAddressHigh = 0x0587;
     constexpr u32 VertexArrayAddressLow = 0x0588;
     constexpr u32 IndexAddressHigh = 0x05F2;
@@ -80,6 +90,9 @@ public:
     [[nodiscard]] const Maxwell3DRegisters& GetRegisters() const noexcept { return regs_; }
     [[nodiscard]] std::shared_ptr<IGpuBackend> GetBackend() const noexcept { return backend_; }
 
+    void SetMemory(memory::VirtualMemory* memory) noexcept { memory_ = memory; }
+    [[nodiscard]] memory::VirtualMemory* GetMemory() const noexcept { return memory_; }
+
 private:
     void ExecuteDrawArrays(u32 argument);
     void ExecuteDrawElements(u32 argument);
@@ -88,6 +101,7 @@ private:
     void EmitDebugIndexedGeometry(); // stage indexed test geometry
 
     std::shared_ptr<IGpuBackend> backend_;
+    memory::VirtualMemory* memory_{nullptr};
     Maxwell3DRegisters regs_{};
     // Reusable scratch buffer staging guest-draw vertex data
     mutable common::ScratchBuffer<RasterVertex> geometry_scratch_;
