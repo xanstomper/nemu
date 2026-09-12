@@ -12,6 +12,10 @@ import hashlib
 import base64
 import zipfile
 from pathlib import Path
+try:
+    import pefile
+except ImportError:
+    pefile = None
 
 BLOCK_SIZE = 65536  # 64 KiB per MS-APX spec
 
@@ -22,6 +26,7 @@ CONTENT_TYPES_XML = (
     '<Default Extension="xml" ContentType="application/vnd.ms-appx.manifest+xml"/>'
     '<Default Extension="exe" ContentType="application/x-msdownload"/>'
     '<Default Extension="dll" ContentType="application/x-msdownload"/>'
+    '<Default Extension="winmd" ContentType="application/octet-stream"/>'
     '<Default Extension="keys" ContentType="application/octet-stream"/>'
     '<Default Extension="cer" ContentType="application/x-x509-ca-cert"/>'
     '<Default Extension="dat" ContentType="application/octet-stream"/>'
@@ -135,6 +140,43 @@ def sign_appx(appx_path: Path, cert_path: Path, key_path: Path) -> bool:
         
     return True
 
+def ensure_uwp_pe_headers(file_path: Path):
+    """
+    Ensure PE binaries targeting Xbox Developer Mode have UWP AppContainer characteristics.
+    Xbox kernel / AppX Deployment rejects binaries without IMAGE_DLLCHARACTERISTICS_APPCONTAINER (0x1000)
+    or binaries with legacy subsystem versions with error 0x8007000B (ERROR_BAD_FORMAT).
+    """
+    if pefile is None:
+        return
+    try:
+        pe = pefile.PE(str(file_path))
+        modified = False
+        # IMAGE_DLLCHARACTERISTICS_APPCONTAINER (0x1000)
+        # IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE (0x8000)
+        target_dll_char = pe.OPTIONAL_HEADER.DllCharacteristics | 0x1000 | 0x8000
+        if pe.OPTIONAL_HEADER.DllCharacteristics != target_dll_char:
+            pe.OPTIONAL_HEADER.DllCharacteristics = target_dll_char
+            modified = True
+        if pe.OPTIONAL_HEADER.MajorSubsystemVersion < 10:
+            pe.OPTIONAL_HEADER.MajorSubsystemVersion = 10
+            pe.OPTIONAL_HEADER.MinorSubsystemVersion = 0
+            modified = True
+        if pe.OPTIONAL_HEADER.MajorOperatingSystemVersion < 10:
+            pe.OPTIONAL_HEADER.MajorOperatingSystemVersion = 10
+            pe.OPTIONAL_HEADER.MinorOperatingSystemVersion = 0
+            modified = True
+        if pe.FILE_HEADER.NumberOfSymbols != 0:
+            pe.FILE_HEADER.NumberOfSymbols = 0
+            pe.FILE_HEADER.PointerToSymbolTable = 0
+            modified = True
+        if modified:
+            pe.OPTIONAL_HEADER.CheckSum = pe.generate_checksum()
+            pe.write(str(file_path))
+            print(f"[+] UWP PE compliance applied to {file_path.name}: DllCharacteristics={hex(target_dll_char)}, Subsystem=10.0, CheckSum={hex(pe.OPTIONAL_HEADER.CheckSum)}")
+        pe.close()
+    except Exception as e:
+        print(f"[!] Note: Could not process PE headers on {file_path.name}: {e}")
+
 def pack_appx(staging_dir: Path, output_appx: Path, cert_path: Path | None = None, key_path: Path | None = None):
     print(f"[*] Packaging AppX from: {staging_dir}")
     print(f"[*] Output package:     {output_appx}")
@@ -145,6 +187,13 @@ def pack_appx(staging_dir: Path, output_appx: Path, cert_path: Path | None = Non
         raise FileNotFoundError(f"Missing AppxManifest.xml in {staging_dir}")
     if not exe_path.exists():
         raise FileNotFoundError(f"Missing Nemu.exe in {staging_dir}")
+        
+    # Ensure all PE binaries have UWP AppContainer headers before packaging
+    for root, _, files in os.walk(staging_dir):
+        for f in files:
+            p = Path(root) / f
+            if p.suffix.lower() in ('.exe', '.dll'):
+                ensure_uwp_pe_headers(p)
         
     payload_files: list[tuple[str, bytes]] = []
     manifest_data: tuple[str, bytes] = ("", b"")
