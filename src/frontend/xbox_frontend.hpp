@@ -18,10 +18,11 @@ namespace nemu::frontend {
 
 enum class FrontendTab : u32 {
     Library = 0,     // Switch Game Carousel & Eden cards
-    Optimizers = 1,  // FSR Upscalers, MSAA, Frame Gen, Resolution Scale
-    Controllers = 2, // Pro Controller, Joy-Con, Deadzones, HD Rumble
-    System = 3,      // Docked/Handheld mode, Language, Audio
-    Diagnostics = 4  // JIT stats, GPU stats, Fastmem VEH fault telemetry
+    FileManager = 1, // RetroArch / Eden style Filesystem Explorer
+    Optimizers = 2,  // FSR Upscalers, MSAA, Frame Gen, Resolution Scale
+    Controllers = 3, // Pro Controller, Joy-Con, Deadzones, HD Rumble
+    System = 4,      // Docked/Handheld mode, Language, Audio
+    Diagnostics = 5  // JIT stats, GPU stats, Fastmem VEH fault telemetry
 };
 
 struct GameEntry {
@@ -35,6 +36,15 @@ struct GameEntry {
     u64 title_id{0};
 };
 
+struct FileEntry {
+    std::string name;
+    std::string full_path;
+    bool is_directory{false};
+    bool is_rom{false};
+    std::string format_badge; // "[DIR]", "[NSP]", "[XCI]", "[NRO]", "[NCA]"
+    size_t file_size{0};
+};
+
 class XboxFrontend {
 public:
     XboxFrontend(core::filesystem::VirtualFileSystem& vfs, core::config::ConfigManager& config);
@@ -42,6 +52,9 @@ public:
 
     /// Refresh and scan available games from sdmc:/, romfs:/, and packages
     void RefreshLibrary();
+
+    /// Refresh and list directory contents for the in-app File Manager
+    void RefreshFileManager(std::string_view dir_path = "sdmc:/");
 
     /// Process Xbox gamepad navigation input
     void ProcessInput(const core::hid::XboxGamepadState& input, core::hid::XboxControllerDriver* driver = nullptr);
@@ -53,6 +66,13 @@ public:
     [[nodiscard]] size_t GetSelectedGameIndex() const noexcept { return selected_game_index_; }
     [[nodiscard]] size_t GetSelectedSettingRow() const noexcept { return selected_setting_row_; }
     [[nodiscard]] const std::vector<GameEntry>& GetLibrary() const noexcept { return library_; }
+
+    [[nodiscard]] std::string_view GetCurrentDirectory() const noexcept { return current_dir_path_; }
+    [[nodiscard]] const std::vector<FileEntry>& GetDirectoryEntries() const noexcept { return dir_entries_; }
+    [[nodiscard]] size_t GetSelectedFileIndex() const noexcept { return selected_file_index_; }
+
+    [[nodiscard]] bool IsGameOptionsOpen() const noexcept { return show_game_options_; }
+    [[nodiscard]] size_t GetGameOptionsRow() const noexcept { return game_options_row_; }
 
     /// Returns path of selected title if launch requested
     [[nodiscard]] std::optional<std::string> ConsumeLaunchRequest();
@@ -69,10 +89,12 @@ public:
     [[nodiscard]] std::string GetConsoleModeString() const;
 
 private:
-    void HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_left, bool pressed_right, bool pressed_a);
+    void HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_start);
+    void HandleFileManagerInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b, bool pressed_x);
     void HandleOptimizersInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a);
     void HandleControllersInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, core::hid::XboxControllerDriver* driver);
     void HandleSystemInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a);
+    void HandleGameOptionsInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b);
 
     core::filesystem::VirtualFileSystem& vfs_;
     core::config::ConfigManager& config_;
@@ -82,6 +104,15 @@ private:
     size_t selected_game_index_{0};
     size_t selected_setting_row_{0};
     std::optional<std::string> launch_requested_;
+
+    // File Manager state
+    std::string current_dir_path_{"sdmc:/"};
+    std::vector<FileEntry> dir_entries_;
+    size_t selected_file_index_{0};
+
+    // Game Options modal overlay state
+    bool show_game_options_{false};
+    size_t game_options_row_{0};
 
     std::string profile_name_{"Player 1 (Xbox Full Trust)"};
 

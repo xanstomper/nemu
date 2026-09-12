@@ -5,12 +5,29 @@
 #include <string>
 #include <chrono>
 #include <thread>
+#include <csignal>
+#include <atomic>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 using namespace nemu;
 using namespace nemu::core;
 
+static std::atomic<bool> g_app_running{true};
+
+static void SignalHandler(int) {
+    g_app_running = false;
+}
+
 int main(int argc, char** argv) {
     platform::Logger::Instance().SetMinLevel(platform::LogLevel::Info);
+    std::signal(SIGINT, SignalHandler);
+    std::signal(SIGTERM, SignalHandler);
 
     NEMU_LOG_INFO("Init", "=========================================================");
     NEMU_LOG_INFO("Init", "  NEMU: Nintendo Switch Emulator for Xbox Series S/X     ");
@@ -18,10 +35,19 @@ int main(int argc, char** argv) {
     NEMU_LOG_INFO("Init", "  Milestone 10: Complete Interactive Emulation Runtime   ");
     NEMU_LOG_INFO("Init", "=========================================================");
 
-    // Determine target title from command line if specified
     std::string target_title;
-    if (argc > 1) {
-        target_title = argv[1];
+    bool demo_mode = false;
+    bool ui_test_mode = false;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--demo") {
+            demo_mode = true;
+        } else if (arg == "--ui-test") {
+            ui_test_mode = true;
+        } else if (!arg.starts_with("--")) {
+            target_title = arg;
+        }
     }
 
     // Configure and initialize the unified emulator runtime
@@ -42,36 +68,85 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Initialize Xbox Frontend for GUI navigation and game library browsing
-    frontend::XboxFrontend frontend(*emulator.GetVfs(), *emulator.GetConfigManager());
-    frontend.Render(*emulator.GetGpuBackend());
+    // If direct title or automated demo flag requested, execute immediately
+    if (demo_mode) {
+        NEMU_LOG_INFO("Init", "Automated demo mode requested; running built-in verified demo...");
+        if (emulator.LoadBuiltinDemo()) {
+            emulator.Run(60);
+        }
+        return 0;
+    }
 
     if (!target_title.empty()) {
-        NEMU_LOG_INFO("Init", "Launching target title: {}", target_title);
+        NEMU_LOG_INFO("Init", "Launching target title directly: {}", target_title);
         if (emulator.LoadTitle(target_title)) {
             emulator.Run();
         } else {
-            NEMU_LOG_ERROR("Init", "Could not load title '{}', returning to Frontend", target_title);
+            NEMU_LOG_ERROR("Init", "Could not load title '{}', falling back to Eden Frontend", target_title);
         }
-    } else {
+    }
+
+    // Initialize Xbox Frontend for GUI navigation and game library browsing
+    frontend::XboxFrontend frontend(*emulator.GetVfs(), *emulator.GetConfigManager());
+    auto controller = emulator.GetControllerDriver();
+
+    NEMU_LOG_INFO("Frontend", "Entering interactive Eden / Switch UI event loop...");
+    u64 ui_frames = 0;
+
+    while (g_app_running) {
+#ifdef _WIN32
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) {
+                g_app_running = false;
+                break;
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        if (!g_app_running) break;
+#endif
+
+        // Poll Xbox Controller input
+        core::hid::XboxGamepadState input_state{};
+        if (controller) {
+            auto polled = controller->Poll(0);
+            if (polled) {
+                input_state = *polled;
+            }
+        }
+
+        // Exit combo on Xbox controller: Back + Start in Home UI
+        if (input_state.back && input_state.start) {
+            NEMU_LOG_INFO("Frontend", "Exit combo (Back + Start) detected; terminating application");
+            break;
+        }
+
+        // Forward gamepad state to Eden UI state machine
+        frontend.ProcessInput(input_state, controller.get());
+
+        // Check if user requested to launch a game from carousel
         auto launch_req = frontend.ConsumeLaunchRequest();
         if (launch_req) {
-            NEMU_LOG_INFO("Init", "Frontend launch request: {}", *launch_req);
+            NEMU_LOG_INFO("Frontend", "Launching requested title: {}", *launch_req);
             if (emulator.LoadTitle(*launch_req)) {
                 emulator.Run();
-            }
-        } else if (!frontend.GetLibrary().empty()) {
-            const std::string first_title = frontend.GetLibrary()[0].virtual_path;
-            NEMU_LOG_INFO("Init", "Auto-launching first library entry: {}", first_title);
-            if (emulator.LoadTitle(first_title)) {
-                emulator.Run();
-            }
-        } else {
-            NEMU_LOG_INFO("Init", "No external title specified; running built-in verified demo...");
-            if (emulator.LoadBuiltinDemo()) {
-                emulator.Run(60); // Run 60 frames of baseline demo
+                NEMU_LOG_INFO("Frontend", "Emulation concluded; returning to Eden UI Home Screen");
+                frontend.RefreshLibrary();
             }
         }
+
+        // Render Eden UI frame
+        frontend.Render(*emulator.GetGpuBackend());
+        ++ui_frames;
+
+        if (ui_test_mode && ui_frames >= 60) {
+            NEMU_LOG_INFO("Frontend", "UI test mode completed 60 frames successfully");
+            break;
+        }
+
+        // Maintain ~60 FPS UI pacing
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 
     NEMU_LOG_INFO("Init", "=========================================================");

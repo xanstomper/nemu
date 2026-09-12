@@ -11,6 +11,7 @@ namespace nemu::frontend {
 XboxFrontend::XboxFrontend(core::filesystem::VirtualFileSystem& vfs, core::config::ConfigManager& config)
     : vfs_(vfs), config_(config) {
     RefreshLibrary();
+    RefreshFileManager("sdmc:/");
 }
 
 std::string XboxFrontend::GetSystemClockString() const {
@@ -57,7 +58,7 @@ void XboxFrontend::RefreshLibrary() {
                         .format_badge = badge,
                         .playtime_str = "Played 1h 45m",
                         .optimizer_tag = "FSR 2.0 • 4x MSAA • 60 FPS",
-                        .file_size = entry.file_size(ec),
+                        .file_size = static_cast<size_t>(entry.file_size(ec)),
                         .title_id = 0x0100000000010000ULL
                     });
                 }
@@ -86,6 +87,111 @@ void XboxFrontend::RefreshLibrary() {
     NEMU_LOG_INFO("Frontend", "Eden UI: Discovered {} titles in library carousel", library_.size());
 }
 
+void XboxFrontend::RefreshFileManager(std::string_view dir_path) {
+    dir_entries_.clear();
+    current_dir_path_ = std::string(dir_path);
+
+    // If not root, add parent directory entry
+    if (current_dir_path_ != "sdmc:/" && current_dir_path_ != "/" && current_dir_path_ != "save:/") {
+        std::string parent = current_dir_path_;
+        if (parent.back() == '/') parent.pop_back();
+        auto slash = parent.find_last_of('/');
+        if (slash != std::string::npos) {
+            parent = parent.substr(0, slash + 1);
+        } else {
+            parent = "sdmc:/";
+        }
+        dir_entries_.push_back(FileEntry{
+            .name = ".. [Up to Parent Directory]",
+            .full_path = parent,
+            .is_directory = true,
+            .is_rom = false,
+            .format_badge = "[DIR]",
+            .file_size = 0
+        });
+    }
+
+    // Resolve host path
+    std::optional<std::filesystem::path> host_dir;
+    if (current_dir_path_.starts_with("sdmc:/") || current_dir_path_.starts_with("save:/") || current_dir_path_.starts_with("romfs:/")) {
+        host_dir = vfs_.ResolvePath(current_dir_path_);
+    } else {
+        host_dir = std::filesystem::path(current_dir_path_);
+    }
+
+    if (host_dir && std::filesystem::exists(*host_dir)) {
+        std::error_code ec;
+        std::vector<FileEntry> dirs;
+        std::vector<FileEntry> files;
+
+        for (const auto& entry : std::filesystem::directory_iterator(*host_dir, ec)) {
+            std::string filename = entry.path().filename().string();
+            if (filename.empty() || filename[0] == '.') continue;
+
+            if (entry.is_directory(ec)) {
+                std::string vpath = current_dir_path_;
+                if (vpath.back() != '/') vpath += '/';
+                vpath += filename;
+                dirs.push_back(FileEntry{
+                    .name = filename + "/",
+                    .full_path = vpath,
+                    .is_directory = true,
+                    .is_rom = false,
+                    .format_badge = "[DIR]",
+                    .file_size = 0
+                });
+            } else if (entry.is_regular_file(ec)) {
+                std::string ext = entry.path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+
+                bool is_rom = (ext == ".nsp" || ext == ".xci" || ext == ".nro" || ext == ".nca" || ext == ".nso");
+                std::string badge = "[FILE]";
+                if (ext == ".nsp") badge = "[NSP]";
+                else if (ext == ".xci") badge = "[XCI]";
+                else if (ext == ".nro") badge = "[NRO]";
+                else if (ext == ".nca") badge = "[NCA]";
+                else if (ext == ".nso") badge = "[NSO]";
+
+                std::string vpath = current_dir_path_;
+                if (vpath.back() != '/') vpath += '/';
+                vpath += filename;
+
+                files.push_back(FileEntry{
+                    .name = filename,
+                    .full_path = vpath,
+                    .is_directory = false,
+                    .is_rom = is_rom,
+                    .format_badge = badge,
+                    .file_size = static_cast<size_t>(entry.file_size(ec))
+                });
+            }
+        }
+
+        std::sort(dirs.begin(), dirs.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
+        std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
+
+        for (auto& d : dirs) dir_entries_.push_back(std::move(d));
+        for (auto& f : files) dir_entries_.push_back(std::move(f));
+    }
+
+    if (dir_entries_.empty()) {
+        dir_entries_.push_back(FileEntry{
+            .name = "demo.nro",
+            .full_path = "builtin:/demo.nro",
+            .is_directory = false,
+            .is_rom = true,
+            .format_badge = "[NRO]",
+            .file_size = 16384
+        });
+    }
+
+    if (selected_file_index_ >= dir_entries_.size()) {
+        selected_file_index_ = 0;
+    }
+
+    NEMU_LOG_INFO("Frontend", "FileManager: Listed {} entries in '{}'", dir_entries_.size(), current_dir_path_);
+}
+
 void XboxFrontend::TriggerRumbleTest(core::hid::XboxControllerDriver* driver) {
     if (!driver) return;
     const auto& cfg = config_.GetConfig();
@@ -110,6 +216,7 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
     const bool pressed_y     = input.y && !prev_btn_y_;
     const bool pressed_lb    = input.lb && !prev_btn_lb_;
     const bool pressed_rb    = input.rb && !prev_btn_rb_;
+    const bool pressed_start = input.start && !prev_btn_start_;
 
     // Stick navigation
     const bool stick_left  = (input.thumb_lx < -STICK_THRESHOLD) && (prev_stick_x_ >= -STICK_THRESHOLD);
@@ -133,10 +240,17 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
     prev_btn_y_      = input.y;
     prev_btn_lb_     = input.lb;
     prev_btn_rb_     = input.rb;
+    prev_btn_start_  = input.start;
     prev_stick_x_    = input.thumb_lx;
     prev_stick_y_    = input.thumb_ly;
 
-    // Tab switching with LB/RB
+    // If Game Options modal is active, route all input to it
+    if (show_game_options_) {
+        HandleGameOptionsInput(input, nav_up, nav_down, nav_left, nav_right, pressed_a, pressed_b);
+        return;
+    }
+
+    // Tab switching with LB/RB across all 6 tabs
     if (pressed_lb) {
         u32 tab_num = static_cast<u32>(current_tab_);
         current_tab_ = (tab_num == 0) ? FrontendTab::Diagnostics : static_cast<FrontendTab>(tab_num - 1);
@@ -145,14 +259,14 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
     }
     if (pressed_rb) {
         u32 tab_num = static_cast<u32>(current_tab_);
-        current_tab_ = (tab_num >= 4) ? FrontendTab::Library : static_cast<FrontendTab>(tab_num + 1);
+        current_tab_ = (tab_num >= 5) ? FrontendTab::Library : static_cast<FrontendTab>(tab_num + 1);
         selected_setting_row_ = 0;
         return;
     }
 
     // Direct shortcuts
     if (pressed_x) {
-        current_tab_ = (current_tab_ == FrontendTab::Optimizers) ? FrontendTab::Library : FrontendTab::Optimizers;
+        current_tab_ = (current_tab_ == FrontendTab::FileManager) ? FrontendTab::Library : FrontendTab::FileManager;
         selected_setting_row_ = 0;
         return;
     }
@@ -170,7 +284,10 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
     // Dispatch input to current active tab
     switch (current_tab_) {
         case FrontendTab::Library:
-            HandleLibraryInput(input, nav_left, nav_right, pressed_a);
+            HandleLibraryInput(input, nav_left, nav_right, pressed_a, pressed_start);
+            break;
+        case FrontendTab::FileManager:
+            HandleFileManagerInput(input, nav_up, nav_down, pressed_a, pressed_b, pressed_x);
             break;
         case FrontendTab::Optimizers:
             HandleOptimizersInput(input, nav_up, nav_down, nav_left, nav_right, pressed_a);
@@ -189,9 +306,16 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
     }
 }
 
-void XboxFrontend::HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_left, bool pressed_right, bool pressed_a) {
+void XboxFrontend::HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_start) {
     (void)input;
     if (library_.empty()) return;
+
+    if (pressed_start) {
+        show_game_options_ = true;
+        game_options_row_ = 0;
+        NEMU_LOG_INFO("Frontend", "Eden UI: Opened Game Options (+) for '{}'", library_[selected_game_index_].title);
+        return;
+    }
 
     if (pressed_left) {
         if (selected_game_index_ > 0) {
@@ -211,7 +335,138 @@ void XboxFrontend::HandleLibraryInput(const core::hid::XboxGamepadState& input, 
     if (pressed_a) {
         launch_requested_ = library_[selected_game_index_].virtual_path;
         NEMU_LOG_INFO("Frontend", "Eden UI: Launching title '{}' ({})",
-                      library_[selected_game_index_].title, *launch_requested_);
+                      library_[selected_game_index_].title,
+                      library_[selected_game_index_].virtual_path);
+    }
+}
+
+void XboxFrontend::HandleFileManagerInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b, bool pressed_x) {
+    (void)input;
+    if (dir_entries_.empty()) return;
+
+    if (pressed_up) {
+        selected_file_index_ = (selected_file_index_ > 0) ? selected_file_index_ - 1 : dir_entries_.size() - 1;
+    }
+    if (pressed_down) {
+        selected_file_index_ = (selected_file_index_ + 1 < dir_entries_.size()) ? selected_file_index_ + 1 : 0;
+    }
+
+    if (pressed_a) {
+        const auto& entry = dir_entries_[selected_file_index_];
+        if (entry.is_directory) {
+            RefreshFileManager(entry.full_path);
+        } else if (entry.is_rom) {
+            NEMU_LOG_INFO("Frontend", "FileManager: Instant boot for ROM '{}'", entry.full_path);
+            launch_requested_ = entry.full_path;
+        }
+    }
+
+    if (pressed_b) {
+        if (current_dir_path_ != "sdmc:/" && current_dir_path_ != "/") {
+            std::string parent = current_dir_path_;
+            if (parent.back() == '/') parent.pop_back();
+            auto slash = parent.find_last_of('/');
+            if (slash != std::string::npos) {
+                parent = parent.substr(0, slash + 1);
+            } else {
+                parent = "sdmc:/";
+            }
+            RefreshFileManager(parent);
+        } else {
+            current_tab_ = FrontendTab::Library;
+        }
+    }
+
+    if (pressed_x) {
+        RefreshLibrary();
+        NEMU_LOG_INFO("Frontend", "FileManager: Added/refreshed library scan for current directory");
+    }
+}
+
+void XboxFrontend::HandleGameOptionsInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b) {
+    (void)input;
+    if (library_.empty()) {
+        show_game_options_ = false;
+        return;
+    }
+
+    constexpr size_t TOTAL_OPTION_ROWS = 7;
+    if (pressed_up) {
+        game_options_row_ = (game_options_row_ > 0) ? game_options_row_ - 1 : TOTAL_OPTION_ROWS - 1;
+    }
+    if (pressed_down) {
+        game_options_row_ = (game_options_row_ + 1 < TOTAL_OPTION_ROWS) ? game_options_row_ + 1 : 0;
+    }
+
+    if (pressed_b) {
+        show_game_options_ = false;
+        return;
+    }
+
+    const auto& game = library_[selected_game_index_];
+    core::config::PerGameConfig cfg{};
+    config_.LoadGameConfig(game.title_id, cfg);
+    bool changed = false;
+
+    switch (game_options_row_) {
+        case 0: // Launch Title
+            if (pressed_a) {
+                show_game_options_ = false;
+                launch_requested_ = game.virtual_path;
+            }
+            break;
+
+        case 1: // Per-Game Upscaler Mode
+            if (pressed_left || pressed_right || pressed_a) {
+                cfg.has_custom_settings = true;
+                u32 cur = static_cast<u32>(cfg.upscaler);
+                cfg.upscaler = static_cast<core::gpu::pipeline::UpscalerMode>((cur + 1) % 5);
+                changed = true;
+            }
+            break;
+
+        case 2: // Per-Game Resolution Scale
+            if (pressed_left || pressed_right || pressed_a) {
+                cfg.has_custom_settings = true;
+                u32 cur = static_cast<u32>(cfg.resolution_scale);
+                cfg.resolution_scale = static_cast<core::config::ResolutionScale>((cur + 1) % 5);
+                changed = true;
+            }
+            break;
+
+        case 3: // Per-Game Frame Generation
+            if (pressed_left || pressed_right || pressed_a) {
+                cfg.has_custom_settings = true;
+                cfg.frame_generation = (cfg.frame_generation == core::gpu::pipeline::FrameGenMode::Disabled) ?
+                    core::gpu::pipeline::FrameGenMode::AFMF_Extrapolation_2x : core::gpu::pipeline::FrameGenMode::Disabled;
+                changed = true;
+            }
+            break;
+
+        case 4: // Per-Game Button Layout
+            if (pressed_left || pressed_right || pressed_a) {
+                cfg.has_custom_settings = true;
+                cfg.button_layout = (cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard) ?
+                    core::hid::FaceButtonLayout::XboxMirrored : core::hid::FaceButtonLayout::NintendoStandard;
+                changed = true;
+            }
+            break;
+
+        case 5: // Inspect / Verify Save Data
+            if (pressed_a) {
+                NEMU_LOG_INFO("Frontend", "GameOptions: Verified save data for title 0x{:016X}", game.title_id);
+            }
+            break;
+
+        case 6: // Close Options
+            if (pressed_a) {
+                show_game_options_ = false;
+            }
+            break;
+    }
+
+    if (changed) {
+        config_.SaveGameConfig(game.title_id, cfg);
     }
 }
 

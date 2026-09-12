@@ -8,6 +8,12 @@
 #include <filesystem>
 #include <thread>
 #include <chrono>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace nemu::core::system {
 
@@ -273,6 +279,11 @@ void Emulator::PollInput() {
     for (size_t p = 0; p < hid::XboxControllerDriver::MAX_XBOX_CONTROLLERS; ++p) {
         auto state = controller_driver_->Poll(p);
         if (state) {
+            if (p == 0 && state->back && state->start) {
+                NEMU_LOG_INFO("HID", "In-game exit combo (Back + Start) detected; exiting to Home UI");
+                Stop();
+                return;
+            }
             hid_manager_->UpdateController(p, *state);
             if (p == 0 && hid_service_ && process_) {
                 u32 btn_mask = 0;
@@ -412,6 +423,17 @@ void Emulator::Run(u64 max_frames) {
     constexpr auto target_frame_time = std::chrono::microseconds(16666); // ~60 FPS
 
     while (state_ == EmulatorState::Running) {
+#ifdef _WIN32
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) {
+                Stop();
+                break;
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+#endif
         const auto frame_start = clock::now();
 
         if (!StepFrame()) {

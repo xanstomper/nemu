@@ -76,16 +76,36 @@ struct EmulatorConfig {
     SystemLanguage system_language{SystemLanguage::English};
 };
 
+struct PerGameConfig {
+    bool has_custom_settings{false};
+    ResolutionScale resolution_scale{ResolutionScale::Native_1_0x};
+    gpu::pipeline::UpscalerMode upscaler{gpu::pipeline::UpscalerMode::FSR_2_0};
+    float fsr_sharpness{0.8f};
+    gpu::pipeline::AntiAliasingMode anti_aliasing{gpu::pipeline::AntiAliasingMode::MSAA_4x};
+    gpu::pipeline::FrameGenMode frame_generation{gpu::pipeline::FrameGenMode::AFMF_Extrapolation_2x};
+    CpuBackendMode cpu_backend{CpuBackendMode::Jit};
+    hid::FaceButtonLayout button_layout{hid::FaceButtonLayout::NintendoStandard};
+};
+
 class ConfigManager {
 public:
     explicit ConfigManager(filesystem::VirtualFileSystem& vfs);
     ~ConfigManager() = default;
 
-    /// Load config from VFS (falls back to defaults if not found)
+    /// Load global config from VFS (falls back to defaults if not found)
     bool Load(std::string_view config_path = "save:/config.ini");
 
-    /// Save config to VFS
+    /// Save global config to VFS
     bool Save(std::string_view config_path = "save:/config.ini");
+
+    /// Load per-game config from save:/game_configs/<title_id_hex>.ini
+    bool LoadGameConfig(u64 title_id, PerGameConfig& out_cfg);
+
+    /// Save per-game config to save:/game_configs/<title_id_hex>.ini
+    bool SaveGameConfig(u64 title_id, const PerGameConfig& cfg);
+
+    /// Get effective EmulatorConfig with title overrides applied
+    [[nodiscard]] EmulatorConfig GetEffectiveConfigForTitle(u64 title_id) const;
 
     [[nodiscard]] EmulatorConfig& GetConfig() noexcept { return config_; }
     [[nodiscard]] const EmulatorConfig& GetConfig() const noexcept { return config_; }

@@ -49,19 +49,27 @@ int main() {
     {
         core::hid::XboxGamepadState input{};
 
-        // Press X -> Optimizers tab
+        // Press X -> FileManager tab
         input.x = true;
         fe.ProcessInput(input);
-        NEMU_TEST_ASSERT(fe.GetCurrentTab() == FrontendTab::Optimizers, "Switched to Optimizers via X");
+        NEMU_TEST_ASSERT(fe.GetCurrentTab() == FrontendTab::FileManager, "Switched to FileManager via X");
 
         // Release X
         input.x = false;
         fe.ProcessInput(input);
 
-        // Press RB -> Controllers tab
+        // Press B -> Return to Library
+        input.b = true;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(fe.GetCurrentTab() == FrontendTab::Library, "Returned to Library via B");
+
+        input.b = false;
+        fe.ProcessInput(input);
+
+        // Press RB -> FileManager tab
         input.rb = true;
         fe.ProcessInput(input);
-        NEMU_TEST_ASSERT(fe.GetCurrentTab() == FrontendTab::Controllers, "Switched to Controllers via RB");
+        NEMU_TEST_ASSERT(fe.GetCurrentTab() == FrontendTab::FileManager, "Switched to FileManager via RB");
 
         input.rb = false;
         fe.ProcessInput(input);
@@ -174,6 +182,80 @@ int main() {
         NEMU_TEST_ASSERT(null_gpu.GetStats().draw_calls > 0, "Render issued draw calls");
         null_gpu.Shutdown();
         std::cout << "  - Eden / Switch UI rendering pass: PASSED" << std::endl;
+    }
+
+    // Test 7: File Manager navigation & instant ROM boot
+    {
+        const auto games_dir = test_dir / "sdmc" / "games";
+        std::filesystem::create_directories(games_dir, ec);
+        const std::string dummy_rom = "dummy_zelda_rom_content";
+        std::span<const u8> rom_data(reinterpret_cast<const u8*>(dummy_rom.data()), dummy_rom.size());
+        vfs.WriteFile("sdmc:/games/botw.nsp", rom_data);
+
+        fe.SetTab(FrontendTab::FileManager);
+        fe.RefreshFileManager("sdmc:/");
+        NEMU_TEST_ASSERT(!fe.GetDirectoryEntries().empty(), "FileManager entries not empty");
+
+        // Navigate into games folder
+        fe.RefreshFileManager("sdmc:/games");
+        const auto& entries = fe.GetDirectoryEntries();
+        bool found_nsp = false;
+        for (const auto& e : entries) {
+            if (e.name == "botw.nsp") {
+                found_nsp = true;
+                NEMU_TEST_ASSERT(e.is_rom, "botw.nsp recognized as ROM");
+                NEMU_TEST_ASSERT(e.format_badge == "[NSP]", "botw.nsp format badge [NSP]");
+            }
+        }
+        NEMU_TEST_ASSERT(found_nsp, "Found botw.nsp in directory");
+
+        // Move down to botw.nsp (index 1, below '..')
+        core::hid::XboxGamepadState input{};
+        input.dpad_down = true;
+        fe.ProcessInput(input);
+        input.dpad_down = false;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(fe.GetSelectedFileIndex() == 1, "Selected botw.nsp");
+
+        // Press A on the ROM -> Instant Boot
+        input.a = true;
+        fe.ProcessInput(input);
+        auto launch = fe.ConsumeLaunchRequest();
+        NEMU_TEST_ASSERT(launch.has_value(), "FileManager instant boot triggered");
+        NEMU_TEST_ASSERT(*launch == "sdmc:/games/botw.nsp", "Correct launch path");
+        std::cout << "  - FileManager directory exploration & instant ROM boot: PASSED" << std::endl;
+    }
+
+    // Test 8: Switch Game Options (+) Overlay Modal
+    {
+        fe.SetTab(FrontendTab::Library);
+        core::hid::XboxGamepadState input{};
+
+        // Press Start / Menu (+)
+        input.start = true;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(fe.IsGameOptionsOpen(), "Game Options (+) modal opened");
+
+        input.start = false;
+        fe.ProcessInput(input);
+
+        // Press Down to row 1 (Upscaler mode), Right to change
+        input.dpad_down = true;
+        fe.ProcessInput(input);
+        input.dpad_down = false;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(fe.GetGameOptionsRow() == 1, "Moved to row 1 in Game Options");
+
+        input.dpad_right = true;
+        fe.ProcessInput(input);
+        input.dpad_right = false;
+        fe.ProcessInput(input);
+
+        // Press B to close modal
+        input.b = true;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(!fe.IsGameOptionsOpen(), "Game Options modal closed via B");
+        std::cout << "  - Switch Game Options (+) modal overlay & per-game settings: PASSED" << std::endl;
     }
 
     // Clean up

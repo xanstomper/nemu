@@ -109,6 +109,37 @@ int main() {
         std::cout << "  - INI parser comment/whitespace resilience: PASSED" << std::endl;
     }
 
+    // Test 4: Per-Game Configuration overrides
+    {
+        config::ConfigManager mgr(vfs);
+        constexpr u64 TITLE_ZELDA = 0x0100000000010000ULL;
+
+        config::PerGameConfig game_cfg{
+            .has_custom_settings = true,
+            .resolution_scale = config::ResolutionScale::Ultra4K_2_0x,
+            .upscaler = gpu::pipeline::UpscalerMode::FSR_1_0,
+            .fsr_sharpness = 0.90f,
+            .anti_aliasing = gpu::pipeline::AntiAliasingMode::MSAA_8x,
+            .frame_generation = gpu::pipeline::FrameGenMode::AFMF_Extrapolation_2x,
+            .cpu_backend = config::CpuBackendMode::Jit,
+            .button_layout = hid::FaceButtonLayout::XboxMirrored
+        };
+
+        NEMU_TEST_ASSERT(mgr.SaveGameConfig(TITLE_ZELDA, game_cfg), "Save per-game config");
+
+        config::PerGameConfig loaded_cfg{};
+        NEMU_TEST_ASSERT(mgr.LoadGameConfig(TITLE_ZELDA, loaded_cfg), "Load per-game config");
+        NEMU_TEST_ASSERT(loaded_cfg.has_custom_settings, "Custom settings enabled");
+        NEMU_TEST_ASSERT(loaded_cfg.resolution_scale == config::ResolutionScale::Ultra4K_2_0x, "Loaded custom 4K resolution");
+        NEMU_TEST_ASSERT(loaded_cfg.upscaler == gpu::pipeline::UpscalerMode::FSR_1_0, "Loaded custom FSR 1.0");
+
+        auto effective = mgr.GetEffectiveConfigForTitle(TITLE_ZELDA);
+        NEMU_TEST_ASSERT(effective.resolution_scale == config::ResolutionScale::Ultra4K_2_0x, "Effective 4K applied");
+        NEMU_TEST_ASSERT(effective.upscaler == gpu::pipeline::UpscalerMode::FSR_1_0, "Effective FSR 1.0 applied");
+        NEMU_TEST_ASSERT(effective.button_layout == hid::FaceButtonLayout::XboxMirrored, "Effective layout applied");
+        std::cout << "  - Per-Game custom configuration overrides: PASSED" << std::endl;
+    }
+
     // Clean up
     std::filesystem::remove_all(test_dir, ec);
 
