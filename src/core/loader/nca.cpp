@@ -140,6 +140,10 @@ std::optional<std::vector<u8>> NcaReader::ExtractSection(
     if (has_rights_id_) {
         std::string rid_hex = GetRightsIdHex();
         auto title_key = key_store->GetTitleKey(rid_hex);
+        if (!title_key.has_value() && rid_hex.size() >= 16) {
+            // Also try 16-character Title ID prefix
+            title_key = key_store->GetTitleKey(rid_hex.substr(0, 16));
+        }
         if (title_key.has_value() && title_key->size() >= 16) {
             std::copy_n(title_key->data(), 16, section_key.data());
             key_resolved = true;

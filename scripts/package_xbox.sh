@@ -40,6 +40,7 @@ if [[ -d "${ROOT_DIR}/keys" ]]; then
     mkdir -p "${STAGING_DIR}/keys"
     cp -r "${ROOT_DIR}/keys/"* "${STAGING_DIR}/keys/"
     cp "${ROOT_DIR}/keys/prod.keys" "${STAGING_DIR}/prod.keys" || true
+    cp "${ROOT_DIR}/keys/title.keys" "${STAGING_DIR}/title.keys" || true
 fi
 
 # 3. Create APPX Package

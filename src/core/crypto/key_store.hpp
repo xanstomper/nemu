@@ -51,7 +51,17 @@ public:
     /// derived key, then by decrypting an encrypted title-key blob with the
     /// matching titlekek (titlekek_index or titlekek_XX names).
     [[nodiscard]] std::optional<std::vector<u8>> GetTitleKeyDecrypted(
-        std::string_view rights_id_hex, std::span<const u8> encrypted_title_key = {}) const;
+        std::string_view rights_id_hex,
+        std::span<const u8> encrypted_title_key = {},
+        std::optional<u8> key_generation = std::nullopt) const;
+
+    /// Parse a ticket (.tik) binary blob, extract rights ID and encrypted title key,
+    /// decrypt the title key using the appropriate titlekek, and register the plaintext
+    /// title key under the rights ID. Returns true if key was successfully registered.
+    bool RegisterTicket(std::span<const u8> ticket_data, std::string_view filename_hint = {});
+
+    /// Load a ticket from a file on disk
+    bool LoadTicketFromFile(std::string_view file_path);
 
     /// Auto-detect and load keys from standard paths (save:/keys/, sdmc:/switch/, etc.)
     bool LoadDefaultKeys();
@@ -77,7 +87,9 @@ public:
 
 private:
     /// Resolve the titlekek for a rights ID (titlekek_XX / titlekek_index / titlekek).
-    [[nodiscard]] std::optional<std::vector<u8>> GetTitleKek(std::string_view rights_id_hex) const;
+    [[nodiscard]] std::optional<std::vector<u8>> GetTitleKek(
+        std::string_view rights_id_hex,
+        std::optional<u8> key_generation = std::nullopt) const;
     mutable std::shared_mutex mutex_;
     std::unordered_map<std::string, std::vector<u8>> keys_;
 };

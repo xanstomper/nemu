@@ -880,6 +880,69 @@ int main() {
         std::cout << "  - NCA Rights ID & Title Key tests: PASSED" << std::endl;
     }
 
+    // 9. Automated Ticket (.tik) Parsing & Pipe Delimited Title Key Loading (e.g. Hollow Knight)
+    {
+        std::cout << "  - Running Automated Ticket Parsing & Title Key DB Tests..." << std::endl;
+        crypto::KeyStore ks;
+
+        // A. Pipe delimited title key entry (as in user's title key database)
+        const std::string db_entry =
+            "0100633007d480000000000000000004|45c1fd381b086844365c57a5d3a8f766|Hollow Knight\n"
+            "0100f210061e80000000000000000004|ebb7241b9e7aa20fe9568ddc10d643b2|Hollow\n";
+        NEMU_TEST_ASSERT(ks.LoadFromText(db_entry), "LoadFromText with pipe-delimited database");
+
+        // Verify lookup by full Rights ID
+        auto hk_key = ks.GetTitleKey("0100633007d480000000000000000004");
+        NEMU_TEST_ASSERT(hk_key.has_value() && hk_key->size() == 16, "HK title key resolved by Rights ID");
+        auto expected_hk = crypto::KeyStore::HexToBytes("45c1fd381b086844365c57a5d3a8f766");
+        NEMU_TEST_ASSERT(*hk_key == *expected_hk, "HK title key bytes match");
+
+        // Verify automatic aliasing to 16-character Title ID
+        auto hk_by_tid = ks.GetTitleKey("0100633007d48000");
+        NEMU_TEST_ASSERT(hk_by_tid.has_value() && *hk_by_tid == *expected_hk,
+                         "HK title key aliased by Title ID");
+
+        // Verify automatic aliasing to base revision (all-zeros suffix)
+        auto hk_base = ks.GetTitleKey("0100633007d480000000000000000000");
+        NEMU_TEST_ASSERT(hk_base.has_value() && *hk_base == *expected_hk,
+                         "HK title key aliased to base revision");
+
+        // B. Binary Ticket (.tik) parsing and decryption
+        crypto::KeyStore ticket_ks;
+        const std::vector<u8> titlekek_00 = {
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+            0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
+        };
+        ticket_ks.SetKey("titlekek_00", titlekek_00);
+
+        // Encrypt the Hollow Knight title key using titlekek_00 (AES-128-ECB)
+        crypto::Aes128 cipher(std::span<const u8, 16>(titlekek_00.data(), 16));
+        std::array<u8, 16> enc_hk_key{};
+        cipher.EncryptBlock(std::span<const u8, 16>(expected_hk->data(), 16), enc_hk_key);
+
+        // Synthesize standard Switch RSA-2048 ticket buffer
+        std::vector<u8> ticket(0x2C0, 0);
+        *reinterpret_cast<u32*>(ticket.data()) = 0x00010004; // RSA-2048 SHA-256
+        // Issuer at 0x140
+        std::memcpy(ticket.data() + 0x140, "Root-CA00000003-XS0000000c", 26);
+        // Encrypted title key at 0x180
+        std::memcpy(ticket.data() + 0x180, enc_hk_key.data(), 16);
+        // Key revision at 0x195
+        ticket[0x195] = 0;
+        // Rights ID at 0x2A0
+        auto rid_bytes = crypto::KeyStore::HexToBytes("0100633007d480000000000000000004");
+        std::memcpy(ticket.data() + 0x2A0, rid_bytes->data(), 16);
+
+        // Register the ticket
+        NEMU_TEST_ASSERT(ticket_ks.RegisterTicket(ticket, "0100633007d480000000000000000004.tik"),
+                         "RegisterTicket parses and decrypts ticket");
+        auto ticket_resolved = ticket_ks.GetTitleKey("0100633007d480000000000000000004");
+        NEMU_TEST_ASSERT(ticket_resolved.has_value() && *ticket_resolved == *expected_hk,
+                         "Ticket decrypted key matches expected plaintext HK title key");
+
+        std::cout << "  - Automated Ticket Parsing & Title Key DB tests: PASSED" << std::endl;
+    }
+
     std::cout << "[Test: NRO Loader & Commercial Container/Crypto Pipeline PASSED]" << std::endl;
     return 0;
 }

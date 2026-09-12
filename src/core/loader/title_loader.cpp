@@ -44,6 +44,20 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadTitle(
     file.read(reinterpret_cast<char*>(buffer.data()), file_size);
 
     std::filesystem::path p(resolved_path);
+    // If the title is in a directory, scan the directory for any .tik files
+    try {
+        auto dir = p.parent_path();
+        if (!dir.empty() && std::filesystem::exists(dir)) {
+            for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+                if (entry.is_regular_file() && entry.path().extension() == ".tik") {
+                    key_store_.LoadTicketFromFile(entry.path().string());
+                }
+            }
+        }
+    } catch (...) {
+        // Best-effort directory scan
+    }
+
     return LoadFromMemory(buffer, vm, p.filename().string(), base_address);
 }
 
@@ -147,21 +161,37 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
             return LoadExeFS(pfs0, vm, name_hint, 0, base_address);
         }
 
-        // NSP package containing NCAs: find the largest .nca (typically Program NCA)
-        std::string chosen_nca;
-        size_t max_size = 0;
+        // NSP package: First find and register all tickets (.tik)
         for (const auto& f : pfs0.GetFiles()) {
-            if (f.name.ends_with(".nca") && f.size > max_size) {
-                max_size = f.size;
-                chosen_nca = f.name;
+            if (f.name.ends_with(".tik")) {
+                auto tik_data = pfs0.OpenFile(f.name);
+                if (tik_data) {
+                    bool reg_ok = key_store_.RegisterTicket(*tik_data, f.name);
+                    NEMU_LOG_INFO("Loader", "Parsed ticket '{}' in NSP package: {}",
+                                  f.name, reg_ok ? "Registered successfully" : "Failed to parse");
+                }
             }
         }
 
-        if (!chosen_nca.empty()) {
-            NEMU_LOG_INFO("Loader", "Found Program NCA '{}' in NSP package", chosen_nca);
-            auto nca_data = pfs0.OpenFile(chosen_nca);
+        // NSP package containing NCAs: find candidate NCAs sorted by size descending
+        std::vector<std::pair<std::string, size_t>> nca_candidates;
+        for (const auto& f : pfs0.GetFiles()) {
+            if (f.name.ends_with(".nca")) {
+                nca_candidates.push_back({f.name, f.size});
+            }
+        }
+        std::sort(nca_candidates.begin(), nca_candidates.end(),
+                  [](const auto& a, const auto& b) { return a.second > b.second; });
+
+        for (const auto& [nca_name, nca_size] : nca_candidates) {
+            NEMU_LOG_INFO("Loader", "Attempting to load Program NCA '{}' ({} bytes) in NSP package",
+                          nca_name, nca_size);
+            auto nca_data = pfs0.OpenFile(nca_name);
             if (nca_data) {
-                return LoadFromMemory(*nca_data, vm, chosen_nca, base_address);
+                auto loaded = LoadFromMemory(*nca_data, vm, nca_name, base_address);
+                if (loaded) {
+                    return loaded;
+                }
             }
         }
     }
@@ -186,18 +216,32 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
             if (secure_opt) {
                 Pfs0Archive secure_hfs0;
                 if (secure_hfs0.Initialize(*secure_opt)) {
-                    std::string chosen_nca;
-                    size_t max_size = 0;
+                    // Check for tickets in secure partition
                     for (const auto& f : secure_hfs0.GetFiles()) {
-                        if (f.name.ends_with(".nca") && f.size > max_size) {
-                            max_size = f.size;
-                            chosen_nca = f.name;
+                        if (f.name.ends_with(".tik")) {
+                            auto tik_data = secure_hfs0.OpenFile(f.name);
+                            if (tik_data) {
+                                key_store_.RegisterTicket(*tik_data, f.name);
+                            }
                         }
                     }
-                    if (!chosen_nca.empty()) {
-                        auto nca_data = secure_hfs0.OpenFile(chosen_nca);
+
+                    std::vector<std::pair<std::string, size_t>> nca_candidates;
+                    for (const auto& f : secure_hfs0.GetFiles()) {
+                        if (f.name.ends_with(".nca")) {
+                            nca_candidates.push_back({f.name, f.size});
+                        }
+                    }
+                    std::sort(nca_candidates.begin(), nca_candidates.end(),
+                              [](const auto& a, const auto& b) { return a.second > b.second; });
+
+                    for (const auto& [nca_name, nca_size] : nca_candidates) {
+                        auto nca_data = secure_hfs0.OpenFile(nca_name);
                         if (nca_data) {
-                            return LoadFromMemory(*nca_data, vm, chosen_nca, base_address);
+                            auto loaded = LoadFromMemory(*nca_data, vm, nca_name, base_address);
+                            if (loaded) {
+                                return loaded;
+                            }
                         }
                     }
                 }
