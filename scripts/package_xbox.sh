@@ -51,6 +51,12 @@ python3 "${ROOT_DIR}/scripts/make_appx.py" "${STAGING_DIR}" "${OUTPUT_APPX}"
 cp "${ROOT_DIR}/packaging/xbox/NemuDev.cer" "${BUILD_DIR}/NemuDev.cer"
 cp "${ROOT_DIR}/packaging/xbox/NemuDev.pfx" "${BUILD_DIR}/NemuDev.pfx"
 
+# Also populate release directory
+mkdir -p "${ROOT_DIR}/packaging/xbox/release"
+cp "${OUTPUT_APPX}" "${ROOT_DIR}/packaging/xbox/release/"
+cp "${ROOT_DIR}/packaging/xbox/NemuDev.cer" "${ROOT_DIR}/packaging/xbox/release/"
+cp "${ROOT_DIR}/packaging/xbox/NemuDev.pfx" "${ROOT_DIR}/packaging/xbox/release/"
+
 # 4. Verify & Report
 echo "[4/4] Package Verification:"
 APPX_SIZE=$(du -h "${OUTPUT_APPX}" | cut -f1)
@@ -63,9 +69,16 @@ unzip -l "${OUTPUT_APPX}"
 echo ""
 echo "=========================================================="
 echo "  APPX PACKAGE & CERTIFICATE GENERATED SUCCESSFULLY!     "
-echo "  Xbox Device Portal Deployment Instructions:             "
-echo "  1. Open https://<xbox-ip>:11443 in browser              "
+echo "=========================================================="
+echo "  Deployment Option A (Standard Signed AppX):             "
+echo "  1. Open Xbox Device Portal (https://<xbox-ip>:11443)    "
 echo "  2. Under 'Install app', choose 'Nemu_1.0.0.0_x64.appx'  "
 echo "  3. Click Next, select certificate 'NemuDev.cer'         "
 echo "  4. Click Start / Deploy                                 "
+echo "                                                          "
+echo "  Deployment Option B (Instant Loose Folder Deploy):      "
+echo "  1. In Xbox Device Portal, select 'Deploy loose folder'  "
+echo "  2. Choose folder: '${STAGING_DIR}'                      "
+echo "  3. Deploys instantly without signature requirements!    "
 echo "=========================================================="
+

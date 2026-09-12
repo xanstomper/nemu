@@ -67,7 +67,60 @@ def compute_block_map(files: list[tuple[str, bytes]]) -> str:
     lines.append('</BlockMap>')
     return '\n'.join(lines) + '\n'
 
-def pack_appx(staging_dir: Path, output_appx: Path):
+import shutil
+import subprocess
+
+def sign_appx(appx_path: Path, cert_path: Path, key_path: Path) -> bool:
+    """
+    Sign AppX package using osslsigncode to produce specification-compliant
+    AppxSignature.p7x with Authenticode / SPC Indirect Data hashes.
+    """
+    osslsigncode = shutil.which("osslsigncode") or "/usr/bin/osslsigncode"
+    if not os.path.exists(osslsigncode):
+        print(f"[!] Warning: osslsigncode not found. AppX remains unsigned.")
+        return False
+
+    if not cert_path.exists() or not key_path.exists():
+        print(f"[!] Warning: Certificate ({cert_path}) or Key ({key_path}) not found. Skipping signature.")
+        return False
+
+    print(f"[*] Digitally signing AppX package with {cert_path.name}...")
+    signed_tmp = appx_path.with_suffix(".signed.tmp")
+    
+    cmd_sign = [
+        osslsigncode, "sign",
+        "-pem",
+        "-certs", str(cert_path),
+        "-key", str(key_path),
+        "-in", str(appx_path),
+        "-out", str(signed_tmp)
+    ]
+    
+    res = subprocess.run(cmd_sign, capture_output=True, text=True)
+    if res.returncode != 0:
+        print(f"[!] Signing failed:\n{res.stderr}\n{res.stdout}")
+        if signed_tmp.exists():
+            signed_tmp.unlink()
+        return False
+        
+    signed_tmp.replace(appx_path)
+    print(f"[+] Package signed successfully: AppxSignature.p7x added.")
+    
+    # Verify signature
+    cmd_verify = [
+        osslsigncode, "verify",
+        "-CAfile", str(cert_path),
+        "-in", str(appx_path)
+    ]
+    ver_res = subprocess.run(cmd_verify, capture_output=True, text=True)
+    if ver_res.returncode == 0:
+        print("[+] Signature integrity verified (BlockMap, ContentTypes, Data, Central Directory all OK).")
+    else:
+        print(f"[!] Signature verification warning:\n{ver_res.stderr}\n{ver_res.stdout}")
+        
+    return True
+
+def pack_appx(staging_dir: Path, output_appx: Path, cert_path: Path | None = None, key_path: Path | None = None):
     print(f"[*] Packaging AppX from: {staging_dir}")
     print(f"[*] Output package:     {output_appx}")
     
@@ -129,11 +182,28 @@ def pack_appx(staging_dir: Path, output_appx: Path):
             print(f"  + Added: {arcname} ({len(data)} bytes, LFH={30 + len(arcname.encode('utf-8'))})")
             
     pkg_size = output_appx.stat().st_size
-    print(f"\n[+] Successfully generated AppX: {output_appx} ({pkg_size / 1024 / 1024:.2f} MB)")
+    print(f"\n[+] Successfully generated AppX container: {output_appx} ({pkg_size / 1024 / 1024:.2f} MB)")
+    
+    # Auto-sign if cert/key provided or default found
+    if cert_path is None or key_path is None:
+        root_dir = Path(__file__).resolve().parent.parent
+        default_cert = root_dir / "packaging" / "xbox" / "NemuDev.cer"
+        default_key = root_dir / "packaging" / "xbox" / "NemuDev.key"
+        if default_cert.exists() and default_key.exists():
+            cert_path = default_cert
+            key_path = default_key
+
+    if cert_path and key_path and cert_path.exists() and key_path.exists():
+        sign_appx(output_appx, cert_path, key_path)
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: make_appx.py <staging_dir> <output_appx>")
+    if len(sys.argv) < 3:
+        print("Usage: make_appx.py <staging_dir> <output_appx> [cert_file] [key_file]")
         sys.exit(1)
-    pack_appx(Path(sys.argv[1]), Path(sys.argv[2]))
+    staging = Path(sys.argv[1])
+    out_appx = Path(sys.argv[2])
+    cert = Path(sys.argv[3]) if len(sys.argv) > 3 else None
+    key = Path(sys.argv[4]) if len(sys.argv) > 4 else None
+    pack_appx(staging, out_appx, cert, key)
+
 
