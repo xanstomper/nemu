@@ -26,6 +26,8 @@ set(GPU_SOURCES
     texture/astc_decoder.cpp
     shader/maxwell_shader_decoder.hpp
     shader/maxwell_shader_decoder.cpp
+    shader/shader_translator.hpp
+    shader/shader_translator.cpp
 )
 
 if(WIN32)

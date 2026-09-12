@@ -534,5 +534,19 @@ void D3D12GpuBackend::BindPipelineAndTopology(PrimitiveTopology topology) {
     }
 }
 
+D3D12GpuBackend::PipelineValidation D3D12GpuBackend::GetPipelineValidation() const noexcept {
+    PipelineValidation v;
+    v.device_created = device_ != nullptr;
+    v.command_queue_created = command_queue_ != nullptr;
+    v.command_list_created = command_list_ != nullptr;
+    v.swap_chain_created = swap_chain_ != nullptr;
+    v.root_signature_created = root_signature_ != nullptr;
+    v.pso_created = pso_ != nullptr;
+    v.geometry_upload_ok = vertex_buffer_ != nullptr || back_buffers_.empty();
+    v.back_buffer_count = static_cast<u32>(back_buffers_.size());
+    v.last_hr = hr_;
+    return v;
+}
+
 } // namespace nemu::core::gpu
 #endif // _WIN32

@@ -6,6 +6,7 @@
 #include "core/gpu/presentation/nvnflinger.hpp"
 #include "core/gpu/texture/astc_decoder.hpp"
 #include "core/gpu/shader/maxwell_shader_decoder.hpp"
+#include "core/gpu/shader/shader_translator.hpp"
 #include "core/memory/virtual_memory.hpp"
 #include <iostream>
 #include <vector>
@@ -505,6 +506,65 @@ int main() {
         NEMU_TEST_ASSERT(decomp.glsl_source.find("gl_Position") != std::string::npos, "GLSL has gl_Position");
 
         std::cout << "  - Maxwell SM 5.3 shader decompiler (HLSL SM 6.0/5.1) tests: PASSED" << std::endl;
+    }
+
+    // 12b. Test ShaderTranslator (decode -> HLSL -> validation)
+    {
+        using namespace nemu::core::gpu::shader;
+
+        auto EncodeInst = [](std::span<u8> dst, u32 opcode, u32 rd, u32 ra, u32 rb, u32 rc) {
+            u64 val = (static_cast<u64>(opcode) << 52) |
+                      (static_cast<u64>(rd) & 0xFF) |
+                      ((static_cast<u64>(ra) & 0xFF) << 8) |
+                      (static_cast<u64>(7) << 16) |
+                      ((static_cast<u64>(rb) & 0xFF) << 20) |
+                      ((static_cast<u64>(rc) & 0xFF) << 32);
+            std::memcpy(dst.data(), &val, sizeof(u64));
+        };
+
+        // Vertex program: MOV R0,R1; ST.ATTR a[0].x,R0; EXIT
+        std::vector<u8> vs_code(24, 0);
+        EncodeInst(std::span<u8>(vs_code.data() + 0, 8), 0x5C0, 0, 1, 0, 0);  // MOV R0,R1
+        EncodeInst(std::span<u8>(vs_code.data() + 8, 8), 0x5B1, 0, 0, 0, 0);  // ST.ATTR a[0].x,R0
+        EncodeInst(std::span<u8>(vs_code.data() + 16, 8), 0x5D1, 0, 0, 0, 0); // EXIT
+
+        // A shader using an out-of-bounds register set must fail validation.
+        std::vector<u8> blow_vs(24, 0);
+        EncodeInst(std::span<u8>(blow_vs.data() + 0, 8), 0x5C0, 255, 1, 0, 0); // MOV R255 -> handled as RZ, low weight
+        EncodeInst(std::span<u8>(blow_vs.data() + 8, 8), 0x5B1, 254, 0, 0, 0); // ST.ATTR a[0].x,R254
+        EncodeInst(std::span<u8>(blow_vs.data() + 16, 8), 0x5D1, 0, 0, 0, 0);
+
+        auto vs = ShaderTranslator::Translate(vs_code, ShaderStage::Vertex);
+        NEMU_TEST_ASSERT(vs.ok, "Vertex shader translates successfully");
+        NEMU_TEST_ASSERT(vs.hlsl_source.find("VSOutput") != std::string::npos,
+                         "Translated vs HLSL has VSOutput struct");
+        NEMU_TEST_ASSERT(vs.stage == ShaderStage::Vertex, "Stage preserved");
+
+        ShaderProgram valid_program{};
+        valid_program.vertex = vs;
+        auto report = ShaderTranslator::Validate(valid_program, 256, 16);
+        NEMU_TEST_ASSERT(report.vertex_valid, "Valid vertex stage passes validation");
+        NEMU_TEST_ASSERT(report.Passed(), "Valid vertex-only program passes");
+
+        // Fragment stage with discard.
+        std::vector<u8> ps_code(16, 0);
+        EncodeInst(std::span<u8>(ps_code.data() + 0, 8), 0x5C0, 0, 1, 0, 0); // MOV R0,R1
+        EncodeInst(std::span<u8>(ps_code.data() + 8, 8), 0x5D1, 0, 0, 0, 0); // EXIT
+        auto ps = ShaderTranslator::Translate(ps_code, ShaderStage::Fragment);
+        NEMU_TEST_ASSERT(ps.ok && ps.stage == ShaderStage::Fragment, "Fragment shader translates");
+
+        ShaderProgram full{};
+        full.vertex = vs;
+        full.fragment = ps;
+        auto full_report = ShaderTranslator::Validate(full, 256, 16);
+        NEMU_TEST_ASSERT(full_report.fragment_valid, "Fragment stage validates");
+        NEMU_TEST_ASSERT(full_report.Passed(), "VS+PS program passes validation");
+
+        // Empty bytecode -> clean non-ok result.
+        auto empty = ShaderTranslator::Translate({}, ShaderStage::Vertex);
+        NEMU_TEST_ASSERT(!empty.ok, "Empty bytecode yields non-ok translation");
+
+        std::cout << "  - ShaderTranslator (Maxwell -> HLSL + validation): PASSED" << std::endl;
     }
 
     // 13. Test Maxwell Pushbuffer Multi-Mode Decoding and ASTC Integration

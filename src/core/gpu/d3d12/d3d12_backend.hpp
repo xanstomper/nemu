@@ -42,6 +42,27 @@ public:
     /// True once a working swap chain + pipeline exist (real rendering path).
     [[nodiscard]] bool IsRenderPipelineReady() const noexcept { return swap_chain_ && pso_; }
 
+    /// Structured per-stage validation of the on-console D3D12 pipeline.
+    /// Lets the frontend / diagnostics confirm each stage actually came up so a
+    /// game can fall back gracefully instead of black-screening.
+    struct PipelineValidation {
+        bool device_created{false};
+        bool command_queue_created{false};
+        bool command_list_created{false};
+        bool swap_chain_created{false};
+        bool root_signature_created{false};
+        bool pso_created{false};
+        bool geometry_upload_ok{false};
+        u32 back_buffer_count{0};
+        HRESULT last_hr{S_OK};
+
+        [[nodiscard]] bool RenderPipelineOk() const noexcept {
+            return device_created && command_queue_created && swap_chain_created &&
+                   root_signature_created && pso_created;
+        }
+    };
+    [[nodiscard]] PipelineValidation GetPipelineValidation() const noexcept;
+
 private:
     struct D3D12Vertex {
         float x, y;       // NDC
