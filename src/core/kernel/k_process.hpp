@@ -37,6 +37,9 @@ public:
     [[nodiscard]] ProcessState GetState() const noexcept { return state_; }
     [[nodiscard]] s32 GetExitCode() const noexcept { return exit_code_; }
 
+    [[nodiscard]] u64 GetTitleId() const noexcept { return title_id_; }
+    void SetTitleId(u64 title_id) noexcept { title_id_ = title_id; }
+
     void SetState(ProcessState state) noexcept { state_ = state; }
     void Terminate(s32 exit_code) noexcept {
         state_ = ProcessState::Terminated;
@@ -64,6 +67,7 @@ public:
 
 private:
     u64 pid_{0};
+    u64 title_id_{0};
     std::string name_;
     ProcessState state_{ProcessState::Created};
     s32 exit_code_{0};

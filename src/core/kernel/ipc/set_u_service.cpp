@@ -53,7 +53,9 @@ u32 SetUserService::HandleRequest(const IpcContext& ctx, const IpcRequestReader&
         }
         default:
             NEMU_LOG_WARN("set:u", "Unhandled set:u command id 0x{:X}", x_id);
-            return static_cast<u32>(IpcResult::Unimplemented);
+            reply.Begin(static_cast<u32>(IpcCommandType::Request), 16);
+            reply.Payload<u32>(0, 0);
+            return static_cast<u32>(IpcResult::Success);
     }
 }
 

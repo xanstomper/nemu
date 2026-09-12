@@ -161,6 +161,9 @@ bool Emulator::LoadTitle(const std::string& path) {
     if (!loaded->title_name.empty()) {
         process_->SetName(loaded->title_name);
     }
+    if (loaded->title_id != 0) {
+        process_->SetTitleId(loaded->title_id);
+    }
 
     // Create Main Thread
     main_thread_ = std::make_shared<kernel::KThread>(

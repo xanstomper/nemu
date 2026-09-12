@@ -23,8 +23,8 @@ namespace {
     }
 } // namespace
 
-SetSysService::SetSysService()
-    : IIpcService("set:sys") {}
+SetSysService::SetSysService(std::string name)
+    : IIpcService(std::move(name)) {}
 
 u32 SetSysService::HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
                                  IpcReplyWriter& reply, u32 x_id) {
@@ -51,7 +51,9 @@ u32 SetSysService::HandleRequest(const IpcContext& ctx, const IpcRequestReader& 
             return static_cast<u32>(IpcResult::Success);
         default:
             NEMU_LOG_WARN("set:sys", "Unhandled set:sys command id 0x{:X}", x_id);
-            return static_cast<u32>(IpcResult::Unimplemented);
+            reply.Begin(static_cast<u32>(IpcCommandType::Request), 16);
+            reply.Payload<u32>(0, 0);
+            return static_cast<u32>(IpcResult::Success);
     }
 }
 

@@ -37,11 +37,13 @@ std::shared_ptr<ServiceRegistry> CreateDefaultServiceRegistry(
     // Core system services (no external deps).
     registry->Register(std::make_shared<SmService>());
     registry->Register(std::make_shared<SetSysService>());
+    registry->Register(std::make_shared<SetSysService>("set"));
     registry->Register(std::make_shared<SetUserService>());
     registry->Register(std::make_shared<TimeService>());
     registry->Register(std::make_shared<AccountService>());
     registry->Register(std::make_shared<HidService>());
     registry->Register(std::make_shared<AppletManagerService>("appletOE"));
+    registry->Register(std::make_shared<AppletManagerService>("appletAE"));
 
     // Shared Font services (pl:u, pl:s)
     registry->Register(std::make_shared<PlService>("pl:u"));

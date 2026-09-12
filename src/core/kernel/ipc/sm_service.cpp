@@ -5,6 +5,7 @@
 #include "service_registry.hpp"
 #include "platform/logger.hpp"
 #include <string>
+#include <unordered_set>
 
 namespace nemu::core::kernel::ipc {
 
@@ -47,6 +48,35 @@ static std::string ReadTrimmedServiceName(const IpcRequestReader& request) {
     return std::string(raw.substr(0, len));
 }
 
+class GenericStubService final : public IIpcService {
+public:
+    explicit GenericStubService(std::string name) : IIpcService(std::move(name)) {}
+    ~GenericStubService() override = default;
+
+    u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
+                      IpcReplyWriter& reply, u32 x_id) override {
+        (void)ctx;
+        (void)request;
+        NEMU_LOG_DEBUG("IPC", "GenericStubService('{}'): Handled command 0x{:X}", GetName(), x_id);
+        reply.Begin(static_cast<u32>(IpcCommandType::Request), 16);
+        reply.Payload<u32>(0, 0); // Result Success
+        reply.Payload<u32>(4, 0);
+        reply.Payload<u64>(8, 0);
+        return static_cast<u32>(IpcResult::Success);
+    }
+};
+
+static bool IsKnownStubService(std::string_view name) {
+    static const std::unordered_set<std::string_view> stubs = {
+        "aoc:u", "pctl", "pctl:a", "pctl:s", "bcat:u", "bcat:a", "bcat:m",
+        "prepo:u", "prepo:a", "caps:a", "caps:c", "caps:u", "caps:su",
+        "friend:u", "friend:v", "lbl", "apm", "apm:p", "apm:sys",
+        "arp:r", "spsm", "bsdcfg", "ssl", "news:u", "nfc:u", "nfc:user",
+        "ir:u", "ovln:rcv", "set:cal", "audio"
+    };
+    return stubs.find(name) != stubs.end();
+}
+
 u32 SmService::HandleGetServiceHandle(const IpcContext& ctx, const IpcRequestReader& request,
                                       IpcReplyWriter& reply) {
     if (!ctx.registry || !ctx.handle_table) {
@@ -60,6 +90,12 @@ u32 SmService::HandleGetServiceHandle(const IpcContext& ctx, const IpcRequestRea
     }
 
     auto port = ctx.registry->CreatePort(name);
+    if ((!port || !*port) && IsKnownStubService(name)) {
+        NEMU_LOG_INFO("sm:", "GetServiceHandle: creating dynamic stub service for '{}'", name);
+        ctx.registry->Register(std::make_shared<GenericStubService>(name));
+        port = ctx.registry->CreatePort(name);
+    }
+
     if (!port || !*port) {
         NEMU_LOG_WARN("sm:", "GetServiceHandle: unknown service '{}'", name);
         return static_cast<u32>(IpcResult::NotFound);

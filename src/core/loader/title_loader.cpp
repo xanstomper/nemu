@@ -3,6 +3,7 @@
 #include "nso.hpp"
 #include "pfs0.hpp"
 #include "nca.hpp"
+#include "romfs.hpp"
 #include "platform/logger.hpp"
 #include <fstream>
 #include <cstring>
@@ -132,6 +133,25 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
             return std::nullopt;
         }
 
+        // Mount RomFS (section 1) if present and not already mounted
+        if (!vfs_.IsMounted("romfs:/") && nca.HasSection(1)) {
+            auto romfs_data = nca.ExtractSection(1, &key_store_);
+            if (romfs_data) {
+                RomfsReader romfs;
+                if (romfs.Initialize(*romfs_data)) {
+                    std::error_code ec;
+                    auto temp_dir = std::filesystem::temp_directory_path(ec);
+                    if (ec || temp_dir.empty()) {
+                        temp_dir = std::filesystem::current_path(ec) / "temp";
+                    }
+                    auto staging_dir = temp_dir / ("nemu_romfs_" + std::to_string(nca.GetTitleId()));
+                    if (romfs.MountToVfs(vfs_, staging_dir, "romfs:/")) {
+                        NEMU_LOG_INFO("Loader", "Mounted RomFS section 1 ({} files) to romfs:/", romfs.GetFiles().size());
+                    }
+                }
+            }
+        }
+
         auto exefs_opt = nca.ExtractSection(0, &key_store_);
         if (!exefs_opt) {
             NEMU_LOG_ERROR("Loader", "NCA does not contain valid ExeFS section 0");
@@ -183,6 +203,7 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
         std::sort(nca_candidates.begin(), nca_candidates.end(),
                   [](const auto& a, const auto& b) { return a.second > b.second; });
 
+        std::optional<LoadedTitleInfo> loaded_title;
         for (const auto& [nca_name, nca_size] : nca_candidates) {
             NEMU_LOG_INFO("Loader", "Attempting to load Program NCA '{}' ({} bytes) in NSP package",
                           nca_name, nca_size);
@@ -190,9 +211,47 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
             if (nca_data) {
                 auto loaded = LoadFromMemory(*nca_data, vm, nca_name, base_address);
                 if (loaded) {
-                    return loaded;
+                    loaded_title = loaded;
+                    break;
                 }
             }
+        }
+
+        // If Program NCA was found, check if RomFS is mounted. If not mounted yet, search remaining NCAs for RomFS
+        if (loaded_title && !vfs_.IsMounted("romfs:/")) {
+            for (const auto& [nca_name, nca_size] : nca_candidates) {
+                auto nca_data = pfs0.OpenFile(nca_name);
+                if (!nca_data) continue;
+                NcaReader nca;
+                if (!nca.Initialize(*nca_data, &key_store_)) continue;
+
+                for (u32 s : {1u, 0u}) {
+                    if (nca.HasSection(s)) {
+                        auto romfs_data = nca.ExtractSection(s, &key_store_);
+                        if (romfs_data) {
+                            RomfsReader romfs;
+                            if (romfs.Initialize(*romfs_data)) {
+                                std::error_code ec;
+                                auto temp_dir = std::filesystem::temp_directory_path(ec);
+                                if (ec || temp_dir.empty()) {
+                                    temp_dir = std::filesystem::current_path(ec) / "temp";
+                                }
+                                auto staging_dir = temp_dir / ("nemu_romfs_" + std::to_string(loaded_title->title_id != 0 ? loaded_title->title_id : nca.GetTitleId()));
+                                if (romfs.MountToVfs(vfs_, staging_dir, "romfs:/")) {
+                                    NEMU_LOG_INFO("Loader", "Mounted RomFS from NCA '{}' section {} ({} files) to romfs:/",
+                                                  nca_name, s, romfs.GetFiles().size());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (vfs_.IsMounted("romfs:/")) break;
+            }
+        }
+
+        if (loaded_title) {
+            return loaded_title;
         }
     }
 
@@ -235,14 +294,52 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
                     std::sort(nca_candidates.begin(), nca_candidates.end(),
                               [](const auto& a, const auto& b) { return a.second > b.second; });
 
+                    std::optional<LoadedTitleInfo> loaded_title;
                     for (const auto& [nca_name, nca_size] : nca_candidates) {
                         auto nca_data = secure_hfs0.OpenFile(nca_name);
                         if (nca_data) {
                             auto loaded = LoadFromMemory(*nca_data, vm, nca_name, base_address);
                             if (loaded) {
-                                return loaded;
+                                loaded_title = loaded;
+                                break;
                             }
                         }
+                    }
+
+                    if (loaded_title && !vfs_.IsMounted("romfs:/")) {
+                        for (const auto& [nca_name, nca_size] : nca_candidates) {
+                            auto nca_data = secure_hfs0.OpenFile(nca_name);
+                            if (!nca_data) continue;
+                            NcaReader nca;
+                            if (!nca.Initialize(*nca_data, &key_store_)) continue;
+
+                            for (u32 s : {1u, 0u}) {
+                                if (nca.HasSection(s)) {
+                                    auto romfs_data = nca.ExtractSection(s, &key_store_);
+                                    if (romfs_data) {
+                                        RomfsReader romfs;
+                                        if (romfs.Initialize(*romfs_data)) {
+                                            std::error_code ec;
+                                            auto temp_dir = std::filesystem::temp_directory_path(ec);
+                                            if (ec || temp_dir.empty()) {
+                                                temp_dir = std::filesystem::current_path(ec) / "temp";
+                                            }
+                                            auto staging_dir = temp_dir / ("nemu_romfs_" + std::to_string(loaded_title->title_id != 0 ? loaded_title->title_id : nca.GetTitleId()));
+                                            if (romfs.MountToVfs(vfs_, staging_dir, "romfs:/")) {
+                                                NEMU_LOG_INFO("Loader", "Mounted RomFS from NCA '{}' section {} ({} files) to romfs:/",
+                                                              nca_name, s, romfs.GetFiles().size());
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if (vfs_.IsMounted("romfs:/")) break;
+                        }
+                    }
+
+                    if (loaded_title) {
+                        return loaded_title;
                     }
                 }
             }
@@ -260,6 +357,27 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
     u64 title_id,
     vaddr_t base_address
 ) {
+    // If title_id is not provided, try to extract it from main.npdm
+    if (title_id == 0 && exefs.HasFile("main.npdm")) {
+        auto npdm = exefs.OpenFile("main.npdm");
+        if (npdm && npdm->size() >= 0x70) {
+            u32 meta_magic = 0;
+            std::memcpy(&meta_magic, npdm->data(), 4);
+            if (meta_magic == 0x4154454D) { // 'META'
+                u32 aci0_offset = 0;
+                std::memcpy(&aci0_offset, npdm->data() + 0x40, 4);
+                if (aci0_offset + 0x18 <= npdm->size()) {
+                    u32 aci0_magic = 0;
+                    std::memcpy(&aci0_magic, npdm->data() + aci0_offset, 4);
+                    if (aci0_magic == 0x30494341) { // 'ACI0'
+                        std::memcpy(&title_id, npdm->data() + aci0_offset + 0x10, sizeof(u64));
+                        NEMU_LOG_INFO("Loader", "Parsed Title ID 0x{:016X} from main.npdm", title_id);
+                    }
+                }
+            }
+        }
+    }
+
     // Determine module loading order: rtld, main, subsdk0..subsdk9, sdk
     std::vector<std::string> load_order;
     if (exefs.HasFile("rtld")) load_order.push_back("rtld");

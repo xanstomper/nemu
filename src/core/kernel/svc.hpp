@@ -67,6 +67,17 @@ private:
 
     // Diagnostics & Debugging
     static void SvcOutputDebugString(cpu::CpuState& state, KProcess& process);
+    static void SvcBreak(cpu::CpuState& state);
+
+    // System Information & Identification
+    static void SvcGetInfo(cpu::CpuState& state, KProcess& process);
+    static void SvcGetThreadId(cpu::CpuState& state, KThread& thread);
+    static void SvcGetProcessId(cpu::CpuState& state, KProcess& process);
+
+    // Event Synchronization
+    static void SvcCreateEvent(cpu::CpuState& state, KProcess& process);
+    static void SvcSignalEvent(cpu::CpuState& state, KProcess& process);
+    static void SvcClearEvent(cpu::CpuState& state, KProcess& process);
 
     /// Shared service manager (injected once at boot).
     static std::shared_ptr<ipc::ServiceRegistry> ipc_registry_;

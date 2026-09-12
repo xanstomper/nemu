@@ -41,8 +41,15 @@ void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& t
         case 0x1C: SvcWaitProcessWideKeyAtomic(state, process); break;
         case 0x1E: SvcSignalProcessWideKey(state, process); break;
         case 0x21: SvcSendSyncRequest(state, process, thread); break;
+        case 0x25: SvcGetThreadId(state, thread); break;
+        case 0x26: SvcBreak(state); break;
         case 0x27: SvcOutputDebugString(state, process); break;
+        case 0x29: SvcGetInfo(state, process); break;
         case 0x2B: SvcConnectToPort(state, process); break;
+        case 0x2C: SvcGetProcessId(state, process); break;
+        case 0x45: SvcCreateEvent(state, process); break;
+        case 0x46: SvcSignalEvent(state, process); break;
+        case 0x47: SvcClearEvent(state, process); break;
 
         default:
             NEMU_LOG_WARN("SVC", "Unhandled SVC 0x{:02X} called at PC 0x{:016X}", svc_id, state.pc);
@@ -398,6 +405,124 @@ void SvcDispatcher::SvcSignalProcessWideKey(cpu::CpuState& state, KProcess& proc
     u32 woken = process.GetAddressArbiter().Signal(key_addr, count);
     state.SetX(0, static_cast<u64>(Result::Success));
     state.SetX(1, woken);
+}
+
+void SvcDispatcher::SvcBreak(cpu::CpuState& state) {
+    NEMU_LOG_WARN("SVC", "svcBreak called: reason=0x{:X}, info1=0x{:X}, info2=0x{:X}",
+                  state.GetX(0), state.GetX(1), state.GetX(2));
+}
+
+void SvcDispatcher::SvcGetThreadId(cpu::CpuState& state, KThread& thread) {
+    state.SetX(0, static_cast<u64>(Result::Success));
+    state.SetX(1, thread.GetTid());
+}
+
+void SvcDispatcher::SvcGetProcessId(cpu::CpuState& state, KProcess& process) {
+    state.SetX(0, static_cast<u64>(Result::Success));
+    state.SetX(1, process.GetPid());
+}
+
+void SvcDispatcher::SvcGetInfo(cpu::CpuState& state, KProcess& process) {
+    const u32 id0 = static_cast<u32>(state.GetX(1));
+    const Handle handle = static_cast<Handle>(state.GetX(2));
+    const u64 id1 = state.GetX(3);
+
+    u64 info_val = 0;
+    Result res = Result::Success;
+
+    switch (id0) {
+        case 0: // AllowedCpuIdBitmask
+            info_val = 0x0F; // 4 cores
+            break;
+        case 1: // AllowedThreadPrioBitmask
+            info_val = 0xFFFFFFFFFFFFFFFFULL;
+            break;
+        case 2: // AliasRegionAddress
+            info_val = 0x0000000080000000ULL;
+            break;
+        case 3: // AliasRegionSize
+            info_val = 0x0000000100000000ULL;
+            break;
+        case 4: // HeapRegionAddress
+            info_val = 0x0000000800000000ULL;
+            break;
+        case 5: // HeapRegionSize
+            info_val = 0x0000000180000000ULL;
+            break;
+        case 6: // TotalPhysicalMemoryAvailable
+            info_val = 0x0000000100000000ULL; // 4GB RAM
+            break;
+        case 7: // TotalPhysicalMemoryUsed
+            info_val = 0x0000000010000000ULL; // 256MB
+            break;
+        case 8: // IsVirtualAddressMemoryResourceLimit
+            info_val = 0;
+            break;
+        case 11: // RandomEntropy
+            info_val = 0x4A65774E656D7500ULL ^ id1;
+            break;
+        case 12: // InitialProcessIdRange
+            info_val = 1;
+            break;
+        case 13: // TitleId
+            info_val = (process.GetTitleId() != 0) ? process.GetTitleId() : 0x0100633007d48000ULL;
+            break;
+        case 14: // PrivilegeMode
+            info_val = 0;
+            break;
+        case 18: // MesosphereVersion
+            info_val = 0x00010000ULL;
+            break;
+        case 20: // ThreadTickCount
+            info_val = 1000000ULL;
+            break;
+        case 24: // CoreMask
+            info_val = 0x0F;
+            break;
+        case 25: // ProgramId
+            info_val = (process.GetTitleId() != 0) ? process.GetTitleId() : 0x0100633007d48000ULL;
+            break;
+        default:
+            NEMU_LOG_DEBUG("SVC", "svcGetInfo: unhandled type {} (handle 0x{:X}, id1 0x{:X})", id0, handle, id1);
+            info_val = 0;
+            break;
+    }
+
+    state.SetX(0, static_cast<u64>(res));
+    state.SetX(1, info_val);
+}
+
+void SvcDispatcher::SvcCreateEvent(cpu::CpuState& state, KProcess& process) {
+    auto event = std::make_shared<KEvent>();
+    Handle r_handle = process.GetHandleTable().CreateHandle(event);
+    Handle w_handle = process.GetHandleTable().CreateHandle(event);
+
+    if (r_handle == InvalidHandle || w_handle == InvalidHandle) {
+        state.SetX(0, static_cast<u64>(Result::OutOfMemory));
+        return;
+    }
+
+    state.SetX(0, static_cast<u64>(Result::Success));
+    state.SetX(1, r_handle);
+    state.SetX(2, w_handle);
+}
+
+void SvcDispatcher::SvcSignalEvent(cpu::CpuState& state, KProcess& process) {
+    const Handle handle = static_cast<Handle>(state.GetX(0));
+    auto event = process.GetHandleTable().GetObject<KEvent>(handle);
+    if (event) {
+        event->Signal();
+    }
+    state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcClearEvent(cpu::CpuState& state, KProcess& process) {
+    const Handle handle = static_cast<Handle>(state.GetX(0));
+    auto event = process.GetHandleTable().GetObject<KEvent>(handle);
+    if (event) {
+        event->Clear();
+    }
+    state.SetX(0, static_cast<u64>(Result::Success));
 }
 
 } // namespace nemu::core::kernel

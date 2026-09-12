@@ -9,7 +9,7 @@ namespace nemu::core::kernel::ipc {
 /// console and are recorded in one struct for testability.
 class SetSysService final : public IIpcService {
 public:
-    SetSysService();
+    explicit SetSysService(std::string name = "set:sys");
 
     struct Settings {
         u8 major{1};
