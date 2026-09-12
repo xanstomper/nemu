@@ -20,7 +20,7 @@ void XboxFrontend::RefreshLibrary() {
             if (entry.is_regular_file(ec)) {
                 auto ext = entry.path().extension().string();
                 std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
-                if (ext == ".nro" || ext == ".nsp" || ext == ".xci" || ext == ".nca") {
+                if (ext == ".nro" || ext == ".nsp" || ext == ".xci" || ext == ".nca" || ext == ".nso") {
                     library_.push_back(HomebrewEntry{
                         .filename = entry.path().filename().string(),
                         .virtual_path = "sdmc:/" + entry.path().filename().string(),
