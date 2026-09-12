@@ -38,6 +38,8 @@ set(GPU_SOURCES
     pipeline/pipeline_cache.cpp
     pipeline/pipeline_bridge.hpp
     pipeline/pipeline_bridge.cpp
+    pipeline/graphics_optimizer.hpp
+    pipeline/graphics_optimizer.cpp
 )
 
 if(WIN32)

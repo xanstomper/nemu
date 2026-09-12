@@ -54,6 +54,11 @@ int main() {
         cfg.inner_deadzone = 0.20f;
         cfg.outer_deadzone = 0.90f;
         cfg.cpu_backend = config::CpuBackendMode::Interpreter;
+        cfg.resolution_scale = config::ResolutionScale::SeriesX_1_5x;
+        cfg.upscaler = gpu::pipeline::UpscalerMode::FSR_2_0;
+        cfg.anti_aliasing = gpu::pipeline::AntiAliasingMode::MSAA_4x;
+        cfg.frame_generation = gpu::pipeline::FrameGenMode::AFMF_Extrapolation_2x;
+        cfg.console_mode = config::ConsoleMode::Docked;
 
         NEMU_TEST_ASSERT(cfg_mgr.Save("save:/custom_config.ini"), "Save custom configuration");
 
@@ -71,6 +76,10 @@ int main() {
         NEMU_TEST_ASSERT(loaded.inner_deadzone > 0.19f && loaded.inner_deadzone < 0.21f, "Loaded inner deadzone");
         NEMU_TEST_ASSERT(loaded.outer_deadzone > 0.89f && loaded.outer_deadzone < 0.91f, "Loaded outer deadzone");
         NEMU_TEST_ASSERT(loaded.cpu_backend == config::CpuBackendMode::Interpreter, "Loaded backend Interpreter");
+        NEMU_TEST_ASSERT(loaded.resolution_scale == config::ResolutionScale::SeriesX_1_5x, "Loaded resolution scale");
+        NEMU_TEST_ASSERT(loaded.upscaler == gpu::pipeline::UpscalerMode::FSR_2_0, "Loaded FSR 2.0");
+        NEMU_TEST_ASSERT(loaded.anti_aliasing == gpu::pipeline::AntiAliasingMode::MSAA_4x, "Loaded 4x MSAA");
+        NEMU_TEST_ASSERT(loaded.frame_generation == gpu::pipeline::FrameGenMode::AFMF_Extrapolation_2x, "Loaded Frame Gen");
         std::cout << "  - Custom configuration serialization & reload: PASSED" << std::endl;
     }
 

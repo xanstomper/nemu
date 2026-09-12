@@ -43,6 +43,13 @@ public:
         FaceButtonLayout layout = FaceButtonLayout::NintendoStandard,
         float inner_deadzone = 0.15f,
         float outer_deadzone = 0.95f) noexcept;
+
+    /// Map Switch HD Rumble vibration packet to Xbox dual motor rumble levels
+    static void MapVibrationToMotors(
+        const NpadVibrationValue& vib,
+        float master_strength,
+        float& out_low_motor,
+        float& out_high_motor) noexcept;
 };
 
 } // namespace nemu::core::hid

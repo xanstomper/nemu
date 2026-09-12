@@ -1,5 +1,6 @@
 #include "controller_mapping.hpp"
 #include "deadzone.hpp"
+#include <algorithm>
 
 namespace nemu::core::hid {
 
@@ -62,6 +63,17 @@ NpadCommonState ControllerMapper::MapXboxToNpad(
         .attributes = 1, // Connected / Active
         .reserved = 0
     };
+}
+
+void ControllerMapper::MapVibrationToMotors(
+    const NpadVibrationValue& vib,
+    float master_strength,
+    float& out_low_motor,
+    float& out_high_motor) noexcept {
+
+    const float strength = std::clamp(master_strength, 0.0f, 1.0f);
+    out_low_motor = std::clamp(vib.amp_low * strength, 0.0f, 1.0f);
+    out_high_motor = std::clamp(vib.amp_high * strength, 0.0f, 1.0f);
 }
 
 } // namespace nemu::core::hid

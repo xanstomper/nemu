@@ -31,8 +31,15 @@ bool XboxControllerDriver::InitializeXInput() {
     for (const char* dll : dlls) {
         HMODULE mod = LoadLibraryA(dll);
         if (mod) {
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-function-type"
+#endif
             auto get_state = reinterpret_cast<PFN_XInputGetState>(GetProcAddress(mod, "XInputGetState"));
             auto set_state = reinterpret_cast<PFN_XInputSetState>(GetProcAddress(mod, "XInputSetState"));
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
             if (get_state) {
                 xinput_module_ = mod;
                 fn_get_state_ = reinterpret_cast<void*>(get_state);
