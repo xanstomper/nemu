@@ -28,6 +28,12 @@ set(GPU_SOURCES
     shader/maxwell_shader_decoder.cpp
     shader/shader_translator.hpp
     shader/shader_translator.cpp
+    shader/hlsl_validator.hpp
+    shader/hlsl_validator.cpp
+    pipeline/pipeline_cache.hpp
+    pipeline/pipeline_cache.cpp
+    pipeline/pipeline_bridge.hpp
+    pipeline/pipeline_bridge.cpp
 )
 
 if(WIN32)

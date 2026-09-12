@@ -88,6 +88,36 @@ target_link_libraries(test_gpu PRIVATE
 target_compile_features(test_gpu PRIVATE cxx_std_20)
 add_test(NAME test_gpu COMMAND test_gpu)
 
+add_executable(test_pipeline_bridge
+    gpu/test_pipeline_bridge.cpp
+)
+
+target_include_directories(test_pipeline_bridge PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_pipeline_bridge PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_pipeline_bridge PRIVATE cxx_std_20)
+add_test(NAME test_pipeline_bridge COMMAND test_pipeline_bridge)
+
+add_executable(test_hlsl_validator
+    gpu/test_hlsl_validator.cpp
+)
+
+target_include_directories(test_hlsl_validator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_hlsl_validator PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_hlsl_validator PRIVATE cxx_std_20)
+add_test(NAME test_hlsl_validator COMMAND test_hlsl_validator)
+
 add_executable(test_audio
     audio/test_audio.cpp
 )
