@@ -18,9 +18,9 @@
 namespace nemu::core::system {
 
 namespace {
-constexpr vaddr_t STACK_TOP = 0x0080000000ULL;
-constexpr vaddr_t TLS_ADDR  = 0x0080100000ULL;
-constexpr vaddr_t EXIT_ADDR = 0x0070000000ULL;
+constexpr vaddr_t STACK_TOP = kernel::KProcess::DEFAULT_STACK_TOP - 0x1000;
+constexpr vaddr_t TLS_ADDR  = kernel::KProcess::DEFAULT_TLS_BASE;
+constexpr vaddr_t EXIT_ADDR = 0x00000000DEAD0000ULL;
 }
 
 Emulator::Emulator(const EmulatorConfig& config)
@@ -95,6 +95,8 @@ bool Emulator::Initialize() {
     // 9. Horizon Process & Virtual Memory
     process_ = std::make_shared<kernel::KProcess>(1, "SwitchProcess");
     process_->SetState(kernel::ProcessState::Running);
+    process_->GetVirtualMemory().Map(EXIT_ADDR, memory::VirtualMemory::PAGE_SIZE, memory::MemoryPermission::All);
+    process_->GetVirtualMemory().Write32(EXIT_ADDR, 0xD40000E1); // SVC #7 (svcExitProcess)
     maxwell_->SetMemory(&process_->GetVirtualMemory());
 
     // 10. GPU Device Manager & Display Compositor

@@ -470,6 +470,9 @@ void SvcDispatcher::SvcGetInfo(cpu::CpuState& state, KProcess& process) {
         case 14: // PrivilegeMode
             info_val = 0;
             break;
+        case 15: // UserExceptionPageAddress
+            info_val = 0;
+            break;
         case 18: // MesosphereVersion
             info_val = 0x00010000ULL;
             break;

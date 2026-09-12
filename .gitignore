@@ -19,6 +19,8 @@ out/
 *.appxupload
 *.msixupload
 AppPackages/
+packaging/xbox/release/
+*.key
 
 # CMake temporary files
 CMakeCache.txt

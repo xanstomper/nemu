@@ -43,24 +43,29 @@ if [[ -d "${ROOT_DIR}/keys" ]]; then
     cp "${ROOT_DIR}/keys/title.keys" "${STAGING_DIR}/title.keys" || true
 fi
 
-# 3. Create APPX Package
-echo "[3/4] Compressing into APPX package container..."
-rm -f "${OUTPUT_APPX}"
-(
-    cd "${STAGING_DIR}"
-    zip -r -9 "${OUTPUT_APPX}" ./* > /dev/null
-)
+# 3. Create Valid OPC/AppX Package Container
+echo "[3/4] Building specification-compliant AppX package container (with BlockMap & Content_Types)..."
+python3 "${ROOT_DIR}/scripts/make_appx.py" "${STAGING_DIR}" "${OUTPUT_APPX}"
+
+# Copy certificate next to appx for Xbox Device Portal installation
+cp "${ROOT_DIR}/packaging/xbox/NemuDev.cer" "${BUILD_DIR}/NemuDev.cer"
+cp "${ROOT_DIR}/packaging/xbox/NemuDev.pfx" "${BUILD_DIR}/NemuDev.pfx"
 
 # 4. Verify & Report
 echo "[4/4] Package Verification:"
 APPX_SIZE=$(du -h "${OUTPUT_APPX}" | cut -f1)
 echo "  -> Target Package: ${OUTPUT_APPX}"
 echo "  -> Package Size:   ${APPX_SIZE}"
+echo "  -> Certificate:    ${BUILD_DIR}/NemuDev.cer"
 echo ""
 echo "Package contents:"
 unzip -l "${OUTPUT_APPX}"
 echo ""
 echo "=========================================================="
-echo "  APPX PACKAGE GENERATED SUCCESSFULLY!                   "
-echo "  Ready for deployment via Xbox Device Portal (Port 11443)"
+echo "  APPX PACKAGE & CERTIFICATE GENERATED SUCCESSFULLY!     "
+echo "  Xbox Device Portal Deployment Instructions:             "
+echo "  1. Open https://<xbox-ip>:11443 in browser              "
+echo "  2. Under 'Install app', choose 'Nemu_1.0.0.0_x64.appx'  "
+echo "  3. Click Next, select certificate 'NemuDev.cer'         "
+echo "  4. Click Start / Deploy                                 "
 echo "=========================================================="
