@@ -50,6 +50,10 @@ add_library(Nemu.Kernel STATIC
     ipc/applet_service.cpp
     ipc/acc_service.hpp
     ipc/acc_service.cpp
+    ipc/pl_service.hpp
+    ipc/pl_service.cpp
+    ipc/nifm_service.hpp
+    ipc/nifm_service.cpp
 )
 
 target_include_directories(Nemu.Kernel PUBLIC

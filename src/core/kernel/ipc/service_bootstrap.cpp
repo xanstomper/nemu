@@ -12,6 +12,8 @@
 #include "audren_service.hpp"
 #include "nvdrv_service.hpp"
 #include "vi_service.hpp"
+#include "pl_service.hpp"
+#include "nifm_service.hpp"
 
 #include "core/gpu/gpu_interface.hpp"
 #include "core/gpu/nvhost/nvdevice.hpp"
@@ -40,6 +42,19 @@ std::shared_ptr<ServiceRegistry> CreateDefaultServiceRegistry(
     registry->Register(std::make_shared<AccountService>());
     registry->Register(std::make_shared<HidService>());
     registry->Register(std::make_shared<AppletManagerService>("appletOE"));
+
+    // Shared Font services (pl:u, pl:s)
+    registry->Register(std::make_shared<PlService>("pl:u"));
+    registry->Register(std::make_shared<PlService>("pl:s"));
+
+    // Network Interface Module services (nifm:u, nifm:s, nifm:a)
+    registry->Register(std::make_shared<NifmService>("nifm:u"));
+    registry->Register(std::make_shared<NifmService>("nifm:s"));
+    registry->Register(std::make_shared<NifmService>("nifm:a"));
+
+    // BSD socket services (bsd:u, bsd:s)
+    registry->Register(std::make_shared<BsdService>("bsd:u"));
+    registry->Register(std::make_shared<BsdService>("bsd:s"));
 
     // File system service.
     if (vfs) {

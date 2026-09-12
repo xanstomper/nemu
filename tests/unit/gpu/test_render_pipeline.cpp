@@ -1,6 +1,7 @@
 #include "core/gpu/null_backend.hpp"
 #include "core/gpu/maxwell_3d.hpp"
 #include "core/gpu/gpu_factory.hpp"
+#include "core/gpu/pipeline/pipeline_cache.hpp"
 #include "core/types.hpp"
 #include <iostream>
 #include <cstdlib>
@@ -8,6 +9,7 @@
 
 using namespace nemu;
 using namespace nemu::core::gpu;
+using namespace nemu::core::gpu::pipeline;
 
 #define RP_FIRST_(a, ...) a
 #define RP_ASSERT(...) \
@@ -24,6 +26,60 @@ static u32 F(float v) noexcept {
     u32 u = 0;
     __builtin_memcpy(&u, &v, sizeof(u));
     return u;
+}
+
+void TestPipelineCache() {
+    std::cout << "[Test: D3D12 Pipeline State Object (PSO) & Root Signature Cache]" << std::endl;
+
+    PipelineCache cache;
+    RP_ASSERT(cache.GetCachedPipelineCount() == 0, "initial cache empty");
+
+    PipelineStateKey key1{
+        .vs_bytecode_hash = 0x1122334455667788ULL,
+        .ps_bytecode_hash = 0x99AABBCCDDEEFF00ULL,
+        .topology = PrimitiveTopology::Triangles,
+        .cull_mode = CullMode::Back,
+        .depth_test_enable = true,
+        .depth_write_enable = true,
+        .depth_func = DepthFunc::LessEqual,
+        .blend_enable = true,
+        .src_rgb = BlendFactor::SrcAlpha,
+        .dst_rgb = BlendFactor::InvSrcAlpha,
+        .op_rgb = BlendOp::Add,
+        .src_alpha = BlendFactor::One,
+        .dst_alpha = BlendFactor::Zero,
+        .op_alpha = BlendOp::Add,
+        .num_cbufs = 2,
+        .num_textures = 1
+    };
+
+    // First compilation (cache miss)
+    RP_ASSERT(cache.GetOrCreatePipeline(key1), "compile pipeline key1");
+    RP_ASSERT(cache.GetCachedPipelineCount() == 1, "cache count 1");
+    RP_ASSERT(cache.GetCacheMisses() == 1, "cache misses 1");
+    RP_ASSERT(cache.GetCacheHits() == 0, "cache hits 0");
+
+    // Second query (cache hit)
+    RP_ASSERT(cache.GetOrCreatePipeline(key1), "retrieve cached pipeline key1");
+    RP_ASSERT(cache.GetCachedPipelineCount() == 1, "cache count stays 1");
+    RP_ASSERT(cache.GetCacheMisses() == 1, "cache misses stays 1");
+    RP_ASSERT(cache.GetCacheHits() == 1, "cache hits 1");
+
+    // Query with distinct state (cull mode Front instead of Back)
+    PipelineStateKey key2 = key1;
+    key2.cull_mode = CullMode::Front;
+    RP_ASSERT(cache.GetOrCreatePipeline(key2), "compile pipeline key2");
+    RP_ASSERT(cache.GetCachedPipelineCount() == 2, "cache count 2");
+    RP_ASSERT(cache.GetCacheMisses() == 2, "cache misses 2");
+    RP_ASSERT(cache.GetCacheHits() == 1, "cache hits stays 1");
+
+    // Clear cache
+    cache.Clear();
+    RP_ASSERT(cache.GetCachedPipelineCount() == 0, "cache cleared");
+    RP_ASSERT(cache.GetCacheHits() == 0, "hits reset");
+    RP_ASSERT(cache.GetCacheMisses() == 0, "misses reset");
+
+    std::cout << "  - D3D12 Pipeline State Object (PSO) & Root Signature Cache: PASSED" << std::endl;
 }
 
 int main() {
@@ -61,6 +117,9 @@ int main() {
     // Dump the guest-driven frame for visual verification.
     RP_ASSERT(backendPtr->DumpFramePPM("/tmp/nemu_guest_frame.ppm"), "frame dump");
     std::cout << "  - Guest-driven render pipeline (pushbuffer -> rasterize -> frame): PASSED" << std::endl;
+
+    TestPipelineCache();
+
     std::cout << "[Test: Guest-Driven Render Pipeline PASSED]" << std::endl;
     return 0;
 }

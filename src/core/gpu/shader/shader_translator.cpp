@@ -16,6 +16,17 @@ TranslatedShader ShaderTranslator::Translate(std::span<const u8> bytecode, Shade
         return out;
     }
 
+    bool has_valid_inst = false;
+    for (const auto& inst : decomp.instructions) {
+        if (inst.opcode != MaxwellOpcode::UNKNOWN) {
+            has_valid_inst = true;
+            break;
+        }
+    }
+    if (!has_valid_inst) {
+        return out;
+    }
+
     out.hlsl_source = std::move(decomp.hlsl_source);
     out.used_cbuf_banks = std::move(decomp.used_cbuf_banks);
     out.used_textures = std::move(decomp.used_textures);

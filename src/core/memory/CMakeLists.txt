@@ -4,6 +4,8 @@ add_library(Nemu.Memory STATIC
     virtual_memory.cpp
     fastmem.hpp
     fastmem.cpp
+    fastmem_exception_handler.hpp
+    fastmem_exception_handler.cpp
     address_space.hpp
     address_space.cpp
 )

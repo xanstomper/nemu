@@ -1,5 +1,6 @@
 #include "core/memory/virtual_memory.hpp"
 #include "core/memory/fastmem.hpp"
+#include "core/memory/fastmem_exception_handler.hpp"
 #include <iostream>
 #include <cstdlib>
 #include <vector>
@@ -123,6 +124,60 @@ void TestFastmemAndTiers() {
     std::cout << "  PASSED.\n";
 }
 
+void TestFastmemExceptionHandler() {
+    std::cout << "[TEST] Running TestFastmemExceptionHandler...\n";
+    auto& handler = FastmemExceptionHandler::Instance();
+    auto& fm = FastmemManager::Instance();
+
+    // Register VEH / SIGSEGV
+    NEMU_TEST_ASSERT(handler.Register());
+    NEMU_TEST_ASSERT(handler.IsRegistered());
+
+    NEMU_TEST_ASSERT(fm.Initialize(MemoryTier::Retail4GB));
+    handler.ResetStats();
+
+    uintptr_t last_guest_addr = 0;
+    FastmemAccessType last_type = FastmemAccessType::Read;
+    bool callback_called = false;
+
+    handler.SetFaultCallback([&](const FastmemFaultInfo& info) -> bool {
+        callback_called = true;
+        last_guest_addr = info.guest_address;
+        last_type = info.access_type;
+        return true; // mark recovered
+    });
+
+    // 1. Fault outside fastmem range
+    const bool out_handled = handler.SimulateFault(0x1000, FastmemAccessType::Read);
+    NEMU_TEST_ASSERT(!out_handled);
+    NEMU_TEST_ASSERT(!callback_called);
+    auto stats = handler.GetStats();
+    NEMU_TEST_ASSERT(stats.total_faults == 1);
+    NEMU_TEST_ASSERT(stats.fastmem_faults == 0);
+
+    // 2. Fault inside fastmem range (e.g. base + 0x40000)
+    const uintptr_t base = reinterpret_cast<uintptr_t>(fm.GetBase());
+    const uintptr_t target_fault = base + 0x40000;
+    const bool in_handled = handler.SimulateFault(target_fault, FastmemAccessType::Write);
+    NEMU_TEST_ASSERT(in_handled);
+    NEMU_TEST_ASSERT(callback_called);
+    NEMU_TEST_ASSERT(last_guest_addr == 0x40000);
+    NEMU_TEST_ASSERT(last_type == FastmemAccessType::Write);
+
+    stats = handler.GetStats();
+    NEMU_TEST_ASSERT(stats.total_faults == 2);
+    NEMU_TEST_ASSERT(stats.fastmem_faults == 1);
+    NEMU_TEST_ASSERT(stats.recovered_faults == 1);
+
+    // 3. Unregister and cleanup
+    handler.ClearFaultCallback();
+    handler.Unregister();
+    NEMU_TEST_ASSERT(!handler.IsRegistered());
+    fm.Shutdown();
+
+    std::cout << "  PASSED.\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "   NEMU VIRTUAL MEMORY UNIT TESTS       \n";
@@ -131,6 +186,7 @@ int main() {
     TestMappingAndPermissions();
     TestBlockAndBoundary();
     TestFastmemAndTiers();
+    TestFastmemExceptionHandler();
 
     std::cout << "ALL MEMORY UNIT TESTS PASSED SUCCESSFULLY!\n";
     return 0;

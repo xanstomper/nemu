@@ -23,6 +23,8 @@
 #include "core/kernel/ipc/audout_service.hpp"
 #include "core/kernel/ipc/applet_service.hpp"
 #include "core/kernel/ipc/acc_service.hpp"
+#include "core/kernel/ipc/pl_service.hpp"
+#include "core/kernel/ipc/nifm_service.hpp"
 #include "core/filesystem/vfs.hpp"
 #include "core/audio/null_audio_backend.hpp"
 #include "core/gpu/null_backend.hpp"
@@ -685,6 +687,39 @@ void TestAppletService() {
     const u32 running = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
     NEMU_IPC_ASSERT(running == 1);
 
+    // 4. GetPseudoDeviceId (cmd 50 on funcs)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 50, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *funcs_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const u64 pseudo_hi = ReadReply<u64>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(pseudo_hi != 0);
+
+    // 5. OpenCommonStateGetter (cmd 0 on applet_sess)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 0, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *applet_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle common_h = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(common_h != InvalidHandle);
+
+    auto common_sess = std::dynamic_pointer_cast<KClientSession>(proc->GetHandleTable().GetObject(common_h));
+    NEMU_IPC_ASSERT(common_sess != nullptr);
+
+    // 6. GetOperationMode (cmd 5 on common) -> Docked (1)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 5, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *common_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const u8 op_mode = ReadReply<u8>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(op_mode == 1); // Docked
+
+    // 7. GetPerformanceMode (cmd 6 on common) -> Boost/Docked (1)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 6, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *common_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const u32 perf_mode = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(perf_mode == 1); // Boost
+
+    // 8. GetCurrentFocusState (cmd 9 on common) -> InFocus (1)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 9, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *common_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const u8 focus = ReadReply<u8>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(focus == 1); // InFocus
+
     std::cout << "  PASSED.\n";
 }
 
@@ -753,7 +788,118 @@ void TestSetU() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 15: full default service bootstrap (matches the on-console boot path)
+// Test 15: pl:u shared font service
+// ---------------------------------------------------------------------------
+void TestPlService() {
+    std::cout << "[TEST] pl:u shared font service ...\n";
+    ServiceRegistry reg;
+    reg.Register(std::make_shared<PlService>("pl:u"));
+
+    auto proc = std::make_shared<KProcess>(1, "PlTest");
+    KThread thread(1, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+
+    auto port = reg.CreatePort("pl:u");
+    NEMU_IPC_ASSERT(port.has_value());
+    auto session = std::make_shared<KClientSession>();
+    session->SetService((*port)->GetService());
+
+    // 1. RequestSharedFont (cmd 0) for Standard font (0)
+    u32 font_type = 0;
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request),
+                 PlService::RequestSharedFont, &font_type, sizeof(font_type));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+
+    // 2. GetSharedFontLoadState (cmd 1)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request),
+                 PlService::GetSharedFontLoadState, &font_type, sizeof(font_type));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const u32 state = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(state == 1); // Loaded
+
+    // 3. GetSharedFontSize (cmd 2)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request),
+                 PlService::GetSharedFontSize, &font_type, sizeof(font_type));
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const u32 sz = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(sz > 0);
+
+    // 4. GetSharedFontSharedMemory (cmd 4)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request),
+                 PlService::GetSharedFontSharedMemory, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle shmem_h = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(shmem_h != InvalidHandle);
+
+    auto shmem_obj = std::dynamic_pointer_cast<ipc::KSharedMemory>(proc->GetHandleTable().GetObject(shmem_h));
+    NEMU_IPC_ASSERT(shmem_obj != nullptr);
+    NEMU_IPC_ASSERT(shmem_obj->GetAddress() != 0);
+
+    // Verify TrueType header in shared memory
+    u8 ttf_head[12]{};
+    NEMU_IPC_ASSERT(proc->GetVirtualMemory().ReadBlock(shmem_obj->GetAddress(), ttf_head, sizeof(ttf_head)));
+    NEMU_IPC_ASSERT(ttf_head[0] == 0x00 && ttf_head[1] == 0x01); // 0x00010000 TrueType magic
+    NEMU_IPC_ASSERT(ttf_head[4] == 0x00 && ttf_head[5] == 0x04); // 4 tables
+
+    std::cout << "  PASSED.\n";
+}
+
+// ---------------------------------------------------------------------------
+// Test 16: nifm:u network interface module
+// ---------------------------------------------------------------------------
+void TestNifmService() {
+    std::cout << "[TEST] nifm:u network interface module ...\n";
+    ServiceRegistry reg;
+    reg.Register(std::make_shared<NifmService>("nifm:u"));
+
+    auto proc = std::make_shared<KProcess>(1, "NifmTest");
+    KThread thread(1, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+
+    auto port = reg.CreatePort("nifm:u");
+    NEMU_IPC_ASSERT(port.has_value());
+    auto session = std::make_shared<KClientSession>();
+    session->SetService((*port)->GetService());
+
+    // 1. CreateGeneralService (cmd 5)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 5, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle gen_h = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(gen_h != InvalidHandle);
+
+    auto gen_sess = std::dynamic_pointer_cast<KClientSession>(proc->GetHandleTable().GetObject(gen_h));
+    NEMU_IPC_ASSERT(gen_sess != nullptr);
+
+    // 2. IsAnyInternetRequestAccepted (cmd 12 on IGeneralService) -> 0 (offline)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 12, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *gen_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const u32 accepted = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(accepted == 0);
+
+    // 3. CreateRequest (cmd 4 on IGeneralService)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 4, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *gen_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle req_h = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(req_h != InvalidHandle);
+
+    auto req_sess = std::dynamic_pointer_cast<KClientSession>(proc->GetHandleTable().GetObject(req_h));
+    NEMU_IPC_ASSERT(req_sess != nullptr);
+
+    // 4. GetRequestState (cmd 0 on IRequest) -> 1 (Complete)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 0, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *req_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const u32 req_state = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(req_state == 1);
+
+    // 5. GetSystemEventReadableHandle (cmd 2 on IRequest)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 2, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *req_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle ev_h = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(ev_h != InvalidHandle);
+
+    std::cout << "  PASSED.\n";
+}
+
+// ---------------------------------------------------------------------------
+// Test 17: full default service bootstrap (matches the on-console boot path)
 // ---------------------------------------------------------------------------
 void TestServiceBootstrap() {
     std::cout << "[TEST] CreateDefaultServiceRegistry ...\n";
@@ -773,7 +919,8 @@ void TestServiceBootstrap() {
     NEMU_IPC_ASSERT(reg && "registry created");
     // The bootstrap registers the boot-critical services.
     for (const char* name : {"sm:", "set:u", "set:sys", "time:u", "acc:u0",
-                             "appletOE", "hid", "fsp-srv", "nvdrv:a", "vi:u"}) {
+                             "appletOE", "hid", "fsp-srv", "nvdrv:a", "vi:u",
+                             "pl:u", "pl:s", "nifm:u", "bsd:u"}) {
         NEMU_IPC_ASSERT(reg->IsRegistered(name) && "bootstrap registers core service");
     }
 
@@ -946,6 +1093,8 @@ int main() {
     TestAppletService();
     TestAccountService();
     TestSetU();
+    TestPlService();
+    TestNifmService();
     TestServiceBootstrap();
     TestDomainsAndBufferDescriptors();
 
