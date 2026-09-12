@@ -90,6 +90,7 @@ public:
 
     [[nodiscard]] const std::shared_ptr<filesystem::VirtualFileSystem>& GetVfs() const noexcept { return vfs_; }
     [[nodiscard]] const std::shared_ptr<config::ConfigManager>& GetConfigManager() const noexcept { return config_manager_; }
+    [[nodiscard]] const std::shared_ptr<crypto::KeyStore>& GetKeyStore() const noexcept { return key_store_; }
     [[nodiscard]] const std::shared_ptr<gpu::IGpuBackend>& GetGpuBackend() const noexcept { return gpu_backend_; }
     [[nodiscard]] const std::shared_ptr<gpu::Maxwell3D>& GetMaxwell3D() const noexcept { return maxwell_; }
     [[nodiscard]] const std::shared_ptr<gpu::presentation::Nvnflinger>& GetNvnflinger() const noexcept { return flinger_; }

@@ -227,7 +227,9 @@ KeyStore::KeyCompleteness KeyStore::GetKeyCompleteness() const {
             c.has_key_area_key = true;
         }
     }
-    c.has_titlekek = HasKey("titlekek") || HasKey("titlekek_index");
+    c.has_titlekek = HasKey("titlekek") || HasKey("titlekek_index") ||
+                     HasKey("titlekek_00") || HasKey("titlekek_01") ||
+                     HasKey("titlekek_02") || HasKey("titlekek_03");
     for (const auto& [name, bytes] : keys_) {
         (void)bytes;
         // Title keys may be stored under the bare rights-id hex or a

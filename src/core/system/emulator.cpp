@@ -63,6 +63,26 @@ bool Emulator::Initialize() {
     key_store_ = std::make_shared<crypto::KeyStore>();
     key_store_->LoadDefaultKeys();
 
+    // Report which boot-critical keys are present so retail content loads or
+    // degrades loudly instead of failing silently. prod.keys/title.keys are
+    // user-supplied (clean-room); search NEMU_KEYS_PATH, ./save/keys,
+    // ./sdmc/switch, ./prod.keys, and ~/.switch.
+    {
+        auto kc = key_store_->GetKeyCompleteness();
+        NEMU_LOG_INFO("Crypto", "Key store: header_key={} master_key={} key_area_key={} titlekek={} title_keys={}",
+                      kc.has_header_key ? "present" : "MISSING",
+                      kc.has_master_key ? "present" : "MISSING",
+                      kc.has_key_area_key ? "present" : "MISSING",
+                      kc.has_titlekek ? "present" : "MISSING",
+                      kc.title_key_count);
+        if (!kc.has_header_key && !kc.has_key_area_key && kc.title_key_count == 0) {
+            NEMU_LOG_WARN("Crypto",
+                          "No prod.keys/title.keys found. Place your own dump at "
+                          "prod.keys / save/keys/prod.keys / sdmc/switch/prod.keys, or set "
+                          "NEMU_KEYS_PATH to decrypt retail content.");
+        }
+    }
+
     // 8. Title Loader
     title_loader_ = std::make_shared<loader::TitleLoader>(*key_store_, *vfs_);
 
