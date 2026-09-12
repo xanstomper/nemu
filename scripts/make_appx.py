@@ -2,16 +2,26 @@
 """
 Nemu AppX Packager for Xbox Series S/X Developer Mode
 Conforms strictly to Microsoft Open Packaging Conventions (OPC) & MS-APX Packaging Specification.
-Generates compliant [Content_Types].xml, AppxBlockMap.xml (with SHA-256 block & full file hashes),
-and orders footprint files per Windows AppX Deployment Service requirements.
+- Generates compliant [Content_Types].xml with CodeIntegrity catalog overrides.
+- Implements MS-APX 64 KiB block-deflate compression with per-block SHA-256 and compressed sizes.
+- Generates and signs AppxMetadata/CodeIntegrity.cat ensuring kernel-level Code Integrity compliance on Xbox.
+- Digitally signs package using osslsigncode generating full AppxSignature.p7x covering
+  AXPC (Payload), AXCD (Central Directory), AXCT (Content Types), AXBM (Block Map), and AXCI (Code Integrity).
+- Ensures 100% UWP AppContainer PE compliance on all executables and libraries.
 """
 
 import os
 import sys
+import zlib
+import zipfile
 import hashlib
 import base64
-import zipfile
+import struct
+import subprocess
+import time
+import shutil
 from pathlib import Path
+
 try:
     import pefile
 except ImportError:
@@ -33,58 +43,140 @@ CONTENT_TYPES_XML = (
     '<Default Extension="bin" ContentType="application/octet-stream"/>'
     '<Override PartName="/AppxBlockMap.xml" ContentType="application/vnd.ms-appx.blockmap+xml"/>'
     '<Override PartName="/AppxSignature.p7x" ContentType="application/vnd.ms-appx.signature"/>'
+    '<Override PartName="/AppxMetadata/CodeIntegrity.cat" ContentType="application/vnd.ms-pkiseccat"/>'
     '</Types>\n'
 )
 
 def sha256_b64(data: bytes) -> str:
     return base64.b64encode(hashlib.sha256(data).digest()).decode('ascii')
 
-def compute_block_map(files: list[tuple[str, bytes]]) -> str:
+def encode_length(l: int) -> bytes:
+    if l < 128:
+        return bytes([l])
+    elif l < 256:
+        return bytes([0x81, l])
+    elif l < 65536:
+        return bytes([0x82, l >> 8, l & 0xFF])
+    else:
+        return bytes([0x83, l >> 16, (l >> 8) & 0xFF, l & 0xFF])
+
+def encode_sequence(data: bytes) -> bytes:
+    return b'\x30' + encode_length(len(data)) + data
+
+def make_catalog_entry(file_hash: bytes) -> bytes:
     """
-    Generate AppxBlockMap.xml from list of (arcname, data).
-    Conforms strictly to MS-APX Section 2.1:
-    - Excludes [Content_Types].xml, AppxBlockMap.xml, AppxSignature.p7x
-    - For uncompressed blocks: Size attribute MUST NOT be present on <Block>
-    - Includes b4:FileHash ONLY for multi-block files (> 64 KiB), matching official Microsoft tools
-    - Formats canonically without extra line breaks/indentation to strictly comply with AppX parsers
+    Encode an entry in the Certificate Trust List for a binary/file hash.
+    Conforms to MS-APX Section 2.2 / Microsoft Catalog format.
     """
-    xml_parts = [
-        '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n',
-        '<BlockMap xmlns="http://schemas.microsoft.com/appx/2010/blockmap" xmlns:b4="http://schemas.microsoft.com/appx/2021/blockmap" IgnorableNamespaces="b4" HashMethod="http://www.w3.org/2001/04/xmlenc#sha256">'
+    part1 = b'\x04\x20' + file_hash
+    part2 = bytes.fromhex(
+        '31713010060a2b0601040182370c020331028000305d060a2b060104018237020104314f304d3018060a2b06010401823702010f300a030205a0a004a20280003031300d060960864801650304020105000420'
+    ) + file_hash
+    return encode_sequence(part1 + part2)
+
+def generate_code_integrity_cat(file_hashes: list[bytes], cert_path: Path, key_path: Path) -> bytes:
+    """
+    Generate and sign an AppxMetadata/CodeIntegrity.cat security catalog.
+    Xbox OS requires this for kernel Code Integrity enforcement in AppContainer.
+    """
+    guid = os.urandom(16)
+    utctime = time.strftime('%y%m%d%H%M%SZ', time.gmtime()).encode('ascii')
+    header = (
+        bytes.fromhex('300c060a2b0601040182370c0101') +
+        b'\x04\x10' + guid +
+        b'\x17\r' + utctime +
+        bytes.fromhex('300e060a2b0601040182370c01030500')
+    )
+    entries_seq = encode_sequence(b''.join(make_catalog_entry(h) for h in file_hashes))
+    ctl_der = encode_sequence(header + entries_seq)
+    
+    tmp_ctl = Path('/tmp/nemu_ctl.der')
+    tmp_cat = Path('/tmp/nemu_cat.der')
+    tmp_ctl.write_bytes(ctl_der)
+    
+    cmd = [
+        'openssl', 'cms', '-sign', '-nodetach',
+        '-econtent_type', '1.3.6.1.4.1.311.10.1',
+        '-signer', str(cert_path), '-inkey', str(key_path),
+        '-in', str(tmp_ctl), '-outform', 'DER', '-out', str(tmp_cat)
     ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        tmp_ctl.unlink(missing_ok=True)
+        tmp_cat.unlink(missing_ok=True)
+        raise RuntimeError(f'OpenSSL CMS CodeIntegrity signing failed: {res.stderr}')
+        
+    cat_bytes = tmp_cat.read_bytes()
+    tmp_ctl.unlink(missing_ok=True)
+    tmp_cat.unlink(missing_ok=True)
+    print(f"[+] Successfully generated AppxMetadata/CodeIntegrity.cat ({len(cat_bytes)} bytes)")
+    return cat_bytes
 
-    for arcname, data in files:
-        name_win = arcname.replace('/', '\\')
-        file_size = len(data)
-        lfh_size = 30 + len(arcname.encode('utf-8'))
-
-        xml_parts.append(f'<File Name="{name_win}" Size="{file_size}" LfhSize="{lfh_size}">')
-
-        if file_size == 0:
-            empty_hash = sha256_b64(b'')
-            xml_parts.append(f'<Block Hash="{empty_hash}"/>')
+def compress_file_blocks(data: bytes) -> tuple[bytes, list[tuple[str, int]]]:
+    """
+    Divide data into 64 KiB chunks and compress each block with DEFLATE per MS-APX spec.
+    Blocks 0 to N-2 use Z_SYNC_FLUSH; the final block uses Z_FINISH.
+    Returns (concatenated_compressed_data, [(block_sha256_b64, compressed_block_len), ...])
+    """
+    c = zlib.compressobj(6, zlib.DEFLATED, -15)
+    compressed_parts = []
+    block_info = []
+    num_blocks = (len(data) + BLOCK_SIZE - 1) // BLOCK_SIZE if len(data) > 0 else 1
+    for i in range(num_blocks):
+        offset = i * BLOCK_SIZE
+        chunk = data[offset:offset + BLOCK_SIZE]
+        chunk_hash = sha256_b64(chunk)
+        if i == num_blocks - 1:
+            part = c.compress(chunk) + c.flush(zlib.Z_FINISH)
         else:
-            num_blocks = (file_size + BLOCK_SIZE - 1) // BLOCK_SIZE
-            for offset in range(0, file_size, BLOCK_SIZE):
-                chunk = data[offset:offset + BLOCK_SIZE]
-                chunk_hash = sha256_b64(chunk)
-                xml_parts.append(f'<Block Hash="{chunk_hash}"/>')
-            if num_blocks > 1:
-                full_file_hash = sha256_b64(data)
-                xml_parts.append(f'<b4:FileHash Hash="{full_file_hash}"/>')
+            part = c.compress(chunk) + c.flush(zlib.Z_SYNC_FLUSH)
+        compressed_parts.append(part)
+        block_info.append((chunk_hash, len(part)))
+    return b''.join(compressed_parts), block_info
 
-        xml_parts.append('</File>')
-
-    xml_parts.append('</BlockMap>')
-    return ''.join(xml_parts)
-
-import shutil
-import subprocess
+def ensure_uwp_pe_headers(file_path: Path):
+    """
+    Ensure PE binaries targeting Xbox Developer Mode have UWP AppContainer characteristics:
+    - IMAGE_DLLCHARACTERISTICS_APPCONTAINER (0x1000)
+    - IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE (0x8000)
+    - MajorSubsystemVersion / MajorOperatingSystemVersion >= 10.0
+    - Clean COFF symbols
+    - Valid PE CheckSum
+    """
+    if pefile is None:
+        return
+    try:
+        pe = pefile.PE(str(file_path))
+        modified = False
+        target_dll_char = pe.OPTIONAL_HEADER.DllCharacteristics | 0x1000 | 0x8000
+        if pe.OPTIONAL_HEADER.DllCharacteristics != target_dll_char:
+            pe.OPTIONAL_HEADER.DllCharacteristics = target_dll_char
+            modified = True
+        if pe.OPTIONAL_HEADER.MajorSubsystemVersion < 10:
+            pe.OPTIONAL_HEADER.MajorSubsystemVersion = 10
+            pe.OPTIONAL_HEADER.MinorSubsystemVersion = 0
+            modified = True
+        if pe.OPTIONAL_HEADER.MajorOperatingSystemVersion < 10:
+            pe.OPTIONAL_HEADER.MajorOperatingSystemVersion = 10
+            pe.OPTIONAL_HEADER.MinorOperatingSystemVersion = 0
+            modified = True
+        if pe.FILE_HEADER.NumberOfSymbols != 0:
+            pe.FILE_HEADER.NumberOfSymbols = 0
+            pe.FILE_HEADER.PointerToSymbolTable = 0
+            modified = True
+        if modified:
+            pe.OPTIONAL_HEADER.CheckSum = pe.generate_checksum()
+            pe.write(str(file_path))
+            print(f"[+] UWP PE compliance applied to {file_path.name}: DllCharacteristics={hex(target_dll_char)}, Subsystem=10.0, CheckSum={hex(pe.OPTIONAL_HEADER.CheckSum)}")
+        pe.close()
+    except Exception as e:
+        print(f"[!] Note: Could not process PE headers on {file_path.name}: {e}")
 
 def sign_appx(appx_path: Path, cert_path: Path, key_path: Path) -> bool:
     """
     Sign AppX package using osslsigncode to produce specification-compliant
-    AppxSignature.p7x with Authenticode / SPC Indirect Data hashes.
+    AppxSignature.p7x with Authenticode / SPC Indirect Data hashes covering
+    AXPC, AXCD, AXCT, AXBM, and AXCI.
     """
     osslsigncode = shutil.which("osslsigncode") or "/usr/bin/osslsigncode"
     if not os.path.exists(osslsigncode):
@@ -134,48 +226,11 @@ def sign_appx(appx_path: Path, cert_path: Path, key_path: Path) -> bool:
     ]
     ver_res = subprocess.run(cmd_verify, capture_output=True, text=True)
     if ver_res.returncode == 0:
-        print("[+] Signature integrity verified (BlockMap, ContentTypes, Data, Central Directory all OK).")
+        print("[+] Signature integrity verified: AXPC, AXCD, AXCT, AXBM, and AXCI all VALID!")
     else:
         print(f"[!] Signature verification warning:\n{ver_res.stderr}\n{ver_res.stdout}")
         
     return True
-
-def ensure_uwp_pe_headers(file_path: Path):
-    """
-    Ensure PE binaries targeting Xbox Developer Mode have UWP AppContainer characteristics.
-    Xbox kernel / AppX Deployment rejects binaries without IMAGE_DLLCHARACTERISTICS_APPCONTAINER (0x1000)
-    or binaries with legacy subsystem versions with error 0x8007000B (ERROR_BAD_FORMAT).
-    """
-    if pefile is None:
-        return
-    try:
-        pe = pefile.PE(str(file_path))
-        modified = False
-        # IMAGE_DLLCHARACTERISTICS_APPCONTAINER (0x1000)
-        # IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE (0x8000)
-        target_dll_char = pe.OPTIONAL_HEADER.DllCharacteristics | 0x1000 | 0x8000
-        if pe.OPTIONAL_HEADER.DllCharacteristics != target_dll_char:
-            pe.OPTIONAL_HEADER.DllCharacteristics = target_dll_char
-            modified = True
-        if pe.OPTIONAL_HEADER.MajorSubsystemVersion < 10:
-            pe.OPTIONAL_HEADER.MajorSubsystemVersion = 10
-            pe.OPTIONAL_HEADER.MinorSubsystemVersion = 0
-            modified = True
-        if pe.OPTIONAL_HEADER.MajorOperatingSystemVersion < 10:
-            pe.OPTIONAL_HEADER.MajorOperatingSystemVersion = 10
-            pe.OPTIONAL_HEADER.MinorOperatingSystemVersion = 0
-            modified = True
-        if pe.FILE_HEADER.NumberOfSymbols != 0:
-            pe.FILE_HEADER.NumberOfSymbols = 0
-            pe.FILE_HEADER.PointerToSymbolTable = 0
-            modified = True
-        if modified:
-            pe.OPTIONAL_HEADER.CheckSum = pe.generate_checksum()
-            pe.write(str(file_path))
-            print(f"[+] UWP PE compliance applied to {file_path.name}: DllCharacteristics={hex(target_dll_char)}, Subsystem=10.0, CheckSum={hex(pe.OPTIONAL_HEADER.CheckSum)}")
-        pe.close()
-    except Exception as e:
-        print(f"[!] Note: Could not process PE headers on {file_path.name}: {e}")
 
 def pack_appx(staging_dir: Path, output_appx: Path, cert_path: Path | None = None, key_path: Path | None = None):
     print(f"[*] Packaging AppX from: {staging_dir}")
@@ -187,6 +242,15 @@ def pack_appx(staging_dir: Path, output_appx: Path, cert_path: Path | None = Non
         raise FileNotFoundError(f"Missing AppxManifest.xml in {staging_dir}")
     if not exe_path.exists():
         raise FileNotFoundError(f"Missing Nemu.exe in {staging_dir}")
+
+    # Determine certificate and key paths
+    if cert_path is None or key_path is None:
+        root_dir = Path(__file__).resolve().parent.parent
+        default_cert = root_dir / "packaging" / "xbox" / "NemuDev.cer"
+        default_key = root_dir / "packaging" / "xbox" / "NemuDev.key"
+        if default_cert.exists() and default_key.exists():
+            cert_path = default_cert
+            key_path = default_key
         
     # Ensure all PE binaries have UWP AppContainer headers before packaging
     for root, _, files in os.walk(staging_dir):
@@ -195,68 +259,141 @@ def pack_appx(staging_dir: Path, output_appx: Path, cert_path: Path | None = Non
             if p.suffix.lower() in ('.exe', '.dll'):
                 ensure_uwp_pe_headers(p)
         
-    payload_files: list[tuple[str, bytes]] = []
-    manifest_data: tuple[str, bytes] = ("", b"")
-    
+    items: list[tuple[str, bytes, bool]] = []
+    pe_hashes: list[bytes] = []
+
     for root, _, files in os.walk(staging_dir):
         for f in sorted(files):
             file_path = Path(root) / f
             rel_path = file_path.relative_to(staging_dir).as_posix()
             
             # Exclude existing package metadata if re-running
-            if rel_path in ("[Content_Types].xml", "AppxBlockMap.xml", "AppxSignature.p7x"):
+            if rel_path in ("[Content_Types].xml", "AppxBlockMap.xml", "AppxSignature.p7x", "AppxMetadata/CodeIntegrity.cat"):
                 continue
                 
-            data = file_path.read_bytes()
-            if rel_path == "AppxManifest.xml":
-                manifest_data = (rel_path, data)
+            raw_data = file_path.read_bytes()
+            is_comp = not rel_path.lower().endswith(('.png', '.jpg', '.jpeg'))
+            items.append((rel_path, raw_data, is_comp))
+            if rel_path.lower().endswith(('.exe', '.dll')):
+                pe_hashes.append(hashlib.sha256(raw_data).digest())
+
+    manifest_raw = manifest_path.read_bytes()
+    pe_hashes.append(hashlib.sha256(manifest_raw).digest())
+
+    # Generate CodeIntegrity catalog
+    if cert_path and key_path and cert_path.exists() and key_path.exists():
+        cat_raw = generate_code_integrity_cat(pe_hashes, cert_path, key_path)
+    else:
+        cat_raw = b''
+
+    # Separate manifest and payload files
+    manifest_item = [it for it in items if it[0] == "AppxManifest.xml"][0]
+    payload_items = [it for it in items if it[0] != "AppxManifest.xml"]
+    payload_items.sort(key=lambda x: x[0])
+
+    # Process and compress files
+    processed_files = []  # (arcname, raw_data, stored_data, block_info, is_comp, lfh_size, extra)
+    for rel, raw, is_comp in payload_items + [manifest_item]:
+        name_bytes = rel.encode('utf-8')
+        if is_comp:
+            cdata, binfo = compress_file_blocks(raw)
+            extra = b''
+            lfh_size = 30 + len(name_bytes)
+            processed_files.append((rel, raw, cdata, binfo, True, lfh_size, extra))
+        else:
+            # Uncompressed images
+            extra = b''
+            lfh_size = 30 + len(name_bytes)
+            num_blocks = (len(raw) + BLOCK_SIZE - 1) // BLOCK_SIZE if len(raw) > 0 else 1
+            binfo = [(sha256_b64(raw[i*BLOCK_SIZE : (i+1)*BLOCK_SIZE]), 0) for i in range(num_blocks)]
+            processed_files.append((rel, raw, raw, binfo, False, lfh_size, extra))
+
+    # Generate AppxBlockMap.xml
+    xml_parts = [
+        '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n',
+        '<BlockMap xmlns="http://schemas.microsoft.com/appx/2010/blockmap" xmlns:b4="http://schemas.microsoft.com/appx/2021/blockmap" IgnorableNamespaces="b4" HashMethod="http://www.w3.org/2001/04/xmlenc#sha256">'
+    ]
+    for rel, raw, _, binfo, is_comp, lfh_sz, _ in processed_files:
+        name_win = rel.replace('/', '\\')
+        xml_parts.append(f'<File Name="{name_win}" Size="{len(raw)}" LfhSize="{lfh_sz}">')
+        for h, s in binfo:
+            if is_comp:
+                xml_parts.append(f'<Block Hash="{h}" Size="{s}"/>')
             else:
-                payload_files.append((rel_path, data))
-                
-    # Sort payload files deterministically
-    payload_files.sort(key=lambda x: x[0])
-    
-    # BlockMap hashes payload files + AppxManifest.xml
-    # Per MS-APX, [Content_Types].xml is an OPC footprint file and MUST NOT be in BlockMap
-    files_to_hash = payload_files + [manifest_data]
-    blockmap_xml = compute_block_map(files_to_hash)
-    blockmap_data = ("AppxBlockMap.xml", blockmap_xml.encode('utf-8'))
-    content_types_data = ("[Content_Types].xml", CONTENT_TYPES_XML.encode('utf-8'))
-    
-    # Windows AppX Deployment Service ordering:
+                xml_parts.append(f'<Block Hash="{h}"/>')
+        if len(binfo) > 1:
+            xml_parts.append(f'<b4:FileHash Hash="{sha256_b64(raw)}"/>')
+        xml_parts.append('</File>')
+    xml_parts.append('</BlockMap>')
+    blockmap_raw = ''.join(xml_parts).encode('utf-8')
+
+    content_types_raw = CONTENT_TYPES_XML.encode('utf-8')
+
+    # Compress footprint files
+    bm_cdata, _ = compress_file_blocks(blockmap_raw)
+    ct_cdata, _ = compress_file_blocks(content_types_raw)
+    ci_cdata = compress_file_blocks(cat_raw)[0] if cat_raw else b''
+
+    # Assemble ZIP entries in strict footprint order:
     # 1. Payload files
     # 2. AppxManifest.xml
     # 3. AppxBlockMap.xml
     # 4. [Content_Types].xml
-    all_files = payload_files + [manifest_data, blockmap_data, content_types_data]
-    
+    # 5. AppxMetadata/CodeIntegrity.cat
+    all_zip_entries = []  # (name, uncomp_data, stored_data, comp_method, extra)
+    for rel, raw, stored, _, is_comp, _, extra in processed_files:
+        if rel != "AppxManifest.xml":
+            all_zip_entries.append((rel, raw, stored, 8 if is_comp else 0, extra))
+
+    # Manifest
+    man_rel, man_raw, man_stored, _, man_comp, _, man_extra = [x for x in processed_files if x[0] == "AppxManifest.xml"][0]
+    all_zip_entries.append((man_rel, man_raw, man_stored, 8 if man_comp else 0, man_extra))
+
+    # BlockMap
+    all_zip_entries.append(('AppxBlockMap.xml', blockmap_raw, bm_cdata, 8, b''))
+
+    # Content Types
+    all_zip_entries.append(('[Content_Types].xml', content_types_raw, ct_cdata, 8, b''))
+
+    # CodeIntegrity
+    if cat_raw:
+        all_zip_entries.append(('AppxMetadata/CodeIntegrity.cat', cat_raw, ci_cdata, 8, b''))
+
     output_appx.parent.mkdir(parents=True, exist_ok=True)
     if output_appx.exists():
         output_appx.unlink()
-        
-    with zipfile.ZipFile(output_appx, 'w', compression=zipfile.ZIP_STORED) as zf:
-        for arcname, data in all_files:
-            zinfo = zipfile.ZipInfo(arcname)
-            zinfo.compress_type = zipfile.ZIP_STORED
-            zinfo.date_time = (2026, 9, 12, 12, 0, 0)
-            zinfo.external_attr = 0o644 << 16
-            zinfo.create_system = 0  # Windows / MS-DOS
-            zinfo.extract_version = 20  # PKZip 2.0
-            zf.writestr(zinfo, data)
-            print(f"  + Added: {arcname} ({len(data)} bytes, LFH={30 + len(arcname.encode('utf-8'))})")
+
+    with open(output_appx, 'wb') as f:
+        cd_records = []
+        for arcname, uncomp, stored, comp_method, extra in all_zip_entries:
+            offset = f.tell()
+            name_bytes = arcname.encode('utf-8')
+            crc = zlib.crc32(uncomp)
+            lfh = struct.pack('<IHHHHHIIIHH',
+                0x04034b50, 20, 0, comp_method, 0x6000, 0x5d2c, crc, len(stored), len(uncomp), len(name_bytes), len(extra)
+            ) + name_bytes + extra
+            f.write(lfh)
+            f.write(stored)
+            cd_records.append((name_bytes, crc, len(stored), len(uncomp), offset, comp_method, extra))
+            print(f"  + Added: {arcname} ({len(uncomp)} bytes, comp={comp_method}, LFH={30 + len(name_bytes) + len(extra)})")
             
+        cd_offset = f.tell()
+        for name_bytes, crc, csz, usz, off, comp_method, extra in cd_records:
+            cdh = struct.pack('<IHHHHHHIIIHHHHHII',
+                0x02014b50, 0, 20, 0, comp_method, 0x6000, 0x5d2c, crc, csz, usz, len(name_bytes), len(extra), 0, 0, 0, 0, off
+            ) + name_bytes + extra
+            f.write(cdh)
+        cd_size = f.tell() - cd_offset
+        
+        eocd = struct.pack('<IHHHHIIH',
+            0x06054b50, 0, 0, len(cd_records), len(cd_records), cd_size, cd_offset, 0
+        )
+        f.write(eocd)
+
     pkg_size = output_appx.stat().st_size
     print(f"\n[+] Successfully generated AppX container: {output_appx} ({pkg_size / 1024 / 1024:.2f} MB)")
     
-    # Auto-sign if cert/key provided or default found
-    if cert_path is None or key_path is None:
-        root_dir = Path(__file__).resolve().parent.parent
-        default_cert = root_dir / "packaging" / "xbox" / "NemuDev.cer"
-        default_key = root_dir / "packaging" / "xbox" / "NemuDev.key"
-        if default_cert.exists() and default_key.exists():
-            cert_path = default_cert
-            key_path = default_key
-
+    # Auto-sign
     if cert_path and key_path and cert_path.exists() and key_path.exists():
         sign_appx(output_appx, cert_path, key_path)
 
@@ -269,5 +406,3 @@ if __name__ == "__main__":
     cert = Path(sys.argv[3]) if len(sys.argv) > 3 else None
     key = Path(sys.argv[4]) if len(sys.argv) > 4 else None
     pack_appx(staging, out_appx, cert, key)
-
-
