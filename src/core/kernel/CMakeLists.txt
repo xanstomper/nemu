@@ -30,6 +30,10 @@ add_library(Nemu.Kernel STATIC
     ipc/time_service.cpp
     ipc/set_sys_service.hpp
     ipc/set_sys_service.cpp
+    ipc/set_u_service.hpp
+    ipc/set_u_service.cpp
+    ipc/service_bootstrap.hpp
+    ipc/service_bootstrap.cpp
     ipc/hid_service.hpp
     ipc/hid_service.cpp
     ipc/nvdrv_service.hpp

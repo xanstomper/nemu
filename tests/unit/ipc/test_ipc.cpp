@@ -12,6 +12,8 @@
 #include "core/kernel/ipc/sm_service.hpp"
 #include "core/kernel/ipc/time_service.hpp"
 #include "core/kernel/ipc/set_sys_service.hpp"
+#include "core/kernel/ipc/set_u_service.hpp"
+#include "core/kernel/ipc/service_bootstrap.hpp"
 #include "core/kernel/ipc/hid_service.hpp"
 #include "core/kernel/ipc/k_shared_memory.hpp"
 #include "core/kernel/ipc/nvdrv_service.hpp"
@@ -714,6 +716,217 @@ void TestAccountService() {
     std::cout << "  PASSED.\n";
 }
 
+// ---------------------------------------------------------------------------
+// Test 14: set:u service (System Settings user interface)
+// ---------------------------------------------------------------------------
+void TestSetU() {
+    std::cout << "[TEST] set:u service ...\n";
+    auto reg = std::make_shared<ServiceRegistry>();
+    reg->Register(std::make_shared<SmService>());
+    reg->Register(std::make_shared<SetUserService>());
+    SvcDispatcher::InitializeIpc(reg);
+
+    auto proc = std::make_shared<KProcess>(99, "SetUTest");
+    KThread thread(99, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+    auto sm_session = std::make_shared<KClientSession>();
+    sm_session->SetService(reg->Find("sm:"));
+
+    // sm: GetServiceHandle("set:u")
+    WriteServiceNameRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request),
+                            SmService::GetServiceHandle, "set:u");
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *sm_session, *reg) ==
+                    static_cast<u32>(IpcResult::Success));
+    const Handle setu_port = ReadReply<Handle>(proc->GetVirtualMemory());
+    NEMU_IPC_ASSERT(setu_port != InvalidHandle);
+
+    auto session = std::make_shared<KClientSession>();
+    session->SetService((*reg->CreatePort("set:u"))->GetService());
+
+    // GetLanguageCode (cmd 1)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request),
+                 SetUserService::GetLanguageCode, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, *reg) == static_cast<u32>(IpcResult::Success));
+    const u32 lang = ReadReply<u32>(proc->GetVirtualMemory());
+    NEMU_IPC_ASSERT(lang == 0x656E);
+
+    std::cout << "  PASSED.\n";
+}
+
+// ---------------------------------------------------------------------------
+// Test 15: full default service bootstrap (matches the on-console boot path)
+// ---------------------------------------------------------------------------
+void TestServiceBootstrap() {
+    std::cout << "[TEST] CreateDefaultServiceRegistry ...\n";
+    auto audio = std::make_shared<audio::NullAudioBackend>();
+    audio->Initialize(48000, 2);
+    auto gpu = std::make_shared<gpu::NullGpuBackend>();
+    gpu->Initialize(1280, 720);
+    auto maxwell = std::make_shared<gpu::Maxwell3D>(gpu);
+    auto vfs = std::make_shared<filesystem::VirtualFileSystem>();
+
+    auto proc = std::make_shared<KProcess>(100, "BootstrapTest");
+    KThread thread(100, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+    auto dev_mgr = std::make_shared<gpu::nvhost::NvDeviceManager>(maxwell, &proc->GetVirtualMemory());
+    auto flinger = std::make_shared<gpu::presentation::Nvnflinger>(gpu);
+
+    auto reg = CreateDefaultServiceRegistry(vfs, audio, gpu, dev_mgr, flinger);
+    NEMU_IPC_ASSERT(reg && "registry created");
+    // The bootstrap registers the boot-critical services.
+    for (const char* name : {"sm:", "set:u", "set:sys", "time:u", "acc:u0",
+                             "appletOE", "hid", "fsp-srv", "nvdrv:a", "vi:u"}) {
+        NEMU_IPC_ASSERT(reg->IsRegistered(name) && "bootstrap registers core service");
+    }
+
+    // Verify a full sm: get-handle round trip against the bootstrapped registry.
+    SvcDispatcher::InitializeIpc(reg);
+    auto sm_session = std::make_shared<KClientSession>();
+    sm_session->SetService(reg->Find("sm:"));
+    WriteServiceNameRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request),
+                            SmService::GetServiceHandle, "time:u");
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *sm_session, *reg) ==
+                    static_cast<u32>(IpcResult::Success));
+    const Handle port = ReadReply<Handle>(proc->GetVirtualMemory());
+    NEMU_IPC_ASSERT(port != InvalidHandle);
+
+    gpu->Shutdown();
+    std::cout << "  PASSED.\n";
+}
+
+// ---------------------------------------------------------------------------
+// Test 16: IPC Domains and Buffer Descriptors
+// ---------------------------------------------------------------------------
+void TestDomainsAndBufferDescriptors() {
+    std::cout << "[TEST] IPC Domains and Buffer Descriptors ...\n";
+
+    ServiceRegistry reg;
+    auto time_service = std::make_shared<TimeService>();
+    reg.Register(time_service);
+
+    auto proc = std::make_shared<KProcess>(200, "DomainTest");
+    KThread thread(200, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+
+    auto session = std::make_shared<KClientSession>();
+    session->SetService(time_service);
+
+    NEMU_IPC_ASSERT(!session->IsDomain());
+
+    // 1. Test ControlCmd (0x6) to ConvertSessionToDomain (x_id == 0)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::ControlCmd), 0, nullptr, 0);
+    u32 res = DispatchSyncRequest(*proc, thread, *session, reg);
+    NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+    NEMU_IPC_ASSERT(session->IsDomain());
+
+    // The root object ID (1) is returned at Payload(4) = offset 0x1C
+    u32 root_id = ReadReply<u32>(proc->GetVirtualMemory(), static_cast<size_t>(IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(root_id == 1);
+    NEMU_IPC_ASSERT(session->GetDomainObject(root_id) == time_service);
+
+    // 2. Register a secondary domain object
+    auto set_service = std::make_shared<SetSysService>();
+    u32 set_obj_id = session->RegisterDomainObject(set_service);
+    NEMU_IPC_ASSERT(set_obj_id == 2);
+    NEMU_IPC_ASSERT(session->GetDomainObject(set_obj_id) == set_service);
+
+    // 3. Test DomainRequest (0x4) to SendMessage (domain_cmd = 1) to set_obj_id
+    struct DomainHeader {
+        u8 domain_cmd{1};
+        u8 pad[3]{};
+        u32 domain_obj_id{2};
+    } domain_hdr;
+    domain_hdr.domain_cmd = 1;
+    domain_hdr.domain_obj_id = set_obj_id;
+
+    // Send SetSysService::GetColorSetId (cmd 0)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::DomainRequest),
+                 SetSysService::GetColorSetId, &domain_hdr, sizeof(domain_hdr));
+    res = DispatchSyncRequest(*proc, thread, *session, reg);
+    NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+
+    // 4. Test DomainRequest (0x4) CloseVirtualHandle (domain_cmd = 2) for set_obj_id
+    domain_hdr.domain_cmd = 2;
+    domain_hdr.domain_obj_id = set_obj_id;
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::DomainRequest),
+                 0, &domain_hdr, sizeof(domain_hdr));
+    res = DispatchSyncRequest(*proc, thread, *session, reg);
+    NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+    NEMU_IPC_ASSERT(session->GetDomainObject(set_obj_id) == nullptr);
+
+    // 5. Test Buffer Descriptors parsing
+    {
+        alignas(8) u8 cmd_buf[0x100]{};
+        u32 w0 = static_cast<u32>(IpcCommandType::Request) | (1u << 16) | (1u << 20) | (1u << 24) | (1u << 28);
+        u32 w1 = (2u << 10);
+        std::memcpy(cmd_buf + 0, &w0, 4);
+        std::memcpy(cmd_buf + 4, &w1, 4);
+
+        size_t off = 8;
+        // Type X (2 words):
+        u32 x_w0 = (0u << 16) | (0x01u << 24) | 0x100u;
+        u32 x_w1 = 0x80000000u;
+        std::memcpy(cmd_buf + off, &x_w0, 4); off += 4;
+        std::memcpy(cmd_buf + off, &x_w1, 4); off += 4;
+
+        // Type A (3 words):
+        u32 a_w0 = 0x200u;
+        u32 a_w1 = 0x20000000u;
+        u32 a_w2 = 1u | (0u << 24) | (0u << 28);
+        std::memcpy(cmd_buf + off, &a_w0, 4); off += 4;
+        std::memcpy(cmd_buf + off, &a_w1, 4); off += 4;
+        std::memcpy(cmd_buf + off, &a_w2, 4); off += 4;
+
+        // Type B (3 words):
+        u32 b_w0 = 0x300u;
+        u32 b_w1 = 0x30000000u;
+        u32 b_w2 = 2u | (0u << 24) | (0u << 28);
+        std::memcpy(cmd_buf + off, &b_w0, 4); off += 4;
+        std::memcpy(cmd_buf + off, &b_w1, 4); off += 4;
+        std::memcpy(cmd_buf + off, &b_w2, 4); off += 4;
+
+        // Type W (3 words):
+        u32 w_w0 = 0x400u;
+        u32 w_w1 = 0x40000000u;
+        u32 w_w2 = 3u | (0u << 24) | (0u << 28);
+        std::memcpy(cmd_buf + off, &w_w0, 4); off += 4;
+        std::memcpy(cmd_buf + off, &w_w1, 4); off += 4;
+        std::memcpy(cmd_buf + off, &w_w2, 4); off += 4;
+
+        // Type C (2 words):
+        u32 c_w0 = 0x50000000u;
+        u32 c_w1 = (0x500u << 16);
+        std::memcpy(cmd_buf + off, &c_w0, 4); off += 4;
+        std::memcpy(cmd_buf + off, &c_w1, 4); off += 4;
+
+        IpcRequestReader reader(cmd_buf);
+        auto descs = reader.GetBufferDescriptors();
+        NEMU_IPC_ASSERT(descs.size() == 5);
+
+        NEMU_IPC_ASSERT(descs[0].type == IpcBufferType::X_Pointer);
+        NEMU_IPC_ASSERT(descs[0].size == 0x100);
+        NEMU_IPC_ASSERT(descs[0].address == 0x180000000ULL);
+
+        NEMU_IPC_ASSERT(descs[1].type == IpcBufferType::A_Send);
+        NEMU_IPC_ASSERT(descs[1].size == 0x200);
+        NEMU_IPC_ASSERT(descs[1].address == 0x20000000ULL);
+        NEMU_IPC_ASSERT(descs[1].flags == 1);
+
+        NEMU_IPC_ASSERT(descs[2].type == IpcBufferType::B_Receive);
+        NEMU_IPC_ASSERT(descs[2].size == 0x300);
+        NEMU_IPC_ASSERT(descs[2].address == 0x30000000ULL);
+        NEMU_IPC_ASSERT(descs[2].flags == 2);
+
+        NEMU_IPC_ASSERT(descs[3].type == IpcBufferType::W_Exchange);
+        NEMU_IPC_ASSERT(descs[3].size == 0x400);
+        NEMU_IPC_ASSERT(descs[3].address == 0x40000000ULL);
+        NEMU_IPC_ASSERT(descs[3].flags == 3);
+
+        NEMU_IPC_ASSERT(descs[4].type == IpcBufferType::C_Receive);
+        NEMU_IPC_ASSERT(descs[4].size == 0x500);
+        NEMU_IPC_ASSERT(descs[4].address == 0x50000000ULL);
+    }
+
+    std::cout << "  PASSED.\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "   NEMU HORIZON OS IPC ENGINE TESTS     \n";
@@ -732,6 +945,9 @@ int main() {
     TestAudoutService();
     TestAppletService();
     TestAccountService();
+    TestSetU();
+    TestServiceBootstrap();
+    TestDomainsAndBufferDescriptors();
 
     std::cout << "ALL IPC TESTS PASSED SUCCESSFULLY!\n";
     return 0;

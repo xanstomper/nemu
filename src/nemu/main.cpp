@@ -6,6 +6,10 @@
 #include "core/kernel/k_process.hpp"
 #include "core/kernel/k_thread.hpp"
 #include "core/kernel/svc.hpp"
+#include "core/kernel/ipc/service_bootstrap.hpp"
+#include "core/kernel/ipc/service_registry.hpp"
+#include "core/gpu/nvhost/nvdevice.hpp"
+#include "core/gpu/presentation/nvnflinger.hpp"
 #include "core/loader/nro.hpp"
 #include "core/loader/nso.hpp"
 #include "core/loader/title_loader.hpp"
@@ -62,7 +66,7 @@ int main(int argc, char** argv) {
     // 4. Initialize Direct3D 12 / Null GPU Backend
     auto gpu_backend = gpu::GpuFactory::CreateBackend(cfg.render_width, cfg.render_height);
     NEMU_LOG_INFO("GPU", "Graphics Engine initialized: {}", gpu_backend->GetBackendName());
-    gpu::Maxwell3D maxwell(gpu_backend);
+    auto maxwell = std::make_shared<gpu::Maxwell3D>(gpu_backend);
 
     // 5. Initialize XAudio2 / Null Audio Backend
     auto audio_backend = audio::AudioFactory::CreateBackend(48000, 2);
@@ -115,6 +119,25 @@ int main(int argc, char** argv) {
     auto process = std::make_shared<kernel::KProcess>(1, "SwitchProcess");
     process->SetState(kernel::ProcessState::Running);
     memory::VirtualMemory& memory = process->GetVirtualMemory();
+
+    // 9a. Bootstrap the Horizon HLE service registry and hand it to the SVC
+    // dispatcher. This is what lets a guest (svcConnectToPort / sm:
+    // GetServiceHandle) actually obtain service handles at boot.
+    {
+        // `vfs` is a stack object that outlives the registry's use inside
+        // main(); alias it through a non-owning shared_ptr (no-op deleter).
+        auto vfs_alias = std::shared_ptr<filesystem::VirtualFileSystem>(&vfs, [](auto*) {});
+        auto device_manager = std::make_shared<gpu::nvhost::NvDeviceManager>(maxwell, &memory);
+        auto flinger = std::make_shared<gpu::presentation::Nvnflinger>(gpu_backend);
+        auto registry = kernel::ipc::CreateDefaultServiceRegistry(
+            vfs_alias,
+            audio_backend,
+            gpu_backend,
+            device_manager,
+            flinger);
+        kernel::SvcDispatcher::InitializeIpc(registry);
+        NEMU_LOG_INFO("IPC", "Horizon HLE service registry ready ({}) service(s)", registry->Count());
+    }
 
     vaddr_t entry_point = 0;
     bool is_nro = true;
@@ -203,7 +226,7 @@ int main(int argc, char** argv) {
         (1 << 16) | 0x036C, // ClearSurface
         0x00000001
     };
-    maxwell.SubmitPushbuffer(clear_pushbuffer);
+    maxwell->SubmitPushbuffer(clear_pushbuffer);
     gpu_backend->EndFrame();
     gpu_backend->Present();
 
