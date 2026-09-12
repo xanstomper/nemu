@@ -77,7 +77,20 @@ int main() {
     NEMU_TEST_ASSERT(emu.GetState() == EmulatorState::Running, "State is Running after Resume");
     std::cout << "  - Pause / Resume lifecycle: PASSED" << std::endl;
 
-    // 5. Test Clean Shutdown
+    // 5. Test Save State & Load State
+    emu.GetMainThread()->GetCpuState().SetX(5, 0x1337BEEFULL);
+    NEMU_TEST_ASSERT(emu.SaveState(2), "Save state slot 2 must succeed");
+
+    // Modify CPU state
+    emu.GetMainThread()->GetCpuState().SetX(5, 0xDEADBEEFULL);
+    NEMU_TEST_ASSERT(emu.GetMainThread()->GetCpuState().GetX(5) == 0xDEADBEEFULL, "CPU register modified");
+
+    // Restore CPU state from slot 2
+    NEMU_TEST_ASSERT(emu.LoadState(2), "Load state slot 2 must succeed");
+    NEMU_TEST_ASSERT(emu.GetMainThread()->GetCpuState().GetX(5) == 0x1337BEEFULL, "CPU register restored from state");
+    std::cout << "  - Save State / Load State serialization: PASSED" << std::endl;
+
+    // 6. Test Clean Shutdown
     emu.Shutdown();
     NEMU_TEST_ASSERT(emu.GetState() == EmulatorState::Terminated, "State is Terminated after Shutdown");
     std::cout << "  - Clean shutdown: PASSED" << std::endl;

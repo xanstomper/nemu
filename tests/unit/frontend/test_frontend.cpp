@@ -258,6 +258,171 @@ int main() {
         std::cout << "  - Switch Game Options (+) modal overlay & per-game settings: PASSED" << std::endl;
     }
 
+    // Test 9: RetroArch-style Recursive Directory Scanner
+    {
+        const auto roms_dir = test_dir / "sdmc" / "switch_games";
+        std::filesystem::create_directories(roms_dir / "indies", ec);
+        const std::string dummy_rom = "dummy_hk_content";
+        std::span<const u8> rom_data(reinterpret_cast<const u8*>(dummy_rom.data()), dummy_rom.size());
+        vfs.WriteFile("sdmc:/switch_games/indies/hollow_knight.nsp", rom_data);
+        vfs.WriteFile("sdmc:/switch_games/celeste.xci", rom_data);
+
+        fe.ScanDirectory("sdmc:/switch_games");
+        const auto& lib = fe.GetLibrary();
+        bool found_hk = false;
+        bool found_celeste = false;
+        for (const auto& g : lib) {
+            if (g.virtual_path.find("hollow_knight.nsp") != std::string::npos) {
+                found_hk = true;
+                NEMU_TEST_ASSERT(g.title == "Hollow Knight", "Recognized title name Hollow Knight");
+                NEMU_TEST_ASSERT(g.title_id == 0x0100BF900806A000ULL, "Recognized Hollow Knight Title ID");
+                NEMU_TEST_ASSERT(g.format_badge == "[NSP]", "Format badge [NSP]");
+            }
+            if (g.virtual_path.find("celeste.xci") != std::string::npos) {
+                found_celeste = true;
+                NEMU_TEST_ASSERT(g.format_badge == "[XCI]", "Format badge [XCI]");
+            }
+        }
+        NEMU_TEST_ASSERT(found_hk, "Found scanned hollow_knight.nsp in library");
+        NEMU_TEST_ASSERT(found_celeste, "Found scanned celeste.xci in library");
+        std::cout << "  - RetroArch recursive ROM scanner with auto-detection: PASSED" << std::endl;
+    }
+
+    // Test 10: RetroArch Persistent Playlist (save:/playlist.txt)
+    {
+        fe.SavePlaylist();
+
+        // Instantiate secondary frontend and verify playlist restoration
+        XboxFrontend fe2(vfs, config);
+        fe2.LoadPlaylist();
+        const auto& lib2 = fe2.GetLibrary();
+        bool restored_hk = false;
+        for (const auto& g : lib2) {
+            if (g.title == "Hollow Knight") {
+                restored_hk = true;
+                NEMU_TEST_ASSERT(g.title_id == 0x0100BF900806A000ULL, "Restored Title ID matches");
+            }
+        }
+        NEMU_TEST_ASSERT(restored_hk, "Playlist successfully restored Hollow Knight");
+        std::cout << "  - RetroArch persistent playlist save/load across reboots: PASSED" << std::endl;
+    }
+
+    // Test 11: In-Game RetroArch Quick Menu Toggle, Navigation & Commands
+    {
+        NEMU_TEST_ASSERT(!fe.IsQuickMenuOpen(), "Quick Menu initially closed");
+
+        // Toggle open via Back button
+        core::hid::XboxGamepadState input{};
+        input.back = true;
+        NEMU_TEST_ASSERT(fe.ProcessInGameInput(input), "Back button processed");
+        NEMU_TEST_ASSERT(fe.IsQuickMenuOpen(), "Quick Menu opened via Back button");
+
+        input.back = false;
+        fe.ProcessInGameInput(input);
+        NEMU_TEST_ASSERT(fe.IsQuickMenuOpen(), "Quick Menu remains open after button release");
+
+        // Toggle closed via L3 + R3 stick clicks
+        input.lsb = true;
+        input.rsb = true;
+        NEMU_TEST_ASSERT(fe.ProcessInGameInput(input), "L3+R3 combo processed");
+        NEMU_TEST_ASSERT(!fe.IsQuickMenuOpen(), "Quick Menu toggled closed via L3+R3");
+
+        input.lsb = false;
+        input.rsb = false;
+        fe.ProcessInGameInput(input);
+
+        // Re-open with Back
+        input.back = true;
+        fe.ProcessInGameInput(input);
+        input.back = false;
+        fe.ProcessInGameInput(input);
+        NEMU_TEST_ASSERT(fe.IsQuickMenuOpen(), "Quick Menu reopened");
+        NEMU_TEST_ASSERT(fe.GetQuickMenuRow() == 0, "Row 0: Resume Game");
+
+        // Navigate down to Row 1 (Restart Game)
+        input.dpad_down = true;
+        fe.ProcessInGameInput(input);
+        input.dpad_down = false;
+        fe.ProcessInGameInput(input);
+        NEMU_TEST_ASSERT(fe.GetQuickMenuRow() == 1, "Moved to Row 1 (Restart Game)");
+
+        // Press A -> Triggers restart request
+        input.a = true;
+        fe.ProcessInGameInput(input);
+        input.a = false;
+        fe.ProcessInGameInput(input);
+        NEMU_TEST_ASSERT(fe.ConsumeRestartRequested(), "Restart request triggered and consumed");
+        NEMU_TEST_ASSERT(!fe.ConsumeRestartRequested(), "Restart request one-shot");
+
+        // Reopen Quick Menu
+        input.back = true;
+        fe.ProcessInGameInput(input);
+        input.back = false;
+        fe.ProcessInGameInput(input);
+        NEMU_TEST_ASSERT(fe.IsQuickMenuOpen(), "Quick Menu reopened");
+
+        // Navigate to Row 4 (State Slot)
+        for (int i = 0; i < 4; ++i) {
+            input.dpad_down = true;
+            fe.ProcessInGameInput(input);
+            input.dpad_down = false;
+            fe.ProcessInGameInput(input);
+        }
+        NEMU_TEST_ASSERT(fe.GetQuickMenuRow() == 4, "Moved to Row 4 (State Slot)");
+        NEMU_TEST_ASSERT(fe.GetStateSlot() == 0, "Initial slot is 0");
+
+        // Right -> slot 1
+        input.dpad_right = true;
+        fe.ProcessInGameInput(input);
+        input.dpad_right = false;
+        fe.ProcessInGameInput(input);
+        NEMU_TEST_ASSERT(fe.GetStateSlot() == 1, "State slot incremented to 1");
+
+        // Left -> slot 0
+        input.dpad_left = true;
+        fe.ProcessInGameInput(input);
+        input.dpad_left = false;
+        fe.ProcessInGameInput(input);
+        NEMU_TEST_ASSERT(fe.GetStateSlot() == 0, "State slot decremented to 0");
+
+        // Left again -> wraps to slot 9
+        input.dpad_left = true;
+        fe.ProcessInGameInput(input);
+        input.dpad_left = false;
+        fe.ProcessInGameInput(input);
+        NEMU_TEST_ASSERT(fe.GetStateSlot() == 9, "State slot wrapped to 9");
+
+        // Navigate to Row 8 (Close Content)
+        for (int i = 0; i < 4; ++i) {
+            input.dpad_down = true;
+            fe.ProcessInGameInput(input);
+            input.dpad_down = false;
+            fe.ProcessInGameInput(input);
+        }
+        NEMU_TEST_ASSERT(fe.GetQuickMenuRow() == 8, "Moved to Row 8 (Close Content)");
+
+        // Press A -> Close content requested and menu closed
+        input.a = true;
+        fe.ProcessInGameInput(input);
+        input.a = false;
+        fe.ProcessInGameInput(input);
+        NEMU_TEST_ASSERT(fe.ConsumeCloseGameRequested(), "Close game requested");
+        NEMU_TEST_ASSERT(!fe.IsQuickMenuOpen(), "Quick Menu closed upon returning to Eden UI");
+
+        std::cout << "  - In-Game RetroArch Quick Menu navigation, slots & close content: PASSED" << std::endl;
+    }
+
+    // Test 12: In-Game RetroArch Quick Menu Rendering pass
+    {
+        core::gpu::NullGpuBackend null_gpu;
+        NEMU_TEST_ASSERT(null_gpu.Initialize(1280, 720), "Initialize null GPU");
+        fe.SetQuickMenuOpen(true);
+        fe.RenderQuickMenu(null_gpu);
+        NEMU_TEST_ASSERT(null_gpu.GetStats().draw_calls > 0, "RenderQuickMenu issued draw calls");
+        null_gpu.Shutdown();
+        std::cout << "  - In-Game RetroArch Quick Menu rendering pass: PASSED" << std::endl;
+    }
+
     // Clean up
     std::filesystem::remove_all(test_dir, ec);
 

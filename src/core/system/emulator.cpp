@@ -276,6 +276,61 @@ void Emulator::Stop() {
     state_ = EmulatorState::Stopped;
 }
 
+bool Emulator::SaveState(u32 slot) {
+    if (!process_ || !main_thread_ || !save_manager_) return false;
+    struct Header {
+        char magic[4]{'N', 'S', 'A', 'V'};
+        u32 version{1};
+        u64 frame_count{0};
+        u64 total_instructions{0};
+    } hdr;
+    hdr.frame_count = frame_count_;
+    hdr.total_instructions = total_instructions_;
+
+    const auto& cpu = main_thread_->GetCpuState();
+    std::vector<u8> state_data(sizeof(Header) + sizeof(cpu::CpuState));
+    std::memcpy(state_data.data(), &hdr, sizeof(Header));
+    std::memcpy(state_data.data() + sizeof(Header), &cpu, sizeof(cpu::CpuState));
+
+    std::string filename = "slot_" + std::to_string(slot) + ".sav";
+    u64 title_id = process_->GetTitleId();
+    if (title_id == 0) title_id = 0x0100000000010000ULL;
+    bool ok = save_manager_->WriteSaveData(title_id, filename, state_data);
+    NEMU_LOG_INFO("System", "Saved state slot {} (success={})", slot, ok);
+    return ok;
+}
+
+bool Emulator::LoadState(u32 slot) {
+    if (!process_ || !main_thread_ || !save_manager_) return false;
+    std::string filename = "slot_" + std::to_string(slot) + ".sav";
+    u64 title_id = process_->GetTitleId();
+    if (title_id == 0) title_id = 0x0100000000010000ULL;
+    auto data = save_manager_->ReadSaveData(title_id, filename);
+    if (!data) return false;
+
+    struct Header {
+        char magic[4];
+        u32 version;
+        u64 frame_count;
+        u64 total_instructions;
+    };
+    if (data->size() < sizeof(Header) + sizeof(cpu::CpuState)) return false;
+
+    Header hdr{};
+    std::memcpy(&hdr, data->data(), sizeof(Header));
+    if (std::memcmp(hdr.magic, "NSAV", 4) != 0) return false;
+
+    frame_count_ = hdr.frame_count;
+    total_instructions_ = hdr.total_instructions;
+
+    cpu::CpuState cpu{};
+    std::memcpy(&cpu, data->data() + sizeof(Header), sizeof(cpu::CpuState));
+    main_thread_->GetCpuState() = cpu;
+
+    NEMU_LOG_INFO("System", "Loaded state slot {} (frame={})", slot, frame_count_);
+    return true;
+}
+
 void Emulator::PollInput() {
     if (!controller_driver_ || !hid_manager_) return;
 

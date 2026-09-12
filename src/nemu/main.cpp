@@ -128,12 +128,95 @@ int main(int argc, char** argv) {
         // Check if user requested to launch a game from carousel
         auto launch_req = frontend.ConsumeLaunchRequest();
         if (launch_req) {
-            NEMU_LOG_INFO("Frontend", "Launching requested title: {}", *launch_req);
-            if (emulator.LoadTitle(*launch_req)) {
-                emulator.Run();
-                NEMU_LOG_INFO("Frontend", "Emulation concluded; returning to Eden UI Home Screen");
-                frontend.RefreshLibrary();
+            std::string current_title = *launch_req;
+            NEMU_LOG_INFO("Frontend", "Launching requested title: {}", current_title);
+
+            while (g_app_running && !current_title.empty()) {
+                if (!emulator.LoadTitle(current_title)) {
+                    NEMU_LOG_ERROR("Frontend", "Failed to load title: {}", current_title);
+                    break;
+                }
+                emulator.Start();
+
+                bool reload_requested = false;
+                while (g_app_running && (emulator.GetState() == system::EmulatorState::Running ||
+                                         emulator.GetState() == system::EmulatorState::Paused ||
+                                         frontend.IsQuickMenuOpen())) {
+#ifdef _WIN32
+                    MSG in_game_msg;
+                    while (PeekMessageW(&in_game_msg, nullptr, 0, 0, PM_REMOVE)) {
+                        if (in_game_msg.message == WM_QUIT) {
+                            g_app_running = false;
+                            emulator.Stop();
+                            break;
+                        }
+                        TranslateMessage(&in_game_msg);
+                        DispatchMessageW(&in_game_msg);
+                    }
+                    if (!g_app_running) break;
+#endif
+                    // Poll Xbox controller input
+                    core::hid::XboxGamepadState in_game_input{};
+                    if (controller) {
+                        auto polled = controller->Poll(0);
+                        if (polled) {
+                            in_game_input = *polled;
+                        }
+                    }
+
+                    // Process input through frontend (handles Quick Menu toggle, navigation, buttons)
+                    frontend.ProcessInGameInput(in_game_input);
+
+                    if (frontend.IsQuickMenuOpen()) {
+                        // RetroArch Quick Menu overlay active: pause game execution & render menu
+                        if (emulator.GetState() == system::EmulatorState::Running) {
+                            emulator.Pause();
+                        }
+                        frontend.RenderQuickMenu(*emulator.GetGpuBackend());
+
+                        if (frontend.ConsumeRestartRequested()) {
+                            NEMU_LOG_INFO("Frontend", "QuickMenu: Restarting current title");
+                            emulator.Stop();
+                            reload_requested = true;
+                            break;
+                        }
+                        if (frontend.ConsumeCloseGameRequested()) {
+                            NEMU_LOG_INFO("Frontend", "QuickMenu: Closing content");
+                            emulator.Stop();
+                            break;
+                        }
+                        if (frontend.ConsumeSaveStateRequested()) {
+                            emulator.SaveState(frontend.GetStateSlot());
+                        }
+                        if (frontend.ConsumeLoadStateRequested()) {
+                            emulator.LoadState(frontend.GetStateSlot());
+                        }
+
+                        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                        continue;
+                    }
+
+                    // Quick Menu closed: ensure emulator resumed
+                    if (emulator.GetState() == system::EmulatorState::Paused) {
+                        emulator.Resume();
+                    }
+
+                    // Step emulation frame quantum
+                    if (!emulator.StepFrame()) {
+                        break;
+                    }
+
+                    // ~60 FPS pacing
+                    std::this_thread::sleep_for(std::chrono::microseconds(16666));
+                }
+
+                if (!reload_requested) {
+                    break;
+                }
             }
+
+            NEMU_LOG_INFO("Frontend", "Emulation concluded; returning to Eden UI Home Screen");
+            frontend.RefreshLibrary();
         }
 
         // Render Eden UI frame

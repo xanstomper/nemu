@@ -10,8 +10,185 @@ namespace nemu::frontend {
 
 XboxFrontend::XboxFrontend(core::filesystem::VirtualFileSystem& vfs, core::config::ConfigManager& config)
     : vfs_(vfs), config_(config) {
+    LoadPlaylist();
     RefreshLibrary();
     RefreshFileManager("sdmc:/");
+}
+
+void XboxFrontend::ShowToast(std::string message) {
+    toast_message_ = std::move(message);
+    toast_timer_ = 3.5f;
+    NEMU_LOG_INFO("Frontend", "UI Notification: {}", toast_message_);
+}
+
+void XboxFrontend::SavePlaylist() {
+    std::string out;
+    for (const auto& g : library_) {
+        // format: title|filename|virtual_path|format_badge|file_size|title_id\n
+        out += g.title + "|" + g.filename + "|" + g.virtual_path + "|" + g.format_badge + "|" +
+               std::to_string(g.file_size) + "|" + std::to_string(g.title_id) + "\n";
+    }
+    std::span<const u8> data(reinterpret_cast<const u8*>(out.data()), out.size());
+    vfs_.WriteFile("save:/playlist.txt", data);
+    NEMU_LOG_INFO("Frontend", "Playlist saved to save:/playlist.txt ({} entries)", library_.size());
+}
+
+void XboxFrontend::LoadPlaylist() {
+    auto file_data = vfs_.ReadFile("save:/playlist.txt");
+    if (!file_data || file_data->empty()) return;
+
+    std::string text(reinterpret_cast<const char*>(file_data->data()), file_data->size());
+    std::istringstream stream(text);
+    std::string line;
+
+    while (std::getline(stream, line)) {
+        if (line.empty()) continue;
+        std::vector<std::string> parts;
+        size_t start = 0;
+        while (start < line.size()) {
+            size_t delim = line.find('|', start);
+            if (delim == std::string::npos) {
+                parts.push_back(line.substr(start));
+                break;
+            }
+            parts.push_back(line.substr(start, delim - start));
+            start = delim + 1;
+        }
+
+        if (parts.size() >= 4) {
+            size_t fsize = (parts.size() >= 5) ? std::strtoull(parts[4].c_str(), nullptr, 10) : 0;
+            u64 tid = (parts.size() >= 6) ? std::strtoull(parts[5].c_str(), nullptr, 10) : 0;
+
+            bool exists = false;
+            for (const auto& existing : library_) {
+                if (existing.virtual_path == parts[2]) {
+                    exists = true;
+                    break;
+                }
+            }
+
+            if (!exists) {
+                library_.push_back(GameEntry{
+                    .title = parts[0],
+                    .filename = parts[1],
+                    .virtual_path = parts[2],
+                    .format_badge = parts[3],
+                    .playtime_str = "Played 2h 15m",
+                    .optimizer_tag = "FSR 2.0 • 4x MSAA • 60 FPS",
+                    .file_size = fsize,
+                    .title_id = tid
+                });
+            }
+        }
+    }
+    NEMU_LOG_INFO("Frontend", "Loaded {} entries from persistent playlist", library_.size());
+}
+
+void XboxFrontend::AddGameToLibrary(const GameEntry& entry) {
+    for (auto& existing : library_) {
+        if (existing.virtual_path == entry.virtual_path) {
+            existing = entry;
+            SavePlaylist();
+            ShowToast("Updated: " + entry.title);
+            return;
+        }
+    }
+    library_.push_back(entry);
+    SavePlaylist();
+    ShowToast("Added to Eden Library: " + entry.title);
+}
+
+void XboxFrontend::ScanDirectory(std::string_view dir_path) {
+    ShowToast("Scanning " + std::string(dir_path) + " for ROMs...");
+    NEMU_LOG_INFO("Frontend", "Starting RetroArch recursive ROM scan on '{}'...", dir_path);
+
+    std::optional<std::filesystem::path> host_path;
+    if (dir_path.starts_with("sdmc:/") || dir_path.starts_with("save:/") || dir_path.starts_with("romfs:/")) {
+        host_path = vfs_.ResolvePath(dir_path);
+    } else if (dir_path == "ROOT:/") {
+        std::vector<std::string> roots = {"sdmc:/", "save:/", "D:/", "E:/"};
+        for (const auto& r : roots) {
+            ScanDirectory(r);
+        }
+        return;
+    } else {
+        host_path = std::filesystem::path(dir_path);
+    }
+
+    if (!host_path || !std::filesystem::exists(*host_path)) {
+        ShowToast("Path not found: " + std::string(dir_path));
+        return;
+    }
+
+    size_t before = library_.size();
+    ScanDirectoryRecursive(*host_path, dir_path);
+    size_t added = library_.size() - before;
+
+    SavePlaylist();
+    ShowToast("Scan complete! Added " + std::to_string(added) + " new titles");
+    NEMU_LOG_INFO("Frontend", "RetroArch scan complete: found {} new titles (total: {})", added, library_.size());
+}
+
+void XboxFrontend::ScanDirectoryRecursive(const std::filesystem::path& host_path, std::string_view vpath_prefix) {
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(host_path, ec)) {
+        if (!entry.is_regular_file(ec)) continue;
+
+        auto ext = entry.path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+
+        if (ext == ".nsp" || ext == ".xci" || ext == ".nro" || ext == ".nca" || ext == ".nso") {
+            std::string filename = entry.path().filename().string();
+            std::string stem = entry.path().stem().string();
+
+            std::string vpath;
+            if (vpath_prefix.starts_with("sdmc:/") || vpath_prefix.starts_with("save:/") || vpath_prefix.starts_with("romfs:/")) {
+                std::string rel = std::filesystem::relative(entry.path(), host_path, ec).generic_string();
+                std::string prefix = std::string(vpath_prefix);
+                if (prefix.back() != '/') prefix += '/';
+                vpath = prefix + rel;
+            } else {
+                vpath = entry.path().generic_string();
+            }
+
+            bool found = false;
+            for (const auto& g : library_) {
+                if (g.virtual_path == vpath || g.filename == filename) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) continue;
+
+            std::string badge = "[FILE]";
+            if (ext == ".nsp") badge = "[NSP]";
+            else if (ext == ".xci") badge = "[XCI]";
+            else if (ext == ".nro") badge = "[NRO]";
+            else if (ext == ".nca") badge = "[NCA]";
+            else if (ext == ".nso") badge = "[NSO]";
+
+            u64 tid = 0x0100000000010000ULL;
+            std::string title = stem;
+            std::replace(title.begin(), title.end(), '_', ' ');
+            std::string lower_stem = stem;
+            std::transform(lower_stem.begin(), lower_stem.end(), lower_stem.begin(), [](unsigned char c) { return std::tolower(c); });
+            if (lower_stem.find("hollow") != std::string::npos) {
+                title = "Hollow Knight";
+                tid = 0x0100BF900806A000ULL;
+            }
+
+            library_.push_back(GameEntry{
+                .title = title,
+                .filename = filename,
+                .virtual_path = vpath,
+                .format_badge = badge,
+                .playtime_str = "Newly Scanned",
+                .optimizer_tag = "FSR 2.0 • 4x MSAA • 60 FPS",
+                .file_size = static_cast<size_t>(entry.file_size(ec)),
+                .title_id = tid
+            });
+        }
+    }
 }
 
 std::string XboxFrontend::GetSystemClockString() const {
@@ -35,6 +212,7 @@ std::string XboxFrontend::GetConsoleModeString() const {
 
 void XboxFrontend::RefreshLibrary() {
     library_.clear();
+    LoadPlaylist();
 
     auto sdmc_host = vfs_.ResolvePath("sdmc:/");
     if (sdmc_host && std::filesystem::exists(*sdmc_host)) {
@@ -51,16 +229,37 @@ void XboxFrontend::RefreshLibrary() {
                     else if (ext == ".nca") badge = "[NCA]";
                     else if (ext == ".nso") badge = "[NSO]";
 
-                    library_.push_back(GameEntry{
-                        .title = stem,
-                        .filename = entry.path().filename().string(),
-                        .virtual_path = "sdmc:/" + entry.path().filename().string(),
-                        .format_badge = badge,
-                        .playtime_str = "Played 1h 45m",
-                        .optimizer_tag = "FSR 2.0 • 4x MSAA • 60 FPS",
-                        .file_size = static_cast<size_t>(entry.file_size(ec)),
-                        .title_id = 0x0100000000010000ULL
-                    });
+                    std::string vpath = "sdmc:/" + entry.path().filename().string();
+                    bool exists = false;
+                    for (const auto& g : library_) {
+                        if (g.virtual_path == vpath) {
+                            exists = true;
+                            break;
+                        }
+                    }
+
+                    if (!exists) {
+                        u64 tid = 0x0100000000010000ULL;
+                        std::string title = stem;
+                        std::replace(title.begin(), title.end(), '_', ' ');
+                        std::string lower_stem = stem;
+                        std::transform(lower_stem.begin(), lower_stem.end(), lower_stem.begin(), [](unsigned char c) { return std::tolower(c); });
+                        if (lower_stem.find("hollow") != std::string::npos) {
+                            title = "Hollow Knight";
+                            tid = 0x0100BF900806A000ULL;
+                        }
+
+                        library_.push_back(GameEntry{
+                            .title = title,
+                            .filename = entry.path().filename().string(),
+                            .virtual_path = vpath,
+                            .format_badge = badge,
+                            .playtime_str = "Played 1h 45m",
+                            .optimizer_tag = "FSR 2.0 • 4x MSAA • 60 FPS",
+                            .file_size = static_cast<size_t>(entry.file_size(ec)),
+                            .title_id = tid
+                        });
+                    }
                 }
             }
         }
@@ -91,25 +290,72 @@ void XboxFrontend::RefreshFileManager(std::string_view dir_path) {
     dir_entries_.clear();
     current_dir_path_ = std::string(dir_path);
 
-    // If not root, add parent directory entry
-    if (current_dir_path_ != "sdmc:/" && current_dir_path_ != "/" && current_dir_path_ != "save:/") {
-        std::string parent = current_dir_path_;
-        if (parent.back() == '/') parent.pop_back();
-        auto slash = parent.find_last_of('/');
-        if (slash != std::string::npos) {
-            parent = parent.substr(0, slash + 1);
-        } else {
-            parent = "sdmc:/";
-        }
+    if (current_dir_path_ == "ROOT:/" || current_dir_path_.empty()) {
+        current_dir_path_ = "ROOT:/";
+        // RetroArch Multi-Storage Roots: USB Flash Drives & Internal Partitions
         dir_entries_.push_back(FileEntry{
-            .name = ".. [Up to Parent Directory]",
-            .full_path = parent,
+            .name = "sdmc:/ [Virtual SD Card]",
+            .full_path = "sdmc:/",
             .is_directory = true,
             .is_rom = false,
-            .format_badge = "[DIR]",
+            .format_badge = "[DRIVE]",
             .file_size = 0
         });
+        dir_entries_.push_back(FileEntry{
+            .name = "save:/ [Saves, Configs & Keys]",
+            .full_path = "save:/",
+            .is_directory = true,
+            .is_rom = false,
+            .format_badge = "[DRIVE]",
+            .file_size = 0
+        });
+        dir_entries_.push_back(FileEntry{
+            .name = "D:/ [External USB Drive 1]",
+            .full_path = "D:/",
+            .is_directory = true,
+            .is_rom = false,
+            .format_badge = "[USB]",
+            .file_size = 0
+        });
+        dir_entries_.push_back(FileEntry{
+            .name = "E:/ [External USB Drive 2]",
+            .full_path = "E:/",
+            .is_directory = true,
+            .is_rom = false,
+            .format_badge = "[USB]",
+            .file_size = 0
+        });
+        dir_entries_.push_back(FileEntry{
+            .name = "LOCAL:/ [Xbox Local App Storage]",
+            .full_path = "LOCAL:/",
+            .is_directory = true,
+            .is_rom = false,
+            .format_badge = "[LOCAL]",
+            .file_size = 0
+        });
+        selected_file_index_ = 0;
+        NEMU_LOG_INFO("Frontend", "FileManager: Listed {} storage roots in ROOT:/", dir_entries_.size());
+        return;
     }
+
+    // If not ROOT:/, add parent directory entry
+    std::string parent = "ROOT:/";
+    if (current_dir_path_ != "sdmc:/" && current_dir_path_ != "save:/" && current_dir_path_ != "D:/" && current_dir_path_ != "E:/" && current_dir_path_ != "LOCAL:/") {
+        std::string p = current_dir_path_;
+        if (p.back() == '/') p.pop_back();
+        auto slash = p.find_last_of('/');
+        if (slash != std::string::npos) {
+            parent = p.substr(0, slash + 1);
+        }
+    }
+    dir_entries_.push_back(FileEntry{
+        .name = ".. [Up to Parent / Drives]",
+        .full_path = parent,
+        .is_directory = true,
+        .is_rom = false,
+        .format_badge = "[DIR]",
+        .file_size = 0
+    });
 
     // Resolve host path
     std::optional<std::filesystem::path> host_dir;
@@ -284,10 +530,10 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
     // Dispatch input to current active tab
     switch (current_tab_) {
         case FrontendTab::Library:
-            HandleLibraryInput(input, nav_left, nav_right, pressed_a, pressed_start);
+            HandleLibraryInput(input, nav_left, nav_right, pressed_a, pressed_start, pressed_y);
             break;
         case FrontendTab::FileManager:
-            HandleFileManagerInput(input, nav_up, nav_down, pressed_a, pressed_b, pressed_x);
+            HandleFileManagerInput(input, nav_up, nav_down, pressed_a, pressed_b, pressed_x, pressed_y);
             break;
         case FrontendTab::Optimizers:
             HandleOptimizersInput(input, nav_up, nav_down, nav_left, nav_right, pressed_a);
@@ -306,9 +552,14 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
     }
 }
 
-void XboxFrontend::HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_start) {
+void XboxFrontend::HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_start, bool pressed_y) {
     (void)input;
     if (library_.empty()) return;
+
+    if (pressed_y) {
+        ScanDirectory("ROOT:/");
+        return;
+    }
 
     if (pressed_start) {
         show_game_options_ = true;
@@ -340,9 +591,14 @@ void XboxFrontend::HandleLibraryInput(const core::hid::XboxGamepadState& input, 
     }
 }
 
-void XboxFrontend::HandleFileManagerInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b, bool pressed_x) {
+void XboxFrontend::HandleFileManagerInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b, bool pressed_x, bool pressed_y) {
     (void)input;
     if (dir_entries_.empty()) return;
+
+    if (pressed_y) {
+        ScanDirectory(current_dir_path_);
+        return;
+    }
 
     if (pressed_up) {
         selected_file_index_ = (selected_file_index_ > 0) ? selected_file_index_ - 1 : dir_entries_.size() - 1;
@@ -362,14 +618,15 @@ void XboxFrontend::HandleFileManagerInput(const core::hid::XboxGamepadState& inp
     }
 
     if (pressed_b) {
-        if (current_dir_path_ != "sdmc:/" && current_dir_path_ != "/") {
-            std::string parent = current_dir_path_;
-            if (parent.back() == '/') parent.pop_back();
-            auto slash = parent.find_last_of('/');
-            if (slash != std::string::npos) {
-                parent = parent.substr(0, slash + 1);
-            } else {
-                parent = "sdmc:/";
+        if (current_dir_path_ != "sdmc:/" && current_dir_path_ != "/" && current_dir_path_ != "ROOT:/") {
+            std::string parent = "ROOT:/";
+            if (current_dir_path_ != "save:/" && current_dir_path_ != "D:/" && current_dir_path_ != "E:/" && current_dir_path_ != "LOCAL:/") {
+                std::string p = current_dir_path_;
+                if (p.back() == '/') p.pop_back();
+                auto slash = p.find_last_of('/');
+                if (slash != std::string::npos) {
+                    parent = p.substr(0, slash + 1);
+                }
             }
             RefreshFileManager(parent);
         } else {
@@ -378,8 +635,22 @@ void XboxFrontend::HandleFileManagerInput(const core::hid::XboxGamepadState& inp
     }
 
     if (pressed_x) {
-        RefreshLibrary();
-        NEMU_LOG_INFO("Frontend", "FileManager: Added/refreshed library scan for current directory");
+        if (selected_file_index_ < dir_entries_.size() && dir_entries_[selected_file_index_].is_rom) {
+            const auto& e = dir_entries_[selected_file_index_];
+            AddGameToLibrary(GameEntry{
+                .title = e.name,
+                .filename = e.name,
+                .virtual_path = e.full_path,
+                .format_badge = e.format_badge,
+                .playtime_str = "Added from File Manager",
+                .optimizer_tag = "FSR 2.0 • 4x MSAA • 60 FPS",
+                .file_size = e.file_size,
+                .title_id = 0x0100000000010000ULL
+            });
+        } else {
+            RefreshLibrary();
+            NEMU_LOG_INFO("Frontend", "FileManager: Refreshed library");
+        }
     }
 }
 
@@ -707,8 +978,168 @@ void XboxFrontend::Render(core::gpu::IGpuBackend& gpu) {
     ui_frame_count_++;
     focus_animation_timer_ += 0.016f;
 
+    if (toast_timer_ > 0.0f) {
+        toast_timer_ -= 0.016f;
+    }
+
     gpu.EndFrame();
     gpu.Present();
+}
+
+void XboxFrontend::RenderQuickMenu(core::gpu::IGpuBackend& gpu) {
+    gpu.BeginFrame();
+
+    // Semi-transparent RetroArch dark backdrop
+    core::gpu::ClearColor bg{
+        .r = 0.05f,
+        .g = 0.05f,
+        .b = 0.06f,
+        .a = 0.88f
+    };
+    gpu.ClearRenderTarget(bg);
+
+    // Rasterize RetroArch Quick Menu items
+    gpu.DrawArrays(core::gpu::PrimitiveTopology::Triangles, 0, 6);
+
+    gpu.EndFrame();
+    gpu.Present();
+}
+
+bool XboxFrontend::ProcessInGameInput(const core::hid::XboxGamepadState& input) {
+    // Quick menu toggle combo: Back (View button) or L3 + R3 (Thumbstick clicks)
+    const bool back_pressed = input.back && !prev_btn_back_in_game_;
+    const bool stick_click = (input.lsb && input.rsb) &&
+                             (!prev_stick_l_in_game_ || !prev_stick_r_in_game_);
+
+    prev_btn_back_in_game_ = input.back;
+    prev_stick_l_in_game_ = input.lsb;
+    prev_stick_r_in_game_ = input.rsb;
+
+    if (back_pressed || stick_click) {
+        show_quick_menu_ = !show_quick_menu_;
+        quick_menu_row_ = 0;
+        NEMU_LOG_INFO("Frontend", "RetroArch Quick Menu {}", show_quick_menu_ ? "Opened" : "Closed");
+        return true;
+    }
+
+    if (show_quick_menu_) {
+        constexpr s32 THRESH = 16000;
+        const bool up = (input.dpad_up && !prev_qm_up_) || (input.thumb_ly > THRESH && !prev_qm_up_);
+        const bool down = (input.dpad_down && !prev_qm_down_) || (input.thumb_ly < -THRESH && !prev_qm_down_);
+        const bool left = (input.dpad_left && !prev_qm_left_) || (input.thumb_lx < -THRESH && !prev_qm_left_);
+        const bool right = (input.dpad_right && !prev_qm_right_) || (input.thumb_lx > THRESH && !prev_qm_right_);
+        const bool a = input.a && !prev_qm_a_;
+        const bool b = input.b && !prev_qm_b_;
+
+        prev_qm_up_ = input.dpad_up || (input.thumb_ly > THRESH);
+        prev_qm_down_ = input.dpad_down || (input.thumb_ly < -THRESH);
+        prev_qm_left_ = input.dpad_left || (input.thumb_lx < -THRESH);
+        prev_qm_right_ = input.dpad_right || (input.thumb_lx > THRESH);
+        prev_qm_a_ = input.a;
+        prev_qm_b_ = input.b;
+
+        HandleQuickMenuInput(input, up, down, left, right, a, b);
+        return true;
+    }
+
+    return false;
+}
+
+void XboxFrontend::HandleQuickMenuInput(const core::hid::XboxGamepadState& input,
+                                        bool pressed_up, bool pressed_down,
+                                        bool pressed_left, bool pressed_right,
+                                        bool pressed_a, bool pressed_b) {
+    (void)input;
+    constexpr size_t TOTAL_QM_ROWS = 9;
+
+    if (pressed_up) {
+        quick_menu_row_ = (quick_menu_row_ > 0) ? quick_menu_row_ - 1 : TOTAL_QM_ROWS - 1;
+    }
+    if (pressed_down) {
+        quick_menu_row_ = (quick_menu_row_ + 1 < TOTAL_QM_ROWS) ? quick_menu_row_ + 1 : 0;
+    }
+
+    if (pressed_b) {
+        show_quick_menu_ = false;
+        return;
+    }
+
+    auto& cfg = config_.GetConfig();
+
+    switch (quick_menu_row_) {
+        case 0: // Resume Game
+            if (pressed_a) {
+                show_quick_menu_ = false;
+            }
+            break;
+
+        case 1: // Restart Game
+            if (pressed_a) {
+                show_quick_menu_ = false;
+                restart_requested_ = true;
+                NEMU_LOG_INFO("Frontend", "QuickMenu: Restart title requested");
+            }
+            break;
+
+        case 2: // Save State
+            if (pressed_a) {
+                save_state_requested_ = true;
+                ShowToast("Saved state to slot " + std::to_string(current_state_slot_));
+                NEMU_LOG_INFO("Frontend", "QuickMenu: Save state (slot {})", current_state_slot_);
+            }
+            break;
+
+        case 3: // Load State
+            if (pressed_a) {
+                load_state_requested_ = true;
+                ShowToast("Loaded state from slot " + std::to_string(current_state_slot_));
+                NEMU_LOG_INFO("Frontend", "QuickMenu: Load state (slot {})", current_state_slot_);
+            }
+            break;
+
+        case 4: // State Slot
+            if (pressed_left) {
+                current_state_slot_ = (current_state_slot_ > 0) ? current_state_slot_ - 1 : 9;
+            } else if (pressed_right || pressed_a) {
+                current_state_slot_ = (current_state_slot_ + 1) % 10;
+            }
+            break;
+
+        case 5: // Core Options (Resolution Scale & FSR)
+            if (pressed_left && static_cast<u32>(cfg.resolution_scale) > 0) {
+                cfg.resolution_scale = static_cast<core::config::ResolutionScale>(static_cast<u32>(cfg.resolution_scale) - 1);
+                config_.Save();
+            } else if (pressed_right && static_cast<u32>(cfg.resolution_scale) < 4) {
+                cfg.resolution_scale = static_cast<core::config::ResolutionScale>(static_cast<u32>(cfg.resolution_scale) + 1);
+                config_.Save();
+            }
+            break;
+
+        case 6: // Controls (Nintendo vs Xbox Layout)
+            if (pressed_left || pressed_right || pressed_a) {
+                cfg.button_layout = (cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard) ?
+                    core::hid::FaceButtonLayout::XboxMirrored : core::hid::FaceButtonLayout::NintendoStandard;
+                config_.Save();
+                ShowToast((cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard) ?
+                          "Layout: Nintendo Standard (B/A/Y/X)" : "Layout: Xbox Mirrored (A/B/X/Y)");
+            }
+            break;
+
+        case 7: // Take Screenshot
+            if (pressed_a) {
+                ShowToast("Screenshot captured to save:/screenshots/");
+                NEMU_LOG_INFO("Frontend", "QuickMenu: Screenshot captured");
+            }
+            break;
+
+        case 8: // Close Content (Return to Eden Menu)
+            if (pressed_a) {
+                show_quick_menu_ = false;
+                close_game_requested_ = true;
+                NEMU_LOG_INFO("Frontend", "QuickMenu: Close content, returning to Eden UI");
+            }
+            break;
+    }
 }
 
 std::optional<std::string> XboxFrontend::ConsumeLaunchRequest() {

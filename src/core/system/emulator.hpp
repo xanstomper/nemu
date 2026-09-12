@@ -78,6 +78,12 @@ public:
     /// Request stop
     void Stop();
 
+    /// Save emulation state to slot (0..9)
+    bool SaveState(u32 slot);
+
+    /// Load emulation state from slot (0..9)
+    bool LoadState(u32 slot);
+
     /// Step a single video frame quantum (~16.6ms of CPU, GPU, Audio, and Input work)
     bool StepFrame();
 

@@ -74,6 +74,49 @@ public:
     [[nodiscard]] bool IsGameOptionsOpen() const noexcept { return show_game_options_; }
     [[nodiscard]] size_t GetGameOptionsRow() const noexcept { return game_options_row_; }
 
+    /// RetroArch-style recursive directory scanner
+    void ScanDirectory(std::string_view dir_path);
+
+    /// Playlist persistence (saves/loads scanned game entries across sessions)
+    void SavePlaylist();
+    void LoadPlaylist();
+
+    /// Add a game entry directly to library
+    void AddGameToLibrary(const GameEntry& entry);
+
+    /// In-game RetroArch Quick Menu
+    [[nodiscard]] bool IsQuickMenuOpen() const noexcept { return show_quick_menu_; }
+    void SetQuickMenuOpen(bool open) noexcept { show_quick_menu_ = open; }
+    [[nodiscard]] size_t GetQuickMenuRow() const noexcept { return quick_menu_row_; }
+    [[nodiscard]] u32 GetStateSlot() const noexcept { return current_state_slot_; }
+
+    [[nodiscard]] bool ConsumeRestartRequested() noexcept {
+        bool r = restart_requested_;
+        restart_requested_ = false;
+        return r;
+    }
+    [[nodiscard]] bool ConsumeCloseGameRequested() noexcept {
+        bool r = close_game_requested_;
+        close_game_requested_ = false;
+        return r;
+    }
+    [[nodiscard]] bool ConsumeSaveStateRequested() noexcept {
+        bool r = save_state_requested_;
+        save_state_requested_ = false;
+        return r;
+    }
+    [[nodiscard]] bool ConsumeLoadStateRequested() noexcept {
+        bool r = load_state_requested_;
+        load_state_requested_ = false;
+        return r;
+    }
+
+    /// Process in-game input (handles Quick Menu toggle and navigation)
+    bool ProcessInGameInput(const core::hid::XboxGamepadState& input);
+
+    /// Render RetroArch Quick Menu overlay
+    void RenderQuickMenu(core::gpu::IGpuBackend& gpu);
+
     /// Returns path of selected title if launch requested
     [[nodiscard]] std::optional<std::string> ConsumeLaunchRequest();
 
@@ -87,14 +130,19 @@ public:
     [[nodiscard]] std::string GetSystemClockString() const;
     [[nodiscard]] std::string GetProfileName() const { return profile_name_; }
     [[nodiscard]] std::string GetConsoleModeString() const;
+    [[nodiscard]] std::string_view GetToastMessage() const noexcept { return toast_message_; }
 
 private:
-    void HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_start);
-    void HandleFileManagerInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b, bool pressed_x);
+    void HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_start, bool pressed_y);
+    void HandleFileManagerInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b, bool pressed_x, bool pressed_y);
     void HandleOptimizersInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a);
     void HandleControllersInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, core::hid::XboxControllerDriver* driver);
     void HandleSystemInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a);
     void HandleGameOptionsInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b);
+    void HandleQuickMenuInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b);
+
+    void ScanDirectoryRecursive(const std::filesystem::path& host_path, std::string_view vpath_prefix);
+    void ShowToast(std::string message);
 
     core::filesystem::VirtualFileSystem& vfs_;
     core::config::ConfigManager& config_;
@@ -114,7 +162,29 @@ private:
     bool show_game_options_{false};
     size_t game_options_row_{0};
 
+    // In-Game RetroArch Quick Menu state
+    bool show_quick_menu_{false};
+    size_t quick_menu_row_{0};
+    u32 current_state_slot_{0};
+    bool restart_requested_{false};
+    bool close_game_requested_{false};
+    bool save_state_requested_{false};
+    bool load_state_requested_{false};
+
+    // In-game button edge detection
+    bool prev_btn_back_in_game_{false};
+    bool prev_stick_l_in_game_{false};
+    bool prev_stick_r_in_game_{false};
+    bool prev_qm_up_{false};
+    bool prev_qm_down_{false};
+    bool prev_qm_left_{false};
+    bool prev_qm_right_{false};
+    bool prev_qm_a_{false};
+    bool prev_qm_b_{false};
+
     std::string profile_name_{"Player 1 (Xbox Full Trust)"};
+    std::string toast_message_{"Eden + RetroArch Frontend Ready"};
+    float toast_timer_{3.0f};
 
     // Controller edge detection
     bool prev_dpad_up_{false};
