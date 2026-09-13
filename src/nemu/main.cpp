@@ -29,7 +29,6 @@ static std::atomic<bool> g_app_running{true};
 // a PC without a physical controller (same input the console sends).
 static core::hid::XboxGamepadState PollSdlKeyboard() {
     core::hid::XboxGamepadState out{};
-    SDL_PumpEvents();
     const Uint8* k = SDL_GetKeyboardState(nullptr);
     if (!k) return out;
     out.dpad_up    = k[SDL_SCANCODE_UP]    || k[SDL_SCANCODE_W];
@@ -62,6 +61,7 @@ int main(int argc, char** argv) {
     NEMU_LOG_INFO("Init", "=========================================================");
 
     std::string target_title;
+    std::string initial_subview;
     bool demo_mode = false;
     bool ui_test_mode = false;
 
@@ -71,6 +71,8 @@ int main(int argc, char** argv) {
             demo_mode = true;
         } else if (arg == "--ui-test") {
             ui_test_mode = true;
+        } else if (arg.rfind("--subview=", 0) == 0) {
+            initial_subview = arg.substr(10);
         } else if (!arg.starts_with("--")) {
             target_title = arg;
         }
@@ -116,6 +118,17 @@ int main(int argc, char** argv) {
     frontend::XboxFrontend frontend(*emulator.GetVfs(), *emulator.GetConfigManager());
     auto controller = emulator.GetControllerDriver();
 
+    if (!initial_subview.empty()) {
+        if (initial_subview == "settings") frontend.SetActiveSubView(frontend::ActiveSubView::SystemSettings);
+        else if (initial_subview == "controllers") frontend.SetActiveSubView(frontend::ActiveSubView::Controllers);
+        else if (initial_subview == "powermenu") frontend.SetActiveSubView(frontend::ActiveSubView::PowerMenu);
+        else if (initial_subview == "gameoptions") frontend.SetActiveSubView(frontend::ActiveSubView::GameOptions);
+        else if (initial_subview == "album") frontend.SetActiveSubView(frontend::ActiveSubView::Album);
+        else if (initial_subview == "news") frontend.SetActiveSubView(frontend::ActiveSubView::News);
+        else if (initial_subview == "nso") frontend.SetActiveSubView(frontend::ActiveSubView::NSO);
+        else if (initial_subview == "profile") frontend.SetActiveSubView(frontend::ActiveSubView::UserProfile);
+    }
+
     NEMU_LOG_INFO("Frontend", "Entering interactive Eden / Switch UI event loop...");
     u64 ui_frames = 0;
 
@@ -143,6 +156,18 @@ int main(int argc, char** argv) {
         }
 #ifdef NEMU_SDL2
         {
+            auto backend = emulator.GetGpuBackend();
+            if (backend) {
+                auto sdl_backend = std::dynamic_pointer_cast<gpu::sdl2::Sdl2GpuBackend>(backend);
+                if (sdl_backend) {
+                    if (!sdl_backend->PumpEvents()) {
+                        g_app_running = false;
+                        break;
+                    }
+                    auto ptr = sdl_backend->ConsumePointerState();
+                    frontend.ProcessPointer(ptr.x, ptr.y, ptr.left_down, ptr.left_clicked, ptr.right_clicked, ptr.wheel_delta);
+                }
+            }
             auto kb = PollSdlKeyboard();
             input_state.dpad_up    = input_state.dpad_up    || kb.dpad_up;
             input_state.dpad_down  = input_state.dpad_down  || kb.dpad_down;
@@ -156,20 +181,13 @@ int main(int argc, char** argv) {
             input_state.back       = input_state.back       || kb.back;
         }
 #endif
-        // Let the SDL2 window process events (close button, focus).
-#ifdef NEMU_SDL2
-        {
-            auto backend = emulator.GetGpuBackend();
-            if (backend) {
-                auto sdl_backend = std::dynamic_pointer_cast<gpu::sdl2::Sdl2GpuBackend>(backend);
-                if (sdl_backend && !sdl_backend->PumpEvents()) {
-                    g_app_running = false;
-                }
-            }
-        }
-#endif
 
-        // Exit combo on Xbox controller: Back + Start in Home UI
+        // Exit request from Switch Power Menu or Exit combo (Back + Start)
+        if (frontend.ConsumeExitRequested()) {
+            NEMU_LOG_INFO("Frontend", "Exit requested via Switch Power Menu");
+            break;
+        }
+
         if (input_state.back && input_state.start) {
             NEMU_LOG_INFO("Frontend", "Exit combo (Back + Start) detected; terminating application");
             break;
@@ -296,8 +314,28 @@ int main(int argc, char** argv) {
             break;
         }
 
-        // Maintain ~60 FPS UI pacing
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        // Maintain buttery-smooth 60 FPS UI pacing without double-sleeping over VSync
+        bool has_vsync = false;
+#ifdef NEMU_SDL2
+        {
+            auto backend = emulator.GetGpuBackend();
+            if (backend) {
+                auto sdl_backend = std::dynamic_pointer_cast<gpu::sdl2::Sdl2GpuBackend>(backend);
+                if (sdl_backend && sdl_backend->HasVsync()) {
+                    has_vsync = true;
+                }
+            }
+        }
+#endif
+        if (!has_vsync) {
+            static auto last_frame_time = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(now - last_frame_time).count();
+            if (elapsed_us < 16666) {
+                std::this_thread::sleep_for(std::chrono::microseconds(16666 - elapsed_us));
+            }
+            last_frame_time = std::chrono::steady_clock::now();
+        }
     }
 
     NEMU_LOG_INFO("Init", "=========================================================");

@@ -34,6 +34,16 @@ struct UiImageOp {
     float x, y, w, h;
 };
 
+/// One queued overlay op (unified z-ordered queue).
+struct UiOp {
+    enum class Type { Text, Image, FillRect, RectOutline } type{Type::Text};
+    UiTextOp text{};
+    UiImageOp image{};
+    float rx{0.0f}, ry{0.0f}, rw{0.0f}, rh{0.0f};
+    float thickness{1.0f};
+    float r{1.0f}, g{1.0f}, b{1.0f}, a{1.0f};
+};
+
 /// Windowed GPU backend for desktop Linux (and any platform with SDL2). It
 /// reuses the software rasterizer (NullGpuBackend) for all Draw/clear work and
 /// additionally presents the resulting RGBA8 framebuffer into a real SDL2
@@ -78,14 +88,33 @@ public:
                        float r, float g, float b, float a, int align) override;
     void UiImageOverlay(std::string_view key, std::string_view host_path,
                         float x, float y, float w, float h) override;
+    void UiFillRectOverlay(float x, float y, float w, float h,
+                           float r, float g, float b, float a) override;
+    void UiRectOutlineOverlay(float x, float y, float w, float h,
+                              float thickness, float r, float g, float b, float a) override;
 
     /// Raw host RGBA8 framebuffer (delegates to the software rasterizer).
     [[nodiscard]] const u8* Framebuffer() const noexcept;
     [[nodiscard]] size_t FramebufferSize() const noexcept;
 
+    /// Check if hardware VSync is active on the SDL2 renderer.
+    [[nodiscard]] bool HasVsync() const noexcept;
+
+    struct PointerEventState {
+        float x{0.0f};
+        float y{0.0f};
+        bool left_down{false};
+        bool left_clicked{false};
+        bool right_clicked{false};
+        float wheel_delta{0.0f};
+    };
+
     /// Drain accumulated window events (e.g. close button polled by the main
     /// loop). Returns false when the user requested to close the window.
     bool PumpEvents();
+
+    /// Consume mouse/pointer input events recorded during event pumping.
+    [[nodiscard]] PointerEventState ConsumePointerState();
 
 private:
     void RecreateTexture();
@@ -107,10 +136,10 @@ private:
     bool initialized_{false};
     GpuStats stats_{};
 
-    // Queued overlay ops for the current frame (flushed by Present).
-    std::vector<UiTextOp> ui_text_ops_;
-    std::vector<UiImageOp> ui_image_ops_;
+    // Queued overlay ops for the current frame (flushed by Present in z-order).
+    std::vector<UiOp> ui_ops_;
     bool ui_available_{false};
+    PointerEventState pointer_state_{};
 #ifdef NEMU_SDL2_UI
     std::unordered_map<int, TTF_Font*> fonts_;
     std::unordered_map<std::string, SDL_Texture*> text_cache_;

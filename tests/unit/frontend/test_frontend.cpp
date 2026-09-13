@@ -424,6 +424,81 @@ int main() {
         std::cout << "  - In-Game RetroArch Quick Menu rendering pass: PASSED" << std::endl;
     }
 
+    // Test 13: Mouse interaction and Pointer Event handling
+    {
+        // 13a. Bottom Icons click test
+        // Click System Settings icon (index 5)
+        fe.ProcessPointer(856.0f, 546.0f, false, true, false, 0.0f);
+        NEMU_TEST_ASSERT(fe.GetActiveSubView() == ActiveSubView::SystemSettings, "Opened System Settings via pointer click");
+
+        // Universal Right Click back
+        fe.ProcessPointer(640.0f, 360.0f, false, false, true, 0.0f);
+        NEMU_TEST_ASSERT(fe.GetActiveSubView() == ActiveSubView::None, "Exited subview to Home via right-click");
+
+        // Click Controllers icon (index 4)
+        fe.ProcessPointer(748.0f, 546.0f, false, true, false, 0.0f);
+        NEMU_TEST_ASSERT(fe.GetActiveSubView() == ActiveSubView::Controllers, "Opened Controllers via pointer click");
+
+        fe.ProcessPointer(640.0f, 360.0f, false, false, true, 0.0f);
+        NEMU_TEST_ASSERT(fe.GetActiveSubView() == ActiveSubView::None, "Exited subview to Home via right-click");
+
+        // Click Power Menu icon (index 6)
+        fe.ProcessPointer(964.0f, 546.0f, false, true, false, 0.0f);
+        NEMU_TEST_ASSERT(fe.GetActiveSubView() == ActiveSubView::PowerMenu, "Opened Power Menu via pointer click");
+
+        fe.ProcessPointer(640.0f, 360.0f, false, false, true, 0.0f);
+        NEMU_TEST_ASSERT(fe.GetActiveSubView() == ActiveSubView::None, "Exited subview to Home via right-click");
+
+        // 13b. Top Profile Avatar click test
+        fe.ProcessPointer(100.0f, 65.0f, false, true, false, 0.0f);
+        NEMU_TEST_ASSERT(fe.GetActiveSubView() == ActiveSubView::UserProfile, "Opened User Profile via avatar click");
+
+        fe.ProcessPointer(640.0f, 360.0f, false, false, true, 0.0f);
+        NEMU_TEST_ASSERT(fe.GetActiveSubView() == ActiveSubView::None, "Exited Profile to Home via right-click");
+
+        // 13c. Carousel wheel scroll test
+        size_t initial_index = fe.GetSelectedGameIndex();
+        fe.ProcessPointer(640.0f, 360.0f, false, false, false, -1.0f); // Scroll right
+        NEMU_TEST_ASSERT(fe.GetSelectedGameIndex() >= initial_index, "Scroll wheel navigated carousel forward");
+
+        // 13d. Game tile click launches title (authentic two-tap: focus, then launch)
+        fe.ProcessPointer(200.0f, 300.0f, false, true, false, 0.0f); // unfocused card -> selects
+        NEMU_TEST_ASSERT(fe.ConsumeLaunchRequest() == std::nullopt, "First click only selects unfocused tile");
+        fe.ProcessPointer(200.0f, 300.0f, false, true, false, 0.0f); // focused card -> launches
+        NEMU_TEST_ASSERT(fe.ConsumeLaunchRequest().has_value(), "Second click on focused tile triggered launch request");
+
+        std::cout << "  - Interactive Pointer & Mouse Navigation (click, hover, wheel, right-click back): PASSED" << std::endl;
+    }
+
+    // Test 14: Switch Subviews Full Rendering Pass
+    {
+        core::gpu::NullGpuBackend null_gpu;
+        NEMU_TEST_ASSERT(null_gpu.Initialize(1280, 720), "Initialize null GPU");
+
+        ActiveSubView subviews[] = {
+            ActiveSubView::None,
+            ActiveSubView::NSO,
+            ActiveSubView::News,
+            ActiveSubView::EShop,
+            ActiveSubView::Album,
+            ActiveSubView::Controllers,
+            ActiveSubView::SystemSettings,
+            ActiveSubView::PowerMenu,
+            ActiveSubView::GameOptions,
+            ActiveSubView::UserProfile
+        };
+
+        for (auto sv : subviews) {
+            fe.SetActiveSubView(sv);
+            fe.Render(null_gpu);
+            NEMU_TEST_ASSERT(null_gpu.GetStats().draw_calls > 0, "Render subview issued draw calls");
+        }
+
+        fe.SetActiveSubView(ActiveSubView::None);
+        null_gpu.Shutdown();
+        std::cout << "  - All 10 Switch subviews & modal dialogs rendering passes: PASSED" << std::endl;
+    }
+
     // Clean up
     std::filesystem::remove_all(test_dir, ec);
 

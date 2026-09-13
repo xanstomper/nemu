@@ -20,6 +20,11 @@ bool Sdl2GpuBackend::Initialize(u32 render_width, u32 render_height) {
     width_ = render_width;
     height_ = render_height;
 
+    // Set hints before video subsystem init and window/renderer creation for maximum quality
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+    SDL_SetHint(SDL_HINT_RENDER_LINE_METHOD, "3");
+    SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
+
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
         return false;
     }
@@ -45,8 +50,11 @@ bool Sdl2GpuBackend::Initialize(u32 render_width, u32 render_height) {
         }
     }
 
+    // Explicitly synchronize swap interval to vertical blank (60 Hz VSync)
+    SDL_GL_SetSwapInterval(1);
+
     // Render everything in UI coordinates (1280x720); SDL scales to the actual
-    // window size proportionally, so the layout survives window resizing.
+    // window size proportionally with linear anti-aliased filtering.
     SDL_RenderSetLogicalSize(renderer_, static_cast<int>(width_), static_cast<int>(height_));
 
 #ifdef NEMU_SDL2_UI
@@ -100,8 +108,7 @@ void Sdl2GpuBackend::Shutdown() {
     }
     ui_available_ = false;
 #endif
-    ui_text_ops_.clear();
-    ui_image_ops_.clear();
+    ui_ops_.clear();
     if (raster_) raster_->Shutdown();
     if (texture_) SDL_DestroyTexture(texture_);
     if (renderer_) SDL_DestroyRenderer(renderer_);
@@ -118,32 +125,14 @@ void Sdl2GpuBackend::BeginFrame() { if (raster_) raster_->BeginFrame(); }
 void Sdl2GpuBackend::EndFrame()   { if (raster_) raster_->EndFrame(); }
 
 void Sdl2GpuBackend::Present() {
-    if (!raster_ || !renderer_ || !texture_ || !initialized_) return;
+    if (!renderer_ || !initialized_) return;
 
-    // Upload the software-rasterized RGBA8 framebuffer into the SDL texture.
-    if (texture_) {
-        void* pixels = nullptr;
-        int pitch = 0;
-        if (SDL_LockTexture(texture_, nullptr, &pixels, &pitch) == 0) {
-            const u8* fb = raster_->Framebuffer();
-            const size_t row = width_ * 4;
-            for (u32 y = 0; y < height_; ++y) {
-                std::memcpy(static_cast<u8*>(pixels) + (size_t)y * pitch,
-                            fb + (size_t)y * row, row);
-            }
-            SDL_UnlockTexture(texture_);
-        }
-    }
-
-    SDL_SetRenderDrawColor(renderer_, 45, 45, 45, 255);
-    SDL_RenderClear(renderer_);
-    SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
     FlushUiOverlay();
 
 #ifdef NEMU_SDL2_UI
     if (const char* dump = std::getenv("NEMU_SCREENSHOT_PATH")) {
         static bool dumped = false;
-        if (!dumped && stats_.frames_presented >= 5) {
+        if (!dumped && stats_.frames_presented >= 30) {
             dumped = true;
             SDL_Surface* sshot = SDL_CreateRGBSurfaceWithFormat(0, static_cast<int>(width_), static_cast<int>(height_), 32, SDL_PIXELFORMAT_RGBA32);
             if (sshot) {
@@ -157,19 +146,58 @@ void Sdl2GpuBackend::Present() {
 
     SDL_RenderPresent(renderer_);
 
-    ui_text_ops_.clear();
-    ui_image_ops_.clear();
+    ui_ops_.clear();
 
     stats_.frames_presented++;
 }
 
 void Sdl2GpuBackend::SetViewport(const Viewport& vp) { if (raster_) raster_->SetViewport(vp); }
 void Sdl2GpuBackend::SetScissor(const ScissorRect& sc) { if (raster_) raster_->SetScissor(sc); }
-void Sdl2GpuBackend::ClearRenderTarget(const ClearColor& c) { if (raster_) raster_->ClearRenderTarget(c); }
+void Sdl2GpuBackend::ClearRenderTarget(const ClearColor& c) {
+    if (renderer_) {
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_,
+            static_cast<Uint8>(std::clamp(c.r, 0.0f, 1.0f) * 255.0f),
+            static_cast<Uint8>(std::clamp(c.g, 0.0f, 1.0f) * 255.0f),
+            static_cast<Uint8>(std::clamp(c.b, 0.0f, 1.0f) * 255.0f),
+            static_cast<Uint8>(std::clamp(c.a, 0.0f, 1.0f) * 255.0f));
+        SDL_RenderClear(renderer_);
+    }
+    if (raster_) raster_->ClearRenderTarget(c);
+}
 void Sdl2GpuBackend::ClearDepthStencil(float d, u8 s) { if (raster_) raster_->ClearDepthStencil(d, s); }
-void Sdl2GpuBackend::DrawArrays(PrimitiveTopology t, u32 fv, u32 vc) { if (raster_) raster_->DrawArrays(t, fv, vc); }
+void Sdl2GpuBackend::DrawArrays(PrimitiveTopology t, u32 fv, u32 vc) {
+    stats_.draw_calls++;
+    stats_.vertices_submitted += vc;
+    if (renderer_ && t == PrimitiveTopology::Triangles && !vertices_readonly_.empty()) {
+        std::vector<SDL_Vertex> sdl_verts;
+        sdl_verts.reserve(vc);
+        const float fw = static_cast<float>(width_);
+        const float fh = static_cast<float>(height_);
+        const u32 end = std::min(fv + vc, static_cast<u32>(vertices_readonly_.size()));
+        for (u32 i = fv; i < end; ++i) {
+            const auto& rv = vertices_readonly_[i];
+            SDL_Vertex sv;
+            sv.position.x = (rv.x * 0.5f + 0.5f) * fw;
+            sv.position.y = (0.5f - rv.y * 0.5f) * fh;
+            sv.color.r = static_cast<Uint8>(std::clamp(rv.r, 0.0f, 1.0f) * 255.0f);
+            sv.color.g = static_cast<Uint8>(std::clamp(rv.g, 0.0f, 1.0f) * 255.0f);
+            sv.color.b = static_cast<Uint8>(std::clamp(rv.b, 0.0f, 1.0f) * 255.0f);
+            sv.color.a = static_cast<Uint8>(std::clamp(rv.a, 0.0f, 1.0f) * 255.0f);
+            sv.tex_coord.x = 0.0f;
+            sv.tex_coord.y = 0.0f;
+            sdl_verts.push_back(sv);
+        }
+        if (!sdl_verts.empty()) {
+            SDL_RenderGeometry(renderer_, nullptr, sdl_verts.data(), static_cast<int>(sdl_verts.size()), nullptr, 0);
+        }
+    }
+}
 void Sdl2GpuBackend::DrawIndexed(PrimitiveTopology t, u32 ic, u32 fi, u32 bv) { if (raster_) raster_->DrawIndexed(t, ic, fi, bv); }
-void Sdl2GpuBackend::SetRasterVertices(std::span<const RasterVertex> v) { if (raster_) raster_->SetRasterVertices(v); }
+void Sdl2GpuBackend::SetRasterVertices(std::span<const RasterVertex> v) {
+    vertices_readonly_ = v;
+    if (raster_) raster_->SetRasterVertices(v);
+}
 void Sdl2GpuBackend::SetRasterIndices(std::span<const u32> i) { if (raster_) raster_->SetRasterIndices(i); }
 bool Sdl2GpuBackend::DumpFramePPM(const char* p) { return raster_ ? raster_->DumpFramePPM(p) : false; }
 
@@ -190,6 +218,15 @@ size_t Sdl2GpuBackend::FramebufferSize() const noexcept {
     return raster_ ? raster_->FramebufferSize() : 0;
 }
 
+bool Sdl2GpuBackend::HasVsync() const noexcept {
+    if (!renderer_) return false;
+    SDL_RendererInfo info{};
+    if (SDL_GetRendererInfo(renderer_, &info) == 0) {
+        return (info.flags & SDL_RENDERER_PRESENTVSYNC) != 0;
+    }
+    return false;
+}
+
 bool Sdl2GpuBackend::PumpEvents() {
     if (!initialized_) return true;
     SDL_Event ev;
@@ -197,88 +234,197 @@ bool Sdl2GpuBackend::PumpEvents() {
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_QUIT) {
             keep_open = false;
+        } else if (ev.type == SDL_KEYDOWN) {
+            // F11 or Alt+Enter toggles fullscreen
+            if (ev.key.keysym.sym == SDLK_F11 ||
+                ((ev.key.keysym.mod & KMOD_ALT) && (ev.key.keysym.sym == SDLK_RETURN || ev.key.keysym.sym == SDLK_KP_ENTER))) {
+                if (window_) {
+                    Uint32 flags = SDL_GetWindowFlags(window_);
+                    bool is_fs = (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
+                    SDL_SetWindowFullscreen(window_, is_fs ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+                }
+            }
+        } else if (ev.type == SDL_MOUSEMOTION) {
+            float lx = static_cast<float>(ev.motion.x);
+            float ly = static_cast<float>(ev.motion.y);
+            if (renderer_) {
+                SDL_RenderWindowToLogical(renderer_, ev.motion.x, ev.motion.y, &lx, &ly);
+            }
+            pointer_state_.x = lx;
+            pointer_state_.y = ly;
+        } else if (ev.type == SDL_MOUSEBUTTONDOWN) {
+            float lx = static_cast<float>(ev.button.x);
+            float ly = static_cast<float>(ev.button.y);
+            if (renderer_) {
+                SDL_RenderWindowToLogical(renderer_, ev.button.x, ev.button.y, &lx, &ly);
+            }
+            pointer_state_.x = lx;
+            pointer_state_.y = ly;
+            if (ev.button.button == SDL_BUTTON_LEFT) {
+                pointer_state_.left_down = true;
+                pointer_state_.left_clicked = true;
+            } else if (ev.button.button == SDL_BUTTON_RIGHT) {
+                pointer_state_.right_clicked = true;
+            }
+        } else if (ev.type == SDL_MOUSEBUTTONUP) {
+            if (ev.button.button == SDL_BUTTON_LEFT) {
+                pointer_state_.left_down = false;
+            }
+        } else if (ev.type == SDL_MOUSEWHEEL) {
+            pointer_state_.wheel_delta += static_cast<float>(ev.wheel.y);
         }
     }
     return keep_open;
+}
+
+Sdl2GpuBackend::PointerEventState Sdl2GpuBackend::ConsumePointerState() {
+    PointerEventState state = pointer_state_;
+    pointer_state_.left_clicked = false;
+    pointer_state_.right_clicked = false;
+    pointer_state_.wheel_delta = 0.0f;
+    return state;
 }
 
 
 void Sdl2GpuBackend::UiTextOverlay(std::string_view text, float x, float y, float size_px,
                                    float r, float g, float b, float a, int align) {
     if (!ui_available_ || text.empty()) return;
-    ui_text_ops_.push_back(UiTextOp{std::string(text), x, y, size_px, r, g, b, a, align});
+    UiOp op{};
+    op.type = UiOp::Type::Text;
+    op.text = UiTextOp{std::string(text), x, y, size_px, r, g, b, a, align};
+    ui_ops_.push_back(std::move(op));
 }
 
 void Sdl2GpuBackend::UiImageOverlay(std::string_view key, std::string_view host_path,
                                     float x, float y, float w, float h) {
     if (!ui_available_ || host_path.empty()) return;
-    ui_image_ops_.push_back(UiImageOp{std::string(key), std::string(host_path), x, y, w, h});
+    UiOp op{};
+    op.type = UiOp::Type::Image;
+    op.image = UiImageOp{std::string(key), std::string(host_path), x, y, w, h};
+    ui_ops_.push_back(std::move(op));
+}
+
+void Sdl2GpuBackend::UiFillRectOverlay(float x, float y, float w, float h,
+                                       float r, float g, float b, float a) {
+    if (!ui_available_) return;
+    UiOp op{};
+    op.type = UiOp::Type::FillRect;
+    op.rx = x; op.ry = y; op.rw = w; op.rh = h;
+    op.r = r; op.g = g; op.b = b; op.a = a;
+    ui_ops_.push_back(std::move(op));
+}
+
+void Sdl2GpuBackend::UiRectOutlineOverlay(float x, float y, float w, float h,
+                                          float thickness, float r, float g, float b, float a) {
+    if (!ui_available_) return;
+    UiOp op{};
+    op.type = UiOp::Type::RectOutline;
+    op.rx = x; op.ry = y; op.rw = w; op.rh = h;
+    op.thickness = thickness;
+    op.r = r; op.g = g; op.b = b; op.a = a;
+    ui_ops_.push_back(std::move(op));
 }
 
 void Sdl2GpuBackend::FlushUiOverlay() {
 #ifdef NEMU_SDL2_UI
     if (!renderer_) return;
 
-    // Covers first (under text), in queue order. Aspect is preserved with a
-    // center crop ("cover" fit) so artwork fills the tile without distortion.
-    for (const auto& op : ui_image_ops_) {
-        SDL_Texture* tex = CoverTexture(op.host_path);
-        if (!tex) continue;
-        int iw = 0, ih = 0;
-        SDL_QueryTexture(tex, nullptr, nullptr, &iw, &ih);
-        SDL_Rect dst{static_cast<int>(op.x), static_cast<int>(op.y),
-                     static_cast<int>(op.w), static_cast<int>(op.h)};
-        if (iw > 0 && ih > 0) {
-            const float src_ar = static_cast<float>(iw) / static_cast<float>(ih);
-            const float dst_ar = op.w / op.h;
-            SDL_Rect src{0, 0, iw, ih};
-            if (src_ar > dst_ar) {          // source wider: crop left/right
-                const int cw = static_cast<int>(ih * dst_ar);
-                src.x = (iw - cw) / 2;
-                src.w = cw;
-            } else if (src_ar < dst_ar) {   // source taller: crop top/bottom
-                const int ch = static_cast<int>(iw / dst_ar);
-                src.y = (ih - ch) / 2;
-                src.h = ch;
+    for (const auto& op : ui_ops_) {
+        if (op.type == UiOp::Type::FillRect) {
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer_,
+                static_cast<Uint8>(std::clamp(op.r, 0.0f, 1.0f) * 255.0f),
+                static_cast<Uint8>(std::clamp(op.g, 0.0f, 1.0f) * 255.0f),
+                static_cast<Uint8>(std::clamp(op.b, 0.0f, 1.0f) * 255.0f),
+                static_cast<Uint8>(std::clamp(op.a, 0.0f, 1.0f) * 255.0f));
+            SDL_Rect r{static_cast<int>(op.rx), static_cast<int>(op.ry),
+                       static_cast<int>(op.rw), static_cast<int>(op.rh)};
+            SDL_RenderFillRect(renderer_, &r);
+        } else if (op.type == UiOp::Type::RectOutline) {
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer_,
+                static_cast<Uint8>(std::clamp(op.r, 0.0f, 1.0f) * 255.0f),
+                static_cast<Uint8>(std::clamp(op.g, 0.0f, 1.0f) * 255.0f),
+                static_cast<Uint8>(std::clamp(op.b, 0.0f, 1.0f) * 255.0f),
+                static_cast<Uint8>(std::clamp(op.a, 0.0f, 1.0f) * 255.0f));
+            int th = std::max(1, static_cast<int>(op.thickness));
+            int ix = static_cast<int>(op.rx);
+            int iy = static_cast<int>(op.ry);
+            int iw = static_cast<int>(op.rw);
+            int ih = static_cast<int>(op.rh);
+            SDL_Rect top{ix, iy, iw, th};
+            SDL_Rect btm{ix, iy + ih - th, iw, th};
+            SDL_Rect left{ix, iy, th, ih};
+            SDL_Rect right{ix + iw - th, iy, th, ih};
+            SDL_RenderFillRect(renderer_, &top);
+            SDL_RenderFillRect(renderer_, &btm);
+            SDL_RenderFillRect(renderer_, &left);
+            SDL_RenderFillRect(renderer_, &right);
+        } else if (op.type == UiOp::Type::Image) {
+            SDL_Texture* tex = CoverTexture(op.image.host_path);
+            if (!tex) continue;
+            int iw = 0, ih = 0;
+            SDL_QueryTexture(tex, nullptr, nullptr, &iw, &ih);
+            SDL_Rect dst{static_cast<int>(op.image.x), static_cast<int>(op.image.y),
+                         static_cast<int>(op.image.w), static_cast<int>(op.image.h)};
+            if (iw > 0 && ih > 0) {
+                const float src_ar = static_cast<float>(iw) / static_cast<float>(ih);
+                const float dst_ar = op.image.w / op.image.h;
+                SDL_Rect src{0, 0, iw, ih};
+                if (src_ar > dst_ar) {
+                    const int cw = static_cast<int>(static_cast<float>(ih) * dst_ar);
+                    src.x = (iw - cw) / 2;
+                    src.w = cw;
+                } else if (src_ar < dst_ar) {
+                    const int ch = static_cast<int>(static_cast<float>(iw) / dst_ar);
+                    src.y = (ih - ch) / 2;
+                    src.h = ch;
+                }
+                SDL_RenderCopy(renderer_, tex, &src, &dst);
+            } else {
+                SDL_RenderCopy(renderer_, tex, nullptr, &dst);
             }
-            SDL_RenderCopy(renderer_, tex, &src, &dst);
-        } else {
+        } else if (op.type == UiOp::Type::Text) {
+            SDL_Texture* tex = TextTexture(op.text);
+            if (!tex) continue;
+            int tw = 0, th = 0;
+            SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+            float dx = op.text.x;
+            if (op.text.align == 0) dx = op.text.x - static_cast<float>(tw) * 0.5f;
+            else if (op.text.align == 1) dx = op.text.x - static_cast<float>(tw);
+            SDL_Rect dst{static_cast<int>(dx), static_cast<int>(op.text.y), tw, th};
+            SDL_SetTextureAlphaMod(tex, static_cast<Uint8>(std::clamp(op.text.a, 0.0f, 1.0f) * 255.0f));
             SDL_RenderCopy(renderer_, tex, nullptr, &dst);
         }
-    }
-
-    // Text on top.
-    for (const auto& op : ui_text_ops_) {
-        SDL_Texture* tex = TextTexture(op);
-        if (!tex) continue;
-        int tw = 0, th = 0;
-        SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
-        float dx = op.x;
-        if (op.align == 0) dx = op.x - tw * 0.5f;
-        else if (op.align == 1) dx = op.x - static_cast<float>(tw);
-        SDL_Rect dst{static_cast<int>(dx), static_cast<int>(op.y), tw, th};
-        SDL_SetTextureAlphaMod(tex, static_cast<Uint8>(std::clamp(op.a, 0.0f, 1.0f) * 255.0f));
-        SDL_RenderCopy(renderer_, tex, nullptr, &dst);
     }
 #endif
 }
 
 #ifdef NEMU_SDL2_UI
 std::string Sdl2GpuBackend::FontPath() {
+    static std::string s_font_path;
+    if (!s_font_path.empty()) return s_font_path;
+
     if (const char* env = std::getenv("NEMU_FONT_PATH")) {
-        if (std::filesystem::exists(env)) return env;
+        if (std::filesystem::exists(env)) {
+            s_font_path = env;
+            return s_font_path;
+        }
     }
     static const char* kCandidates[] = {
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/opentype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
     };
     for (const char* p : kCandidates) {
-        if (std::filesystem::exists(p)) return p;
+        if (std::filesystem::exists(p)) {
+            s_font_path = p;
+            return s_font_path;
+        }
     }
     return {};
 }
@@ -290,7 +436,10 @@ TTF_Font* Sdl2GpuBackend::FontForSize(float size_px) {
     const std::string fp = FontPath();
     if (fp.empty()) return nullptr;
     TTF_Font* font = TTF_OpenFont(fp.c_str(), pts);
-    if (font) fonts_[pts] = font;
+    if (font) {
+        TTF_SetFontHinting(font, TTF_HINTING_LIGHT);
+        fonts_[pts] = font;
+    }
     return font;
 }
 
@@ -313,6 +462,7 @@ SDL_Texture* Sdl2GpuBackend::TextTexture(const UiTextOp& op) {
     SDL_FreeSurface(surf);
     if (tex) {
         SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
         text_cache_[cache_key] = tex;
     }
     return tex;
@@ -326,7 +476,10 @@ SDL_Texture* Sdl2GpuBackend::CoverTexture(const std::string& host_path) {
     if (surf) {
         tex = SDL_CreateTextureFromSurface(renderer_, surf);
         SDL_FreeSurface(surf);
-        if (tex) SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        if (tex) {
+            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        }
     }
     cover_cache_[host_path] = tex;  // cache negative result too
     return tex;

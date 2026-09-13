@@ -25,6 +25,19 @@ enum class FrontendTab : u32 {
     Diagnostics = 5  // JIT stats, GPU stats, Fastmem VEH fault telemetry
 };
 
+enum class ActiveSubView : u32 {
+    None = 0,
+    NSO = 1,
+    News = 2,
+    EShop = 3,
+    Album = 4,
+    Controllers = 5,
+    SystemSettings = 6,
+    PowerMenu = 7,
+    GameOptions = 8,
+    UserProfile = 9
+};
+
 struct GameEntry {
     std::string title;
     std::string filename;
@@ -59,6 +72,17 @@ public:
 
     /// Process Xbox gamepad navigation input
     void ProcessInput(const core::hid::XboxGamepadState& input, core::hid::XboxControllerDriver* driver = nullptr);
+
+    /// Process mouse / touch pointer input (hovering, clicking, wheel scrolling)
+    void ProcessPointer(float mouse_x, float mouse_y, bool left_down, bool left_click, bool right_click, float wheel_delta);
+
+    [[nodiscard]] ActiveSubView GetActiveSubView() const noexcept { return active_subview_; }
+    void SetActiveSubView(ActiveSubView view) noexcept { active_subview_ = view; }
+    [[nodiscard]] bool ConsumeExitRequested() noexcept {
+        bool r = exit_requested_;
+        exit_requested_ = false;
+        return r;
+    }
 
     /// Render Eden / Switch UI frame
     void Render(core::gpu::IGpuBackend& gpu);
@@ -153,12 +177,48 @@ private:
     void DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu, bool draw_shortcuts);
     void DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
 
+    // Nintendo Switch Sub-views & Modals
+    void DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawSwitchControllers(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawSwitchPowerMenu(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawSwitchGameOptions(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawSwitchNso(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawSwitchNews(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawSwitchEShop(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawSwitchAlbum(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawSwitchProfile(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+
+    void HandleSettingsInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b);
+    void HandleControllersSubInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b, core::hid::XboxControllerDriver* driver);
+    void HandlePowerMenuInput(bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b);
+
     /// Resolve cover art for a library entry (rom-sidecar jpg/png, or a
     /// covers/ directory lookup by title id). Empty result = placeholder tile.
     void AttachCover(GameEntry& entry);
 
     core::filesystem::VirtualFileSystem& vfs_;
     core::config::ConfigManager& config_;
+
+    ActiveSubView active_subview_{ActiveSubView::None};
+    bool exit_requested_{false};
+
+    size_t settings_category_{0};
+    size_t settings_row_{0};
+    size_t controllers_sub_row_{0};
+    size_t power_menu_row_{0};
+    size_t news_active_article_{0};
+    size_t album_active_photo_{0};
+    size_t profile_active_row_{0};
+
+    float pointer_x_{0.0f};
+    float pointer_y_{0.0f};
+    bool pointer_active_{false};
+    bool pointer_dragging_{false};
+    float pointer_drag_start_x_{0.0f};
+    float pointer_drag_start_offset_{0.0f};
+    std::optional<size_t> hover_game_index_{std::nullopt};
+    std::optional<size_t> hover_shortcut_index_{std::nullopt};
+    float glow_anim_timer_{0.0f};
 
     FrontendTab current_tab_{FrontendTab::Library};
     std::vector<GameEntry> library_;

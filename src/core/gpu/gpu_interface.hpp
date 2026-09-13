@@ -110,6 +110,12 @@ public:
     /// Queue a cover image drawn into the given rect (cached by key/path).
     virtual void UiImageOverlay(std::string_view /*key*/, std::string_view /*host_path*/,
                                 float /*x*/, float /*y*/, float /*w*/, float /*h*/) {}
+    /// Queue a filled rectangle drawn into the overlay.
+    virtual void UiFillRectOverlay(float /*x*/, float /*y*/, float /*w*/, float /*h*/,
+                                   float /*r*/, float /*g*/, float /*b*/, float /*a*/) {}
+    /// Queue a rectangle outline drawn into the overlay.
+    virtual void UiRectOutlineOverlay(float /*x*/, float /*y*/, float /*w*/, float /*h*/,
+                                      float /*thickness*/, float /*r*/, float /*g*/, float /*b*/, float /*a*/) {}
 
     [[nodiscard]] virtual GpuStats GetStats() const noexcept = 0;
     [[nodiscard]] virtual std::string_view GetBackendName() const noexcept = 0;
