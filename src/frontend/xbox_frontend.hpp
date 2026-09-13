@@ -6,6 +6,7 @@
 #include "core/hid/xbox_controller_driver.hpp"
 #include "core/filesystem/vfs.hpp"
 #include "core/config/config_manager.hpp"
+#include "core/network/ldn_network.hpp"
 #include "core/gpu/pipeline/graphics_optimizer.hpp"
 #include <vector>
 #include <string>
@@ -195,6 +196,22 @@ public:
     void PushControllerStatus(const ControllerStatus& s) noexcept { ctrl_status_ = s; }
     [[nodiscard]] const ControllerStatus& GetControllerStatus() const noexcept { return ctrl_status_; }
 
+    /// Real LAN multiplayer state (LDN). The frontend owns the station; the
+    /// same UDP backend instance is shared with the ldn:u IPC service via
+    /// Emulator::GetLdnNetwork().
+    void SetLdnNetwork(std::shared_ptr<nemu::core::network::LdnUdpNetwork> net);
+
+    /// Real playtime tracking (persisted in save:/playtime.ini, seconds per title id).
+    void StartPlaytimeSession(u64 title_id);
+    void EndPlaytimeSession();
+    [[nodiscard]] std::string LoadPlaytimeFor(const std::string& vpath, u64 title_id) const;
+    /// NSO screen actions
+    void LdnCreateLobby(const std::string& name, u32 game_id);
+    void LdnScan();
+    bool LdnJoin(size_t discovered_index);
+    void LdnLeave();
+    [[nodiscard]] std::vector<std::string> GetLdnStatusLines() const;
+
 private:
     void HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b, bool pressed_start, bool pressed_y);
     void HandleFileManagerInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b, bool pressed_x, bool pressed_y);
@@ -260,6 +277,13 @@ private:
     size_t news_active_article_{0};
     LiveDiagnostics live_diag_{};
     bool config_changed_{false};
+    std::shared_ptr<nemu::core::network::LdnUdpNetwork> ldn_net_;
+    std::unique_ptr<nemu::core::network::LdnStation> ldn_station_;
+    std::vector<nemu::core::network::LdnSessionInfo> ldn_discovered_;
+    size_t nso_lan_row_{0};
+    bool prev_btn_lb_nso_{false};
+    u64 playtime_title_id_{0};
+    std::chrono::steady_clock::time_point playtime_start_{};
     ControllerStatus ctrl_status_{};
     bool prev_btn_lb_settings_{false};
     bool prev_btn_rb_settings_{false};

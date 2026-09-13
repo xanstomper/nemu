@@ -18,6 +18,7 @@
 #include "core/kernel/ipc/service_registry.hpp"
 #include "core/kernel/ipc/hid_service.hpp"
 #include "core/cpu/jit/jit_compiler.hpp"
+#include "core/network/ldn_network.hpp"
 #include "core/cpu/interpreter.hpp"
 #include <memory>
 #include <string>
@@ -113,6 +114,9 @@ public:
     /// changes a setting so everything the Switch UI shows is what runs.
     void ApplyRuntimeConfig();
 
+    /// Shared UDP LAN multiplayer backend (also registered as ldn:u IPC).
+    [[nodiscard]] const std::shared_ptr<network::LdnUdpNetwork>& GetLdnNetwork() const noexcept { return ldn_net_; }
+
 private:
     void PollInput();
     void StepCpuQuantum(size_t instruction_budget);
@@ -144,6 +148,7 @@ private:
     std::shared_ptr<kernel::ipc::HidService> hid_service_;
 
     std::unique_ptr<cpu::jit::JitCompiler> jit_;
+    std::shared_ptr<network::LdnUdpNetwork> ldn_net_;
     bool is_nro_{true};
 };
 

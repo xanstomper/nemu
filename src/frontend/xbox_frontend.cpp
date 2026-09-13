@@ -1,6 +1,7 @@
 #include "xbox_frontend.hpp"
 #include "bitmap_font.hpp"
 #include "platform/logger.hpp"
+#include <format>
 #include <algorithm>
 #include <ctime>
 #include <iomanip>
@@ -142,7 +143,7 @@ void XboxFrontend::LoadPlaylist() {
                     .filename = parts[1],
                     .virtual_path = parts[2],
                     .format_badge = parts[3],
-                    .playtime_str = "Played 2h 15m",
+                    .playtime_str = LoadPlaytimeFor(parts[2], tid),
                     .optimizer_tag = "FSR 2.0 • 4x MSAA • 60 FPS",
                     .cover_host_path = "",
                     .file_size = fsize,
@@ -242,7 +243,7 @@ void XboxFrontend::ScanDirectoryRecursive(const std::filesystem::path& host_path
                 .filename = entry.path().filename().string(),
                 .virtual_path = vpath,
                 .format_badge = badge,
-                .playtime_str = "Newly Scanned",
+                .playtime_str = "Never played",
                 .optimizer_tag = "FSR 2.0 • 4x MSAA • 60 FPS",
                 .cover_host_path = "",
                 .file_size = static_cast<size_t>(entry.file_size(ec)),
@@ -317,7 +318,7 @@ void XboxFrontend::RefreshLibrary() {
                             .filename = entry.path().filename().string(),
                             .virtual_path = vpath,
                             .format_badge = badge,
-                            .playtime_str = "Played 1h 45m",
+                            .playtime_str = "Never played",
                             .optimizer_tag = "FSR 2.0 • 4x MSAA • 60 FPS",
                             .cover_host_path = "",
                             .file_size = static_cast<size_t>(entry.file_size(ec)),
@@ -348,13 +349,10 @@ void XboxFrontend::RefreshLibrary() {
             library_.push_back(std::move(ge));
         };
 
-        add_game("The Legend of Zelda: Breath of the Wild", "demo.nro", "covers/botw.png", 0x01007EF00011E000ULL, "Played for 125 hours or more");
-        add_game("Super Smash Bros. Ultimate", "smash.nsp", "covers/smash.png", 0x01006A800016E000ULL, "Played for 320 hours or more");
-        add_game("Super Mario Odyssey", "smo.nsp", "covers/smo.png", 0x0100000000010000ULL, "Played for 85 hours or more");
-        add_game("Animal Crossing: New Horizons", "acnh.nsp", "covers/acnh.png", 0x01006F8002326000ULL, "Played for 450 hours or more");
-        add_game("Mario Party Superstars", "mps.nsp", "covers/mps.png", 0x01006BB00C6F0000ULL, "Played for 40 hours or more");
+        // Real default: only the actual built-in demo. No fake game entries.
+        add_game("Nemu Builtin Demo", "demo.nro", "covers/botw.png", 0x0000000000000001ULL, "First Play");
 
-        selected_game_index_ = 1; // Super Smash Bros. Ultimate selected as in reference
+        selected_game_index_ = 0;
     } else if (selected_game_index_ >= library_.size()) {
         selected_game_index_ = 0;
     }
@@ -639,13 +637,32 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
             current_tab_ = FrontendTab::Library;
             return;
         }
-        if (pressed_a) {
-            if (active_subview_ == ActiveSubView::NSO) {
-                ShowToast("Cloud Saves synchronized to Xbox Storage");
-            } else {
-                active_subview_ = ActiveSubView::None;
-                current_tab_ = FrontendTab::Library;
+        if (active_subview_ == ActiveSubView::NSO) {
+            if (pressed_a) {
+                std::string lobby = "Nemu Lobby";
+                if (selected_game_index_ < library_.size()) lobby = library_[selected_game_index_].title.substr(0, 30);
+                LdnCreateLobby(lobby, 0);
+                return;
             }
+            if (pressed_x) {
+                LdnScan();
+                return;
+            }
+            if (pressed_y && !ldn_discovered_.empty()) {
+                LdnJoin(nso_lan_row_ % ldn_discovered_.size());
+                return;
+            }
+            if (input.lb && !prev_btn_lb_nso_) {
+                LdnLeave();
+            }
+            prev_btn_lb_nso_ = input.lb;
+            if (pressed_down) nso_lan_row_++;
+            else if (pressed_up && nso_lan_row_ > 0) nso_lan_row_--;
+            return;
+        }
+        if (pressed_a) {
+            active_subview_ = ActiveSubView::None;
+            current_tab_ = FrontendTab::Library;
         }
         return;
     }
@@ -777,6 +794,7 @@ void XboxFrontend::HandleLibraryInput(const core::hid::XboxGamepadState& input, 
 
     if (pressed_a) {
         launch_requested_ = library_[selected_game_index_].virtual_path;
+        StartPlaytimeSession(library_[selected_game_index_].title_id);
         NEMU_LOG_INFO("Frontend", "Eden UI: Launching title '{}' ({})",
                       library_[selected_game_index_].title,
                       library_[selected_game_index_].virtual_path);
@@ -834,7 +852,7 @@ void XboxFrontend::HandleFileManagerInput(const core::hid::XboxGamepadState& inp
                 .filename = e.name,
                 .virtual_path = e.full_path,
                 .format_badge = e.format_badge,
-                .playtime_str = "Added from File Manager",
+                .playtime_str = "Never played",
                 .optimizer_tag = "FSR 2.0 • 4x MSAA • 60 FPS",
                 .cover_host_path = "",
                 .file_size = e.file_size,
@@ -1406,6 +1424,158 @@ std::string XboxFrontend::GetEmulatorVersionString() {
     return "Nemu v0.8.4-preview (Horizon OS 18.1.0 compatibility layer)";
 }
 
+void XboxFrontend::SetLdnNetwork(std::shared_ptr<nemu::core::network::LdnUdpNetwork> net) {
+    ldn_net_ = std::move(net);
+    if (ldn_net_) {
+        ldn_station_ = std::make_unique<nemu::core::network::LdnStation>(*ldn_net_);
+        ldn_net_->Initialize();
+    }
+}
+
+void XboxFrontend::LdnCreateLobby(const std::string& name, u32 game_id) {
+    if (!ldn_station_) {
+        ShowToast("LAN backend unavailable");
+        return;
+    }
+    u32 gid = game_id;
+    if (gid == 0 && selected_game_index_ < library_.size()) {
+        gid = static_cast<u32>(library_[selected_game_index_].title_id & 0xFFFFFFFFULL);
+    }
+    if (ldn_station_->CreateAccessPoint(name.c_str(), gid, 8)) {
+        ShowToast("Lobby '" + name + "' open on LAN");
+        NEMU_LOG_INFO("Frontend", "LDN lobby '{}' opened (game={:08X})", name, gid);
+    }
+}
+
+void XboxFrontend::LdnScan() {
+    if (!ldn_station_) {
+        ShowToast("LAN backend unavailable");
+        return;
+    }
+    auto sessions = ldn_station_->Scan(0);
+    ldn_discovered_ = sessions;
+    ShowToast("LAN scan: " + std::to_string(sessions.size()) + " lobby/lobbies found");
+}
+
+bool XboxFrontend::LdnJoin(size_t idx) {
+    if (!ldn_station_ || idx >= ldn_discovered_.size()) return false;
+    if (ldn_station_->Connect(ldn_discovered_[idx].id)) {
+        ShowToast(std::string("Joined lobby: ") + ldn_discovered_[idx].name);
+        return true;
+    }
+    return false;
+}
+
+void XboxFrontend::LdnLeave() {
+    if (ldn_station_) {
+        ldn_station_->CloseAccessPoint();
+        ldn_discovered_.clear();
+        ShowToast("Left LAN lobby");
+    }
+}
+
+std::vector<std::string> XboxFrontend::GetLdnStatusLines() const {
+    std::vector<std::string> lines;
+    if (!ldn_net_ || !ldn_net_->IsOnline() || !ldn_station_) {
+        lines.push_back("LAN backend: unavailable");
+        return lines;
+    }
+    using S = nemu::core::network::LdnStation::State;
+    switch (ldn_station_->GetState()) {
+        case S::AccessPointOpened:
+            lines.push_back(std::string("Hosting: '") + ldn_station_->LocalSession().name +
+                            "' - " + std::to_string(ldn_station_->PlayerCount()) + " player(s)");
+            break;
+        case S::StationConnected:
+            lines.push_back(std::string("Connected to: '") + ldn_station_->LocalSession().name + "'");
+            break;
+        default:
+            lines.push_back("LAN backend online - idle");
+            break;
+    }
+    lines.push_back("Discovered " + std::to_string(ldn_discovered_.size()) + " lobby/lobbies on LAN");
+    for (size_t i = 0; i < ldn_discovered_.size() && i < 3; ++i) {
+        const auto& s = ldn_discovered_[i];
+        lines.push_back("[" + std::to_string(i) + "] " + std::string(s.name) +
+                        " (" + std::to_string(s.player_count) + "/" + std::to_string(s.max_players) + ")");
+    }
+    return lines;
+}
+
+void XboxFrontend::StartPlaytimeSession(u64 title_id) {
+    playtime_title_id_ = title_id;
+    playtime_start_ = std::chrono::steady_clock::now();
+}
+
+void XboxFrontend::EndPlaytimeSession() {
+    u64 tid = playtime_title_id_;
+    if (tid == 0) return;
+    auto secs = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now() - playtime_start_).count();
+    playtime_title_id_ = 0;
+    if (secs <= 0) return;
+
+    std::unordered_map<u64, u64> totals;
+    if (auto f = vfs_.ReadFile("save:/playtime.ini")) {
+        std::string txt(reinterpret_cast<const char*>(f->data()), f->size());
+        std::istringstream ss(txt);
+        std::string line;
+        while (std::getline(ss, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            auto eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            try {
+                u64 id = std::stoull(line.substr(0, eq), nullptr, 16);
+                u64 sec = std::stoull(line.substr(eq + 1));
+                totals[id] = sec;
+            } catch (...) {}
+        }
+    }
+    totals[tid] += static_cast<u64>(secs);
+
+    std::string out = "# Nemu playtime (title_id=seconds)\n";
+    for (auto& [id, sec] : totals) {
+        out += std::format("{:016X}={}\n", id, sec);
+    }
+    std::span<const u8> data(reinterpret_cast<const u8*>(out.data()), out.size());
+    vfs_.WriteFile("save:/playtime.ini", data);
+
+    for (auto& g : library_) {
+        if (g.title_id == tid) {
+            u64 total = totals[tid];
+            if (total < 60) g.playtime_str = "Played " + std::to_string(total) + "s";
+            else if (total < 3600) g.playtime_str = "Played " + std::to_string(total / 60) + " min";
+            else g.playtime_str = "Played " + std::to_string(total / 3600) + " h " + std::to_string((total % 3600) / 60) + " m";
+        }
+    }
+    SavePlaylist();
+    NEMU_LOG_INFO("Frontend", "Playtime saved: {:016X} +{}s", tid, secs);
+}
+
+std::string XboxFrontend::LoadPlaytimeFor(const std::string& vpath, u64 title_id) const {
+    (void)vpath;
+    if (title_id == 0) return "Never played";
+    if (auto f = vfs_.ReadFile("save:/playtime.ini")) {
+        std::string txt(reinterpret_cast<const char*>(f->data()), f->size());
+        std::istringstream ss(txt);
+        std::string line;
+        while (std::getline(ss, line)) {
+            auto eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            try {
+                if (std::stoull(line.substr(0, eq), nullptr, 16) == title_id) {
+                    u64 sec = std::stoull(line.substr(eq + 1));
+                    if (sec < 60) return "Played " + std::to_string(sec) + "s";
+                    if (sec < 3600) return "Played " + std::to_string(sec / 60) + " min";
+                    return "Played " + std::to_string(sec / 3600) + " h " + std::to_string((sec % 3600) / 60) + " m";
+                }
+            } catch (...) {}
+        }
+    }
+    return "Never played";
+}
+
+
 void XboxFrontend::AttachCover(GameEntry& entry) {
     if (!entry.cover_host_path.empty()) {
         std::error_code ec;
@@ -1540,7 +1710,7 @@ void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& ou
     const char* icon_labels[7] = {
         "Nintendo Switch Online",
         "News",
-        "Nintendo eShop",
+        "Game Manager",
         "Album",
         "Controllers",
         "System Settings",
@@ -1879,6 +2049,32 @@ void XboxFrontend::ProcessPointer(float mouse_x, float mouse_y, bool left_down, 
         return;
     }
 
+    // NSO: clickable LAN multiplayer cards
+    if (active_subview_ == ActiveSubView::NSO) {
+        if (left_click && mouse_x >= 850.0f && mouse_x <= 1240.0f && mouse_y >= 660.0f && mouse_y <= 710.0f) {
+            active_subview_ = ActiveSubView::None;
+            current_tab_ = FrontendTab::Library;
+            return;
+        }
+        // Card rows at y = 215 + c*125, height 105
+        for (size_t c = 0; c < 3; ++c) {
+            float cy = 215.0f + static_cast<float>(c) * 125.0f;
+            if (left_click && mouse_x >= 60.0f && mouse_x <= 1220.0f && mouse_y >= cy && mouse_y <= cy + 105.0f) {
+                if (c == 0) {
+                    std::string lobby = "Nemu Lobby";
+                    if (selected_game_index_ < library_.size()) lobby = library_[selected_game_index_].title.substr(0, 30);
+                    LdnCreateLobby(lobby, 0);
+                } else if (c == 1) {
+                    LdnScan();
+                } else if (c == 2 && !ldn_discovered_.empty()) {
+                    LdnJoin(nso_lan_row_ % ldn_discovered_.size());
+                }
+                return;
+            }
+        }
+        return;
+    }
+
     // EShop browser: clickable rows (install / installed / dir entries)
     if (active_subview_ == ActiveSubView::EShop || current_tab_ == FrontendTab::FileManager) {
         if (left_click && mouse_x >= 850.0f && mouse_x <= 1240.0f && mouse_y >= 660.0f && mouse_y <= 710.0f) {
@@ -1997,6 +2193,7 @@ void XboxFrontend::ProcessPointer(float mouse_x, float mouse_y, bool left_down, 
                     if (selected_game_index_ == i && !home_in_shortcuts_) {
                         // Already focused card clicked -> launch game
                         launch_requested_ = library_[i].virtual_path;
+                        StartPlaytimeSession(library_[i].title_id);
                     } else {
                         // Unfocused card clicked -> smoothly select and center it
                         selected_game_index_ = i;
@@ -2053,6 +2250,7 @@ void XboxFrontend::ProcessPointer(float mouse_x, float mouse_y, bool left_down, 
                 }
             } else if (selected_game_index_ < library_.size()) {
                 launch_requested_ = library_[selected_game_index_].virtual_path;
+                StartPlaytimeSession(library_[selected_game_index_].title_id);
             }
         } else if (mouse_x >= 1120.0f && mouse_x <= 1240.0f && mouse_y >= 660.0f && mouse_y <= 710.0f) {
             show_game_options_ = true;
@@ -2680,23 +2878,46 @@ void XboxFrontend::DrawSwitchNso(std::vector<core::gpu::RasterVertex>& out, core
         UiGeometryBuilder::AddText(out, "Local Player Profile - Offline", 90.0f, 135.0f, 1.5f, UiColor::White());
     }
 
-    const char* cards[][2] = {
-        {"Save Data Management", ("Local save/states: " + std::to_string(state_count) + " files in save:/ - managed by the emulator").c_str()},
-        {"Local Multiplayer", "Up to 4 connected Xbox controllers are mapped to emulated Joy-Cons / Pro Controllers."},
-        {"Shader Cache & Pipeline", "RDNA2-compiled pipeline caches are stored locally per title and reused on launch."}
-    };
+    // Real LAN multiplayer (LDN): lobby create / scan / join / leave
+    auto lan_status = GetLdnStatusLines();
+    struct NsoAction { std::string title; std::string sub; };
+    std::vector<NsoAction> cards_v;
+    std::string host_title = "Host LAN Lobby";
+    if (selected_game_index_ < library_.size()) {
+        host_title = "Host LAN Lobby for " + library_[selected_game_index_].title.substr(0, 34);
+    }
+    cards_v.push_back({host_title, "Open a local-wireless lobby on this LAN (A)"});
+    cards_v.push_back({"Scan for Lobbies", "Discover Nemu lobbies on the local network (X)"});
+    if (!ldn_discovered_.empty()) {
+        const auto& sd = ldn_discovered_[nso_lan_row_ % ldn_discovered_.size()];
+        cards_v.push_back({"Join: " + std::string(sd.name),
+                           std::to_string(sd.player_count) + "/" + std::to_string(sd.max_players) + " players - (Y) to join"});
+    }
+    if (ldn_station_ && ldn_station_->GetState() != nemu::core::network::LdnStation::State::Initialized) {
+        cards_v.push_back({"Leave Lobby", "Close the access point / disconnect (LB)"});
+    }
+    cards_v.push_back({"Local Multiplayer", "Up to 4 connected Xbox controllers map to emulated Joy-Cons / Pro Controllers."});
 
-    for (size_t c = 0; c < 3; ++c) {
+    for (size_t c = 0; c < cards_v.size() && c < 3; ++c) {
         float cy = 215.0f + static_cast<float>(c) * 125.0f;
         UiGeometryBuilder::AddQuad(out, 60.0f, cy, 1160.0f, 105.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
         UiGeometryBuilder::AddRectOutline(out, 60.0f, cy, 1160.0f, 105.0f, 1.5f, UiColor{0.26f, 0.26f, 0.26f, 1.0f});
 
         if (overlay) {
-            gpu->UiTextOverlay(cards[c][0], 90.0f, cy + 20.0f, 20.0f, 0.0f, 0.82f, 0.90f, 1.0f, -1);
-            gpu->UiTextOverlay(cards[c][1], 90.0f, cy + 55.0f, 15.0f, 0.80f, 0.82f, 0.86f, 1.0f, -1);
+            gpu->UiTextOverlay(cards_v[c].title, 90.0f, cy + 20.0f, 20.0f, 0.0f, 0.82f, 0.90f, 1.0f, -1);
+            gpu->UiTextOverlay(cards_v[c].sub, 90.0f, cy + 55.0f, 15.0f, 0.80f, 0.82f, 0.86f, 1.0f, -1);
         } else {
-            UiGeometryBuilder::AddText(out, cards[c][0], 90.0f, cy + 20.0f, 1.6f, UiColor::EdenCyan());
-            UiGeometryBuilder::AddText(out, cards[c][1], 90.0f, cy + 55.0f, 1.3f, UiColor::TextWhite());
+            UiGeometryBuilder::AddText(out, cards_v[c].title, 90.0f, cy + 20.0f, 1.6f, UiColor::EdenCyan());
+        }
+    }
+
+    // Live LAN status panel (bottom-left)
+    if (overlay && !lan_status.empty()) {
+        float sy = 540.0f;
+        gpu->UiFillRectOverlay(60.0f, sy, 640.0f, 100.0f, 0.1765f, 0.1765f, 0.1765f, 1.0f);
+        for (size_t i = 0; i < lan_status.size() && i < 3; ++i) {
+            gpu->UiTextOverlay(lan_status[i], 70.0f, sy + 8.0f + static_cast<float>(i) * 30.0f, 15.0f,
+                               0.30f, 0.90f, 0.95f, 1.0f, -1);
         }
     }
 
@@ -2801,9 +3022,9 @@ void XboxFrontend::DrawSwitchEShop(std::vector<core::gpu::RasterVertex>& out, co
     std::string icon_path = FindAsset("ui/icon_eshop.png");
     if (overlay && !icon_path.empty()) {
         gpu->UiImageOverlay("hdr_eshop", icon_path, 60.0f, 18.0f, 44.0f, 44.0f);
-        gpu->UiTextOverlay("Nintendo eShop / Software Manager", 120.0f, 26.0f, 26.0f, 0.15f, 0.15f, 0.15f, 1.0f, -1);
+        gpu->UiTextOverlay("Game Manager", 120.0f, 26.0f, 26.0f, 0.15f, 0.15f, 0.15f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "NINTENDO ESHOP / SOFTWARE MANAGER", 60.0f, 26.0f, 2.2f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "GAME MANAGER", 60.0f, 26.0f, 2.2f, UiColor::White());
     }
 
     UiGeometryBuilder::AddQuad(out, 60.0f, 105.0f, 1160.0f, 80.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
@@ -2812,7 +3033,7 @@ void XboxFrontend::DrawSwitchEShop(std::vector<core::gpu::RasterVertex>& out, co
     auto st = QueryStorageStats("sdmc:/");
     auto gb = [](uintmax_t b) { return static_cast<double>(b) / (1000.0 * 1000.0 * 1000.0); };
     if (overlay) {
-        gpu->UiTextOverlay("Emulator Storage (sdmc:/ + save:/)", 85.0f, 120.0f, 18.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("Game Manager - Storage / Browser (RetroArch style)", 85.0f, 120.0f, 18.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
         if (st.valid) {
             char st_buf[96];
             std::snprintf(st_buf, sizeof(st_buf), "Free Space: %.1f GB / %.1f GB Available", gb(st.free_bytes), gb(st.capacity_bytes));
@@ -2841,7 +3062,7 @@ void XboxFrontend::DrawSwitchEShop(std::vector<core::gpu::RasterVertex>& out, co
         }
     };
 
-    draw_row(0, "Install Software (NSP / XCI / NRO)", "Scan all mounted storage for new titles (X)", false);
+    draw_row(0, "Scan Storage / Install Content", "Recursive scan of all drives for NSP / XCI / NRO / ROMs (X)", false);
     if (library_.empty()) {
         draw_row(1, "Installed Applications (0 Games)", "No titles found yet", false);
     } else {

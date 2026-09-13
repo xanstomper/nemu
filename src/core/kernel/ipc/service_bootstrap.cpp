@@ -14,6 +14,8 @@
 #include "vi_service.hpp"
 #include "pl_service.hpp"
 #include "nifm_service.hpp"
+#include "ldn_service.hpp"
+#include "core/network/ldn_network.hpp"
 
 #include "core/gpu/gpu_interface.hpp"
 #include "core/gpu/nvhost/nvdevice.hpp"
@@ -30,7 +32,8 @@ std::shared_ptr<ServiceRegistry> CreateDefaultServiceRegistry(
     std::shared_ptr<gpu::IGpuBackend> gpu_backend,
     std::shared_ptr<gpu::nvhost::NvDeviceManager> device_manager,
     std::shared_ptr<gpu::presentation::Nvnflinger> flinger
-) {
+,
+    std::shared_ptr<nemu::core::network::LdnUdpNetwork> ldn_net) {
     (void)gpu_backend;
     auto registry = std::make_shared<ServiceRegistry>();
 
@@ -57,6 +60,15 @@ std::shared_ptr<ServiceRegistry> CreateDefaultServiceRegistry(
     // BSD socket services (bsd:u, bsd:s)
     registry->Register(std::make_shared<BsdService>("bsd:u"));
     registry->Register(std::make_shared<BsdService>("bsd:s"));
+
+    // LDN local-wireless multiplayer (ldn:u, ldn:m, ldn:s) backed by the
+    // real UDP LAN session layer shared with the NSO screen.
+    if (!ldn_net) {
+        ldn_net = std::make_shared<nemu::core::network::LdnUdpNetwork>();
+    }
+    registry->Register(std::make_shared<LdnService>(ldn_net, "ldn:u"));
+    registry->Register(std::make_shared<LdnService>(ldn_net, "ldn:m"));
+    registry->Register(std::make_shared<LdnService>(ldn_net, "ldn:s"));
 
     // File system service.
     if (vfs) {

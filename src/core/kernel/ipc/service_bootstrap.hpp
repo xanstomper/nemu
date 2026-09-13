@@ -21,6 +21,10 @@ namespace nemu::core::filesystem {
 class VirtualFileSystem;
 } // namespace nemu::core::filesystem
 
+namespace nemu::core {
+namespace network { class LdnUdpNetwork; }
+}
+
 namespace nemu::core::kernel::ipc {
 
 /// Bootstrap the full statically-registered Horizon HLE service set that a
@@ -37,6 +41,7 @@ std::shared_ptr<ServiceRegistry> CreateDefaultServiceRegistry(
     std::shared_ptr<audio::IAudioBackend> audio_backend,
     std::shared_ptr<gpu::IGpuBackend> gpu_backend,
     std::shared_ptr<gpu::nvhost::NvDeviceManager> device_manager,
-    std::shared_ptr<gpu::presentation::Nvnflinger> flinger);
+    std::shared_ptr<gpu::presentation::Nvnflinger> flinger,
+    std::shared_ptr<nemu::core::network::LdnUdpNetwork> ldn_net = nullptr);
 
 } // namespace nemu::core::kernel::ipc

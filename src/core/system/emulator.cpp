@@ -103,9 +103,12 @@ bool Emulator::Initialize() {
     device_manager_ = std::make_shared<gpu::nvhost::NvDeviceManager>(maxwell_, &process_->GetVirtualMemory());
     flinger_ = std::make_shared<gpu::presentation::Nvnflinger>(gpu_backend_);
 
+    // 10.5 LDN LAN multiplayer backend (shared with the NSO screen)
+    ldn_net_ = std::make_shared<network::LdnUdpNetwork>();
+
     // 11. Horizon IPC Service Registry Bootstrap
     service_registry_ = kernel::ipc::CreateDefaultServiceRegistry(
-        vfs_, audio_backend_, gpu_backend_, device_manager_, flinger_
+        vfs_, audio_backend_, gpu_backend_, device_manager_, flinger_, ldn_net_
     );
     kernel::SvcDispatcher::InitializeIpc(service_registry_);
     auto hid_base = service_registry_->Find("hid");

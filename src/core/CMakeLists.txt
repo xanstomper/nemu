@@ -11,6 +11,7 @@ add_subdirectory(audio)
 add_subdirectory(hid)
 add_subdirectory(debug)
 add_subdirectory(save)
+add_subdirectory(network)
 add_subdirectory(config)
 add_subdirectory(system)
 
@@ -31,6 +32,7 @@ target_link_libraries(Nemu.Core INTERFACE
     Nemu.Save
     Nemu.Config
     Nemu.System
+    Nemu.Network
     Nemu.Platform
 )
 

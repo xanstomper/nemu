@@ -117,6 +117,7 @@ int main(int argc, char** argv) {
     // Initialize Xbox Frontend for GUI navigation and game library browsing
     frontend::XboxFrontend frontend(*emulator.GetVfs(), *emulator.GetConfigManager());
     auto controller = emulator.GetControllerDriver();
+    frontend.SetLdnNetwork(emulator.GetLdnNetwork());
 
     if (!initial_subview.empty()) {
         if (initial_subview == "settings") frontend.SetActiveSubView(frontend::ActiveSubView::SystemSettings);
@@ -329,6 +330,7 @@ int main(int argc, char** argv) {
             }
 
             NEMU_LOG_INFO("Frontend", "Emulation concluded; returning to Eden UI Home Screen");
+            frontend.EndPlaytimeSession();
             frontend.RefreshLibrary();
         }
 
