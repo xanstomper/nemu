@@ -179,6 +179,22 @@ public:
     void PushDiagnostics(const LiveDiagnostics& d) noexcept { live_diag_ = d; }
     [[nodiscard]] const LiveDiagnostics& GetDiagnostics() const noexcept { return live_diag_; }
 
+    /// True once per settings change that affects live subsystems.
+    /// The main loop consumes this and calls Emulator::ApplyRuntimeConfig().
+    [[nodiscard]] bool ConsumeConfigChanged() noexcept {
+        bool r = config_changed_;
+        config_changed_ = false;
+        return r;
+    }
+
+    /// Real controller connection state (polled from the driver by main loop).
+    struct ControllerStatus {
+        bool connected[4]{};
+        bool xinput_available{false};
+    };
+    void PushControllerStatus(const ControllerStatus& s) noexcept { ctrl_status_ = s; }
+    [[nodiscard]] const ControllerStatus& GetControllerStatus() const noexcept { return ctrl_status_; }
+
 private:
     void HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b, bool pressed_start, bool pressed_y);
     void HandleFileManagerInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b, bool pressed_x, bool pressed_y);
@@ -243,6 +259,8 @@ private:
     size_t power_menu_row_{0};
     size_t news_active_article_{0};
     LiveDiagnostics live_diag_{};
+    bool config_changed_{false};
+    ControllerStatus ctrl_status_{};
     bool prev_btn_lb_settings_{false};
     bool prev_btn_rb_settings_{false};
     size_t album_active_photo_{0};

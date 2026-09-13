@@ -1014,6 +1014,7 @@ void XboxFrontend::HandleOptimizersInput(const core::hid::XboxGamepadState& inpu
 
     if (changed) {
         config_.Save();
+        config_changed_ = true;
     }
 }
 
@@ -1094,6 +1095,7 @@ void XboxFrontend::HandleControllersInput(const core::hid::XboxGamepadState& inp
 
     if (changed) {
         config_.Save();
+        config_changed_ = true;
     }
 }
 
@@ -1150,6 +1152,7 @@ void XboxFrontend::HandleSystemInput(const core::hid::XboxGamepadState& input, b
 
     if (changed) {
         config_.Save();
+        config_changed_ = true;
     }
 }
 
@@ -1307,9 +1310,11 @@ void XboxFrontend::HandleQuickMenuInput(const core::hid::XboxGamepadState& input
             if (pressed_left && static_cast<u32>(cfg.resolution_scale) > 0) {
                 cfg.resolution_scale = static_cast<core::config::ResolutionScale>(static_cast<u32>(cfg.resolution_scale) - 1);
                 config_.Save();
+                config_changed_ = true;
             } else if (pressed_right && static_cast<u32>(cfg.resolution_scale) < 4) {
                 cfg.resolution_scale = static_cast<core::config::ResolutionScale>(static_cast<u32>(cfg.resolution_scale) + 1);
                 config_.Save();
+                config_changed_ = true;
             }
             break;
 
@@ -1318,6 +1323,7 @@ void XboxFrontend::HandleQuickMenuInput(const core::hid::XboxGamepadState& input
                 cfg.button_layout = (cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard) ?
                     core::hid::FaceButtonLayout::XboxMirrored : core::hid::FaceButtonLayout::NintendoStandard;
                 config_.Save();
+                config_changed_ = true;
                 ShowToast((cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard) ?
                           "Layout: Nintendo Standard (B/A/Y/X)" : "Layout: Xbox Mirrored (A/B/X/Y)");
             }
@@ -1758,6 +1764,7 @@ void XboxFrontend::ProcessPointer(float mouse_x, float mouse_y, bool left_down, 
                         using RS = core::config::ResolutionScale;
                         cfg.resolution_scale = (cfg.resolution_scale == RS::Native_1_0x) ? RS::SeriesX_1_5x : RS::Native_1_0x;
                         config_.Save();
+                        config_changed_ = true;
                     } else if (o == 2) {
                         // Real save-data check via VFS
                         if (selected_game_index_ < library_.size()) {
@@ -1856,10 +1863,12 @@ void XboxFrontend::ProcessPointer(float mouse_x, float mouse_y, bool left_down, 
                         cfg.button_layout = (cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard)
                             ? core::hid::FaceButtonLayout::XboxMirrored : core::hid::FaceButtonLayout::NintendoStandard;
                         config_.Save();
+                        config_changed_ = true;
                     } else if (r == 3) {
                         auto& cfg = config_.GetConfig();
                         cfg.vibration_enabled = !cfg.vibration_enabled;
                         config_.Save();
+                        config_changed_ = true;
                     } else if (r == 4) {
                         active_subview_ = ActiveSubView::None;
                         current_tab_ = FrontendTab::Library;
@@ -2140,6 +2149,7 @@ void XboxFrontend::HandleSettingsInput(const core::hid::XboxGamepadState& input,
             }
         }
         config_.Save();
+        config_changed_ = true;
     }
 }
 
@@ -2167,10 +2177,12 @@ void XboxFrontend::HandleControllersSubInput(const core::hid::XboxGamepadState& 
             cfg.button_layout = (cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard)
                 ? core::hid::FaceButtonLayout::XboxMirrored : core::hid::FaceButtonLayout::NintendoStandard;
             config_.Save();
+            config_changed_ = true;
         } else if (controllers_sub_row_ == 3) {
             auto& cfg = config_.GetConfig();
             cfg.vibration_enabled = !cfg.vibration_enabled;
             config_.Save();
+            config_changed_ = true;
         } else if (controllers_sub_row_ == 4) {
             active_subview_ = ActiveSubView::None;
             current_tab_ = FrontendTab::Library;
@@ -2371,9 +2383,22 @@ void XboxFrontend::DrawSwitchControllers(std::vector<core::gpu::RasterVertex>& o
     UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.1765f, 0.1765f, 0.1765f, 1.0f});
 
     std::string icon_path = FindAsset("ui/icon_controllers.png");
-    // Real input source status (what the emulator is actually reading)
-    std::string input_status = pointer_active_ ? "Input: Mouse / Touch + Keyboard"
-                                               : "Input: Keyboard (WASD/Arrows, Z/X/Enter) - connect gamepad for rumble";
+    // Real polled connection state from the Xbox controller driver
+    const auto& cs = ctrl_status_;
+    std::string input_status;
+    {
+        size_t n = 0;
+        for (bool c : cs.connected) n += c ? 1 : 0;
+        if (n > 0) {
+            input_status = "Connected: " + std::to_string(n) + " Xbox controller" + (n > 1 ? "s" : "") +
+                           (cs.xinput_available ? " (XInput)" : "");
+        } else if (pointer_active_) {
+            input_status = "Input: Mouse / Touch + Keyboard - no gamepad detected";
+        } else {
+            input_status = "Input: Keyboard - no gamepad detected" +
+                           std::string(cs.xinput_available ? " (XInput ready)" : " (XInput unavailable)");
+        }
+    }
     if (overlay && !icon_path.empty()) {
         gpu->UiImageOverlay("hdr_ctrl", icon_path, 60.0f, 32.0f, 38.0f, 38.0f);
         gpu->UiTextOverlay("Controllers", 112.0f, 36.0f, 26.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);

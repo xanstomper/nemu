@@ -197,6 +197,19 @@ int main(int argc, char** argv) {
         // Forward gamepad state to Eden UI state machine
         frontend.ProcessInput(input_state, controller.get());
 
+        // Apply config changes made in the Switch UI to live emulator subsystems
+        if (frontend.ConsumeConfigChanged()) {
+            emulator.ApplyRuntimeConfig();
+        }
+
+        // Push real controller connection state (polled from the driver)
+        if (controller) {
+            frontend::XboxFrontend::ControllerStatus cs;
+            for (size_t i = 0; i < 4; ++i) cs.connected[i] = controller->IsConnected(i);
+            cs.xinput_available = controller->IsXInputAvailable();
+            frontend.PushControllerStatus(cs);
+        }
+
         // Check if user requested to launch a game from carousel
         auto launch_req = frontend.ConsumeLaunchRequest();
         if (launch_req) {

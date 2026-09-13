@@ -126,7 +126,32 @@ bool Emulator::Initialize() {
     state_ = EmulatorState::Ready;
     NEMU_LOG_INFO("System", "Nemu System Runtime initialized successfully (GPU: {}, Audio: {})",
                   gpu_backend_->GetBackendName(), audio_backend_->GetBackendName());
+    ApplyRuntimeConfig();
     return true;
+}
+
+void Emulator::ApplyRuntimeConfig() {
+    const auto& cfg = config_manager_->GetConfig();
+
+    // HID: face-button layout + analog deadzones
+    if (hid_manager_) {
+        hid_manager_->SetButtonLayout(cfg.button_layout);
+        hid_manager_->SetDeadzones(cfg.inner_deadzone, cfg.outer_deadzone);
+    }
+
+    // Audio: master mute (volume scaling applied per-queue by backends that
+    // support it; toggling audio_enabled starts/stops the stream).
+    if (audio_backend_) {
+        if (cfg.audio_enabled) {
+            audio_backend_->Start();
+        } else {
+            audio_backend_->Stop();
+        }
+    }
+
+    NEMU_LOG_INFO("System", "Runtime config applied: layout={}, deadzone={:.2f}-{:.2f}, audio={}",
+                  static_cast<u32>(cfg.button_layout), cfg.inner_deadzone, cfg.outer_deadzone,
+                  cfg.audio_enabled ? "on" : "off");
 }
 
 void Emulator::Shutdown() {

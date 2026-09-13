@@ -108,6 +108,11 @@ public:
     /// Live JIT recompiler stats for the Diagnostics screen (null when JIT disabled)
     [[nodiscard]] const cpu::jit::JitCompiler* GetJitCompiler() const noexcept { return jit_.get(); }
 
+    /// Apply the persisted runtime config to live subsystems (HID layout,
+    /// deadzones, vibration, audio). Called at boot and whenever the UI
+    /// changes a setting so everything the Switch UI shows is what runs.
+    void ApplyRuntimeConfig();
+
 private:
     void PollInput();
     void StepCpuQuantum(size_t instruction_budget);
