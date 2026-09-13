@@ -126,6 +126,7 @@ int main(int argc, char** argv) {
         else if (initial_subview == "album") frontend.SetActiveSubView(frontend::ActiveSubView::Album);
         else if (initial_subview == "news") frontend.SetActiveSubView(frontend::ActiveSubView::News);
         else if (initial_subview == "nso") frontend.SetActiveSubView(frontend::ActiveSubView::NSO);
+        else if (initial_subview == "eshop") frontend.SetActiveSubView(frontend::ActiveSubView::EShop);
         else if (initial_subview == "profile") frontend.SetActiveSubView(frontend::ActiveSubView::UserProfile);
     }
 
@@ -276,6 +277,19 @@ int main(int argc, char** argv) {
                         }
                         if (frontend.ConsumeLoadStateRequested()) {
                             emulator.LoadState(frontend.GetStateSlot());
+                        }
+                        if (frontend.ConsumeScreenshotRequested()) {
+                            // Capture the real frame to save:/screenshots/ (PPM; Album lists it live)
+                            std::error_code ec;
+                            std::filesystem::create_directories("save/screenshots", ec);
+                            auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::system_clock::now().time_since_epoch()).count();
+                            std::string path = "save/screenshots/nemu_" + std::to_string(now_ms) + ".ppm";
+                            if (emulator.GetGpuBackend()->DumpFramePPM(path.c_str())) {
+                                NEMU_LOG_INFO("Frontend", "Screenshot saved: {}", path);
+                            } else {
+                                NEMU_LOG_WARN("Frontend", "Screenshot failed (backend does not support frame dump)");
+                            }
                         }
 
                         std::this_thread::sleep_for(std::chrono::milliseconds(16));

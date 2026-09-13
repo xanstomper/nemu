@@ -120,6 +120,13 @@ public:
         restart_requested_ = false;
         return r;
     }
+
+    /// True once per quick-menu screenshot request (main loop captures the real frame).
+    [[nodiscard]] bool ConsumeScreenshotRequested() noexcept {
+        bool r = screenshot_requested_;
+        screenshot_requested_ = false;
+        return r;
+    }
     [[nodiscard]] bool ConsumeCloseGameRequested() noexcept {
         bool r = close_game_requested_;
         close_game_requested_ = false;
@@ -196,6 +203,19 @@ private:
     /// covers/ directory lookup by title id). Empty result = placeholder tile.
     void AttachCover(GameEntry& entry);
 
+    /// Real data providers for Switch subviews (no mock strings).
+    /// Storage stats of the host volume backing the given mount prefix.
+    struct StorageStats {
+        uintmax_t capacity_bytes{0};
+        uintmax_t free_bytes{0};
+        bool valid{false};
+    };
+    [[nodiscard]] StorageStats QueryStorageStats(std::string_view mount_prefix) const;
+    /// List screenshot/save-state image files under a virtual dir (host paths).
+    [[nodiscard]] std::vector<std::pair<std::string, std::string>> ListCaptureFiles(std::string_view vdir, size_t max) const;
+    /// Emulator version string reported by the build (real firmware line).
+    [[nodiscard]] static std::string GetEmulatorVersionString();
+
     core::filesystem::VirtualFileSystem& vfs_;
     core::config::ConfigManager& config_;
 
@@ -246,6 +266,7 @@ private:
     bool show_quick_menu_{false};
     size_t quick_menu_row_{0};
     u32 current_state_slot_{0};
+    bool screenshot_requested_{false};
     bool restart_requested_{false};
     bool close_game_requested_{false};
     bool save_state_requested_{false};

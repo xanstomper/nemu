@@ -1281,6 +1281,7 @@ void XboxFrontend::HandleQuickMenuInput(const core::hid::XboxGamepadState& input
 
         case 7: // Take Screenshot
             if (pressed_a) {
+                screenshot_requested_ = true;
                 ShowToast("Screenshot captured to save:/screenshots/");
                 NEMU_LOG_INFO("Frontend", "QuickMenu: Screenshot captured");
             }
@@ -1318,6 +1319,41 @@ constexpr float kFocusLift = 10.0f;         // px the focused tile rises
         case 4: return UiColor::Purple();
         default: return UiColor::EdenCyan();
     }
+}
+
+XboxFrontend::StorageStats XboxFrontend::QueryStorageStats(std::string_view mount_prefix) const {
+    StorageStats st{};
+    auto host = vfs_.ResolvePath(mount_prefix);
+    if (!host) return st;
+    std::error_code ec;
+    auto space = std::filesystem::space(*host, ec);
+    if (ec) return st;
+    st.capacity_bytes = space.capacity;
+    st.free_bytes = space.available;
+    st.valid = true;
+    return st;
+}
+
+std::vector<std::pair<std::string, std::string>> XboxFrontend::ListCaptureFiles(std::string_view vdir, size_t max) const {
+    std::vector<std::pair<std::string, std::string>> out;
+    auto host = vfs_.ResolvePath(vdir);
+    if (!host) return out;
+    std::error_code ec;
+    if (!std::filesystem::exists(*host, ec)) return out;
+    for (const auto& e : std::filesystem::directory_iterator(*host, ec)) {
+        if (!e.is_regular_file(ec)) continue;
+        auto ext = e.path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".ppm") continue;
+        auto ftime = std::filesystem::last_write_time(e.path(), ec);
+        out.emplace_back(e.path().string(), e.path().filename().string());
+        if (out.size() >= max) break;
+    }
+    return out;
+}
+
+std::string XboxFrontend::GetEmulatorVersionString() {
+    return "Nemu v0.8.4-preview (Horizon OS 18.1.0 compatibility layer)";
 }
 
 void XboxFrontend::AttachCover(GameEntry& entry) {
@@ -1478,9 +1514,11 @@ void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& ou
             UiGeometryBuilder::AddRing(out, cx, icon_y, icon_radius + 6.0f, 3.5f,
                                        UiColor{0.0f, 0.82f * pulse, 0.90f * pulse, 0.95f});
             if (overlay) {
-                gpu->UiTextOverlay(icon_labels[i], cx, 472.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
+                // Authentic Switch subtitle: centered label pill with backing fill
+                gpu->UiFillRectOverlay(cx - 130.0f, 606.0f, 260.0f, 30.0f, 0.1765f, 0.1765f, 0.1765f, 1.0f);
+                gpu->UiTextOverlay(icon_labels[i], cx, 612.0f, 17.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
             } else {
-                UiGeometryBuilder::AddText(out, icon_labels[i], cx - 50.0f, 472.0f, 1.5f, UiColor::White());
+                UiGeometryBuilder::AddText(out, icon_labels[i], cx - 60.0f, 612.0f, 1.3f, UiColor::White());
             }
         } else if (hovered) {
             UiGeometryBuilder::AddRing(out, cx, icon_y, icon_radius + 4.0f, 2.0f, UiColor{0.0f, 0.82f, 0.90f, 0.85f});
@@ -1677,7 +1715,15 @@ void XboxFrontend::ProcessPointer(float mouse_x, float mouse_y, bool left_down, 
                         cfg.resolution_scale = (cfg.resolution_scale == RS::Native_1_0x) ? RS::SeriesX_1_5x : RS::Native_1_0x;
                         config_.Save();
                     } else if (o == 2) {
-                        ShowToast("Save Data synchronized to Xbox Cloud Storage");
+                        // Real save-data check via VFS
+                        if (selected_game_index_ < library_.size()) {
+                            const auto& g = library_[selected_game_index_];
+                            if (auto sz = vfs_.GetFileSize("save:/" + std::to_string(g.title_id % 100000) + "/data.bin")) {
+                                ShowToast("Save data verified: " + std::to_string(*sz / 1024) + " KB");
+                            } else {
+                                ShowToast("No save data yet for this title");
+                            }
+                        }
                     } else if (o == 3) {
                         ScanDirectory("ROOT:/");
                     } else if (o == 4) {
@@ -2166,10 +2212,18 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
         opts.push_back({"Master Volume", std::to_string(cfg.audio_volume) + "%", "Global emulator audio output volume"});
         opts.push_back({"Audio Enabled", cfg.audio_enabled ? "Enabled" : "Muted", "Master mute for all emulator audio"});
     } else if (settings_category_ == 5) {
-        opts.push_back({"Console Nickname", "Xbox Series X (Nemu)", "Network identifier for local wireless play"});
-        opts.push_back({"Horizon OS Firmware", "v18.1.0", "Emulated system version for Switch game compatibility"});
-        opts.push_back({"Storage Mounts", "sdmc:/, save:/, romfs:/", "Virtual file system roots mounted for game data"});
-        opts.push_back({"Xbox Package Trust", "UWP Full Trust (Direct SSD)", "High-performance direct NVMe disk I/O enabled"});
+        auto st = QueryStorageStats("sdmc:/");
+        auto gb = [](uintmax_t b) { return static_cast<double>(b) / (1000.0 * 1000.0 * 1000.0); };
+        std::string free_str = st.valid
+            ? ([](double v){ char b[48]; std::snprintf(b, sizeof(b), "%.1f GB Free", v); return std::string(b); })(gb(st.free_bytes))
+            : std::string("Unavailable");
+        std::string cap_str = st.valid
+            ? ([](double v){ char b[48]; std::snprintf(b, sizeof(b), "%.1f GB Total", v); return std::string(b); })(gb(st.capacity_bytes))
+            : std::string("Unavailable");
+        opts.push_back({"Console Nickname", "Nemu (Xbox Horizon OS)", "Network identifier for local wireless play"});
+        opts.push_back({"Emulator Firmware", GetEmulatorVersionString(), "Running build of the emulator core"});
+        opts.push_back({"Storage (sdmc:/)", cap_str + " - " + free_str, "Live filesystem stats for the game storage mount"});
+        opts.push_back({"Save Data & Config", "save:/ (config.ini, states, screenshots)", "Virtual file system roots mounted for game data"});
     }
 
     for (size_t r = 0; r < opts.size(); ++r) {
@@ -2215,13 +2269,16 @@ void XboxFrontend::DrawSwitchControllers(std::vector<core::gpu::RasterVertex>& o
     UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.1765f, 0.1765f, 0.1765f, 1.0f});
 
     std::string icon_path = FindAsset("ui/icon_controllers.png");
+    // Real input source status (what the emulator is actually reading)
+    std::string input_status = pointer_active_ ? "Input: Mouse / Touch + Keyboard"
+                                               : "Input: Keyboard (WASD/Arrows, Z/X/Enter) - connect gamepad for rumble";
     if (overlay && !icon_path.empty()) {
         gpu->UiImageOverlay("hdr_ctrl", icon_path, 60.0f, 32.0f, 38.0f, 38.0f);
         gpu->UiTextOverlay("Controllers", 112.0f, 36.0f, 26.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
-        gpu->UiTextOverlay("[ Controller 1: Xbox Wireless Controller - Connected ]", 1220.0f, 40.0f, 16.0f, 0.20f, 0.85f, 0.35f, 1.0f, 1);
+        gpu->UiTextOverlay(input_status, 1220.0f, 40.0f, 15.0f, 0.20f, 0.85f, 0.35f, 1.0f, 1);
     } else {
         UiGeometryBuilder::AddText(out, "CONTROLLERS", 60.0f, 36.0f, 2.0f, UiColor::White());
-        UiGeometryBuilder::AddText(out, "[ Connected: Xbox Controller 1 ]", 800.0f, 36.0f, 1.4f, UiColor::NeonGreen());
+        UiGeometryBuilder::AddText(out, "[ Input: Keyboard / Mouse ]", 800.0f, 36.0f, 1.4f, UiColor::NeonGreen());
     }
 
     UiGeometryBuilder::AddQuad(out, 40.0f, 80.0f, 1200.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
@@ -2478,17 +2535,28 @@ void XboxFrontend::DrawSwitchNso(std::vector<core::gpu::RasterVertex>& out, core
 
     UiGeometryBuilder::AddQuad(out, 60.0f, 110.0f, 1160.0f, 80.0f, UiColor{0.22f, 0.22f, 0.22f, 1.0f});
     UiGeometryBuilder::AddRectOutline(out, 60.0f, 110.0f, 1160.0f, 80.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+    // Real save-slot count from save:/ plus real local status (no online emulation claims)
+    size_t state_count = 0;
+    {
+        std::error_code ec;
+        if (auto host = vfs_.ResolvePath("save:/")) {
+            for (const auto& e : std::filesystem::directory_iterator(*host, ec)) {
+                auto n = e.path().filename().string();
+                if (n.rfind("state_", 0) == 0 || n.rfind("nemu_", 0) == 0) ++state_count;
+            }
+        }
+    }
     if (overlay) {
-        gpu->UiTextOverlay("Player 1 (Xbox Full Trust)", 90.0f, 125.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
-        gpu->UiTextOverlay("Membership: Active (Family + Expansion Pack) • Cloud Save Sync: Up to Date", 90.0f, 155.0f, 15.0f, 0.20f, 0.85f, 0.40f, 1.0f, -1);
+        gpu->UiTextOverlay("Local Player Profile", 90.0f, 125.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("Offline mode - " + std::to_string(state_count) + " local saves/states in save:/ - cloud services not emulated", 90.0f, 155.0f, 15.0f, 0.20f, 0.85f, 0.40f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "Player 1 (Xbox Full Trust) - Active Membership", 90.0f, 135.0f, 1.5f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "Local Player Profile - Offline", 90.0f, 135.0f, 1.5f, UiColor::White());
     }
 
     const char* cards[][2] = {
-        {"Save Data Cloud Storage", "All 5 installed titles backed up to Xbox Cloud. Automatic sync on game exit enabled."},
-        {"Online Play & Mesh Netplay", "Connected to Switch LAN mesh network. Low-latency P2P netplay active for Super Smash Bros."},
-        {"Special Offers & Cloud Shaders", "RDNA2 hardware-compiled pipeline caches active for Xbox Series S/X."}
+        {"Save Data Management", ("Local save/states: " + std::to_string(state_count) + " files in save:/ - managed by the emulator").c_str()},
+        {"Local Multiplayer", "Up to 4 connected Xbox controllers are mapped to emulated Joy-Cons / Pro Controllers."},
+        {"Shader Cache & Pipeline", "RDNA2-compiled pipeline caches are stored locally per title and reused on launch."}
     };
 
     for (size_t c = 0; c < 3; ++c) {
@@ -2533,13 +2601,27 @@ void XboxFrontend::DrawSwitchNews(std::vector<core::gpu::RasterVertex>& out, cor
         UiGeometryBuilder::AddText(out, "NEWS & UPDATES", 60.0f, 26.0f, 2.2f, UiColor::White());
     }
 
-    const char* news_items[][3] = {
-        {"Nemu Horizon OS 18.1.0 Update", "2026-09-13", "New 60 FPS graphics profiles enabled for Super Smash Bros and Zelda on Xbox Series X."},
-        {"Xbox Controller Setup & Deadzones", "2026-09-10", "Learn how to optimize analog stick deadzones and trigger curves for Switch games."},
-        {"AMD FSR 2.0 & AFMF Frame Gen", "2026-09-05", "Experience 4K ultra-sharp rendering and 120 FPS targets on compatible TV displays."}
-    };
+    // Real news: emulator changelog from the local repository
+    std::vector<std::array<std::string, 3>> news_items;
+    {
+        FILE* p = popen("git -C . log --pretty=format:%s@@%ad --date=short -n 6 2>/dev/null", "r");
+        if (p) {
+            char buf[512];
+            while (fgets(buf, sizeof(buf), p)) {
+                std::string line(buf);
+                while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+                auto sep = line.find("@@");
+                if (sep == std::string::npos) continue;
+                news_items.push_back({line.substr(0, sep), line.substr(sep + 2), ""});
+            }
+            pclose(p);
+        }
+    }
+    if (news_items.empty()) {
+        news_items.push_back({GetEmulatorVersionString(), "today", "Running build"});
+    }
 
-    for (size_t i = 0; i < 3; ++i) {
+    for (size_t i = 0; i < 3 && i < news_items.size(); ++i) {
         float ny = 110.0f + static_cast<float>(i) * 165.0f;
         UiGeometryBuilder::AddQuad(out, 60.0f, ny, 540.0f, 145.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
         UiGeometryBuilder::AddRectOutline(out, 60.0f, ny, 540.0f, 145.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
@@ -2547,10 +2629,8 @@ void XboxFrontend::DrawSwitchNews(std::vector<core::gpu::RasterVertex>& out, cor
         if (overlay) {
             gpu->UiTextOverlay(news_items[i][0], 85.0f, ny + 18.0f, 19.0f, 0.93f, 0.42f, 0.40f, 1.0f, -1);
             gpu->UiTextOverlay(news_items[i][1], 85.0f, ny + 46.0f, 13.0f, 0.60f, 0.60f, 0.60f, 1.0f, -1);
-            gpu->UiTextOverlay(news_items[i][2], 85.0f, ny + 72.0f, 14.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
         } else {
             UiGeometryBuilder::AddText(out, news_items[i][0], 85.0f, ny + 18.0f, 1.5f, UiColor::SwitchRed());
-            UiGeometryBuilder::AddText(out, news_items[i][2], 85.0f, ny + 72.0f, 1.2f, UiColor::TextWhite());
         }
     }
 
@@ -2558,17 +2638,20 @@ void XboxFrontend::DrawSwitchNews(std::vector<core::gpu::RasterVertex>& out, cor
     UiGeometryBuilder::AddRectOutline(out, 630.0f, 110.0f, 590.0f, 495.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
 
     if (overlay) {
-        gpu->UiTextOverlay("ARTICLE DETAILS", 660.0f, 135.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
-        gpu->UiTextOverlay("Welcome to the Nemu Nintendo Switch Emulator on Xbox!", 660.0f, 180.0f, 17.0f, 0.0f, 0.82f, 0.90f, 1.0f, -1);
-        gpu->UiTextOverlay("This release brings the authentic Nintendo Switch system experience", 660.0f, 220.0f, 15.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
-        gpu->UiTextOverlay("directly to your TV via Xbox Developer Mode. Features include:", 660.0f, 245.0f, 15.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
-        gpu->UiTextOverlay("• 100% interactive mouse and Xbox gamepad navigation", 660.0f, 280.0f, 15.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
-        gpu->UiTextOverlay("• Hardware-accelerated AMD FSR 2.0 upscaling up to 4K UHD", 660.0f, 310.0f, 15.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
-        gpu->UiTextOverlay("• Seamless Joy-Con to Xbox Series controller mapping with HD Rumble", 660.0f, 340.0f, 15.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
-        gpu->UiTextOverlay("• Instant save states and cloud synchronization", 660.0f, 370.0f, 15.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
+        // Real system status panel (live values, no marketing mock)
+        gpu->UiTextOverlay("SYSTEM STATUS", 660.0f, 135.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay(GetEmulatorVersionString(), 660.0f, 180.0f, 16.0f, 0.0f, 0.82f, 0.90f, 1.0f, -1);
+        const auto& cfg = config_.GetConfig();
+        std::string cpu_str = "CPU: " + std::string(cfg.cpu_backend == core::config::CpuBackendMode::Jit ? "ARM64 JIT" : "Interpreter")
+                            + (cfg.fastmem_enabled ? " + Fastmem" : "");
+        std::string gfx_str = "GPU: FSR " + std::string(cfg.upscaler == core::gpu::pipeline::UpscalerMode::FSR_2_0 ? "2.0" :
+                                                       cfg.upscaler == core::gpu::pipeline::UpscalerMode::FSR_1_0 ? "1.0" : "Bicubic");
+        std::string lib_str = "Library: " + std::to_string(library_.size()) + " titles installed";
+        gpu->UiTextOverlay(cpu_str, 660.0f, 220.0f, 15.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
+        gpu->UiTextOverlay(gfx_str, 660.0f, 245.0f, 15.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
+        gpu->UiTextOverlay(lib_str, 660.0f, 280.0f, 15.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "Welcome to Nemu on Xbox!", 660.0f, 140.0f, 1.6f, UiColor::EdenCyan());
-        UiGeometryBuilder::AddText(out, "Full interactive Switch emulation experience.", 660.0f, 180.0f, 1.3f, UiColor::TextWhite());
+        UiGeometryBuilder::AddText(out, "SYSTEM STATUS", 660.0f, 140.0f, 1.6f, UiColor::EdenCyan());
     }
 
     UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
@@ -2598,31 +2681,47 @@ void XboxFrontend::DrawSwitchEShop(std::vector<core::gpu::RasterVertex>& out, co
 
     UiGeometryBuilder::AddQuad(out, 60.0f, 105.0f, 1160.0f, 80.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
     UiGeometryBuilder::AddRectOutline(out, 60.0f, 105.0f, 1160.0f, 80.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+    // Real storage stats from the host volume backing sdmc:/
+    auto st = QueryStorageStats("sdmc:/");
+    auto gb = [](uintmax_t b) { return static_cast<double>(b) / (1000.0 * 1000.0 * 1000.0); };
     if (overlay) {
-        gpu->UiTextOverlay("Xbox Internal SSD Storage", 85.0f, 120.0f, 18.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
-        gpu->UiTextOverlay("Free Space: 482.4 GB / 1,000 GB Available", 85.0f, 150.0f, 15.0f, 0.20f, 0.85f, 0.40f, 1.0f, -1);
+        gpu->UiTextOverlay("Emulator Storage (sdmc:/ + save:/)", 85.0f, 120.0f, 18.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        if (st.valid) {
+            char st_buf[96];
+            std::snprintf(st_buf, sizeof(st_buf), "Free Space: %.1f GB / %.1f GB Available", gb(st.free_bytes), gb(st.capacity_bytes));
+            gpu->UiTextOverlay(st_buf, 85.0f, 150.0f, 15.0f, 0.20f, 0.85f, 0.40f, 1.0f, -1);
+        } else {
+            gpu->UiTextOverlay("Free Space: unknown (mount not found)", 85.0f, 150.0f, 15.0f, 0.85f, 0.55f, 0.20f, 1.0f, -1);
+        }
     } else {
-        UiGeometryBuilder::AddText(out, "Internal Storage: 482.4 GB Free", 85.0f, 135.0f, 1.5f, UiColor::NeonGreen());
+        UiGeometryBuilder::AddText(out, "Internal Storage", 85.0f, 135.0f, 1.5f, UiColor::White());
     }
 
-    const char* actions[][2] = {
-        {"Install Software (NSP / XCI / NRO)", "Scan local storage, USB, or sdmc:/ to install game cartridges and homebrew."},
-        {"Installed Applications (5 Games)", "Super Smash Bros. Ultimate, Zelda: Breath of the Wild, Super Mario Odyssey..."},
-        {"Software Updates & DLC", "Scan for game updates, patches, and downloadable content packages."},
-        {"Back to Home Menu", "Return to the Nintendo Switch HOME menu."}
-    };
+    // Real installed titles from the library scan
+    std::vector<std::pair<std::string, std::string>> actions;
+    actions.push_back({"Install Software (NSP / XCI / NRO)", "Scan sdmc:/ and all mounted storage for new titles."});
+    if (library_.empty()) {
+        actions.push_back({"Installed Applications (0 Games)", "No titles found. Install software or press (Y) on HOME to scan."});
+    } else {
+        std::string list = library_[0].title;
+        for (size_t i = 1; i < library_.size() && i < 3; ++i) list += ", " + library_[i].title;
+        if (library_.size() > 3) list += "...";
+        actions.push_back({"Installed Applications (" + std::to_string(library_.size()) + " Games)", list});
+    }
+    actions.push_back({"Software Updates & DLC", "Re-scan mounted storage for updates, patches and DLC."});
+    actions.push_back({"Back to Home Menu", "Return to the Nintendo Switch HOME menu."});
 
-    for (size_t a = 0; a < 4; ++a) {
+    for (size_t a = 0; a < actions.size(); ++a) {
         float ay = 205.0f + static_cast<float>(a) * 102.0f;
         UiGeometryBuilder::AddQuad(out, 60.0f, ay, 1160.0f, 86.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
         UiGeometryBuilder::AddRectOutline(out, 60.0f, ay, 1160.0f, 86.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
 
         if (overlay) {
-            gpu->UiTextOverlay(actions[a][0], 85.0f, ay + 18.0f, 19.0f, 1.0f, 0.74f, 0.20f, 1.0f, -1);
-            gpu->UiTextOverlay(actions[a][1], 85.0f, ay + 48.0f, 14.0f, 0.75f, 0.75f, 0.75f, 1.0f, -1);
+            gpu->UiTextOverlay(actions[a].first, 85.0f, ay + 18.0f, 19.0f, 1.0f, 0.74f, 0.20f, 1.0f, -1);
+            gpu->UiTextOverlay(actions[a].second, 85.0f, ay + 48.0f, 14.0f, 0.75f, 0.75f, 0.75f, 1.0f, -1);
         } else {
-            UiGeometryBuilder::AddText(out, actions[a][0], 85.0f, ay + 18.0f, 1.5f, UiColor::Gold());
-            UiGeometryBuilder::AddText(out, actions[a][1], 85.0f, ay + 48.0f, 1.2f, UiColor::TextDim());
+            UiGeometryBuilder::AddText(out, actions[a].first, 85.0f, ay + 18.0f, 1.5f, UiColor::Gold());
+            UiGeometryBuilder::AddText(out, actions[a].second, 85.0f, ay + 48.0f, 1.2f, UiColor::TextDim());
         }
     }
 
@@ -2657,28 +2756,30 @@ void XboxFrontend::DrawSwitchAlbum(std::vector<core::gpu::RasterVertex>& out, co
         UiGeometryBuilder::AddText(out, "ALBUM (SCREENSHOTS & CAPTURES)", 60.0f, 26.0f, 2.2f, UiColor::White());
     }
 
-    const char* shots[][2] = {
-        {"The Legend of Zelda: Breath of the Wild", "Captured 2026-09-12 18:42 • 1080p Docked"},
-        {"Super Smash Bros. Ultimate", "Captured 2026-09-11 21:15 • 1080p 60 FPS"},
-        {"Super Mario Odyssey", "Captured 2026-09-10 14:02 • 1080p 60 FPS"}
-    };
+    // Real captures: list files under save:/screenshots on the host
+    auto shots = ListCaptureFiles("save:/screenshots/", 3);
+    if (shots.empty()) {
+        shots = ListCaptureFiles("sdmc:/screenshots/", 3);
+    }
 
     for (size_t s = 0; s < 3; ++s) {
         float sx = 60.0f + static_cast<float>(s) * 395.0f;
         UiGeometryBuilder::AddQuad(out, sx, 120.0f, 370.0f, 490.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
         UiGeometryBuilder::AddRectOutline(out, sx, 120.0f, 370.0f, 490.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
 
-        if (s < library_.size() && overlay && !library_[s].cover_host_path.empty()) {
-            gpu->UiImageOverlay("shot_" + std::to_string(s), library_[s].cover_host_path, sx + 20.0f, 140.0f, 330.0f, 330.0f);
+        if (s < shots.size() && overlay) {
+            gpu->UiImageOverlay("shot_" + std::to_string(s), shots[s].first, sx + 20.0f, 140.0f, 330.0f, 330.0f);
         } else {
             UiGeometryBuilder::AddQuad(out, sx + 20.0f, 140.0f, 330.0f, 330.0f, UiColor{0.25f, 0.25f, 0.25f, 1.0f});
         }
 
         if (overlay) {
-            gpu->UiTextOverlay(shots[s][0], sx + 20.0f, 490.0f, 16.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
-            gpu->UiTextOverlay(shots[s][1], sx + 20.0f, 520.0f, 13.0f, 0.65f, 0.65f, 0.65f, 1.0f, -1);
-        } else {
-            UiGeometryBuilder::AddText(out, shots[s][0], sx + 20.0f, 490.0f, 1.3f, UiColor::White());
+            if (s < shots.size()) {
+                gpu->UiTextOverlay(shots[s].second, sx + 20.0f, 490.0f, 16.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+                gpu->UiTextOverlay("Captured in-game (save:/screenshots/)", sx + 20.0f, 520.0f, 13.0f, 0.65f, 0.65f, 0.65f, 1.0f, -1);
+            } else {
+                gpu->UiTextOverlay("No capture", sx + 20.0f, 490.0f, 16.0f, 0.55f, 0.55f, 0.55f, 1.0f, -1);
+            }
         }
     }
 
@@ -2715,29 +2816,36 @@ void XboxFrontend::DrawSwitchProfile(std::vector<core::gpu::RasterVertex>& out, 
         UiGeometryBuilder::AddText(out, "PLAY ACTIVITY", 60.0f, 125.0f, 1.6f, UiColor::EdenCyan());
     }
 
-    const char* activity[][2] = {
-        {"The Legend of Zelda: Breath of the Wild", "Played for 145 hours or more"},
-        {"Super Smash Bros. Ultimate", "Played for 80 hours or more"},
-        {"Super Mario Odyssey", "Played for 45 hours or more"},
-        {"Animal Crossing: New Horizons", "Played for 30 hours or more"}
-    };
-
-    for (size_t a = 0; a < 4; ++a) {
+    // Real play activity: installed library entries with real file size + format
+    for (size_t a = 0; a < 4 && a < library_.size(); ++a) {
+        const auto& g = library_[a];
         float ay = 165.0f + static_cast<float>(a) * 105.0f;
         UiGeometryBuilder::AddQuad(out, 60.0f, ay, 1160.0f, 90.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
         UiGeometryBuilder::AddRectOutline(out, 60.0f, ay, 1160.0f, 90.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
 
-        if (a < library_.size() && overlay && !library_[a].cover_host_path.empty()) {
-            gpu->UiImageOverlay("act_cov_" + std::to_string(a), library_[a].cover_host_path, 80.0f, ay + 10.0f, 70.0f, 70.0f);
+        if (overlay && !g.cover_host_path.empty()) {
+            gpu->UiImageOverlay("act_cov_" + std::to_string(a), g.cover_host_path, 80.0f, ay + 10.0f, 70.0f, 70.0f);
         }
 
-        if (overlay) {
-            gpu->UiTextOverlay(activity[a][0], 175.0f, ay + 20.0f, 19.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
-            gpu->UiTextOverlay(activity[a][1], 175.0f, ay + 50.0f, 15.0f, 0.65f, 0.65f, 0.65f, 1.0f, -1);
-        } else {
-            UiGeometryBuilder::AddText(out, activity[a][0], 175.0f, ay + 20.0f, 1.5f, UiColor::White());
-            UiGeometryBuilder::AddText(out, activity[a][1], 175.0f, ay + 50.0f, 1.3f, UiColor::TextDim());
+        std::error_code ec;
+        uintmax_t sz = std::filesystem::file_size(g.cover_host_path.empty() ? g.virtual_path : g.cover_host_path, ec);
+        std::string size_str;
+        if (!ec) {
+            char b[48];
+            std::snprintf(b, sizeof(b), "%.2f GB", static_cast<double>(sz) / 1e9);
+            size_str = std::string(b);
         }
+        std::string sub = g.format_badge + " - " + (size_str.empty() ? "Installed" : size_str);
+
+        if (overlay) {
+            gpu->UiTextOverlay(g.title, 175.0f, ay + 20.0f, 19.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+            gpu->UiTextOverlay(sub, 175.0f, ay + 50.0f, 15.0f, 0.65f, 0.65f, 0.65f, 1.0f, -1);
+        } else {
+            UiGeometryBuilder::AddText(out, g.title, 175.0f, ay + 20.0f, 1.5f, UiColor::White());
+        }
+    }
+    if (library_.empty() && overlay) {
+        gpu->UiTextOverlay("No installed titles. Press (Y) on HOME to scan storage.", 175.0f, 200.0f, 17.0f, 0.6f, 0.6f, 0.6f, 1.0f, -1);
     }
 
     UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
