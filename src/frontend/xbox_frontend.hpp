@@ -164,6 +164,21 @@ public:
     [[nodiscard]] std::string GetConsoleModeString() const;
     [[nodiscard]] std::string_view GetToastMessage() const noexcept { return toast_message_; }
 
+    /// Live emulator telemetry for the Diagnostics category (pushed by main loop).
+    struct LiveDiagnostics {
+        u64 frame_count{0};
+        u64 total_instructions{0};
+        u64 jit_blocks_compiled{0};
+        u64 jit_blocks_executed{0};
+        u64 gpu_draw_calls{0};
+        u64 gpu_frames_presented{0};
+        bool emulator_running{false};
+        std::string backend_name{"-"};
+        std::string audio_backend_name{"-"};
+    };
+    void PushDiagnostics(const LiveDiagnostics& d) noexcept { live_diag_ = d; }
+    [[nodiscard]] const LiveDiagnostics& GetDiagnostics() const noexcept { return live_diag_; }
+
 private:
     void HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b, bool pressed_start, bool pressed_y);
     void HandleFileManagerInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b, bool pressed_x, bool pressed_y);
@@ -227,6 +242,9 @@ private:
     size_t controllers_sub_row_{0};
     size_t power_menu_row_{0};
     size_t news_active_article_{0};
+    LiveDiagnostics live_diag_{};
+    bool prev_btn_lb_settings_{false};
+    bool prev_btn_rb_settings_{false};
     size_t album_active_photo_{0};
     size_t profile_active_row_{0};
 

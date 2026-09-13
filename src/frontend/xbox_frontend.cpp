@@ -585,9 +585,55 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
         HandleControllersSubInput(input, nav_up, nav_down, nav_left, nav_right, pressed_a, pressed_b, driver);
         return;
     }
+    // EShop = real Software Manager / File Browser (Eden FileManager wired in)
+    if (active_subview_ == ActiveSubView::EShop || current_tab_ == FrontendTab::FileManager) {
+        if (pressed_b) {
+            // In a subdirectory: go up. At a drive root: back to HOME.
+            if (current_dir_path_ != "sdmc:/" && current_dir_path_ != "save:/" &&
+                current_dir_path_ != "D:/" && current_dir_path_ != "E:/" &&
+                current_dir_path_ != "LOCAL:/" && current_dir_path_ != "ROOT:/") {
+                std::string p = current_dir_path_;
+                if (p.back() == '/') p.pop_back();
+                auto slash = p.find_last_of('/');
+                RefreshFileManager(slash != std::string::npos ? p.substr(0, slash + 1) : "ROOT:/");
+            } else {
+                active_subview_ = ActiveSubView::None;
+                current_tab_ = FrontendTab::Library;
+            }
+            return;
+        }
+        if (pressed_up) {
+            selected_file_index_ = (selected_file_index_ > 0) ? selected_file_index_ - 1 : (dir_entries_.empty() ? 0 : dir_entries_.size() - 1);
+            return;
+        }
+        if (pressed_down) {
+            if (!dir_entries_.empty()) selected_file_index_ = (selected_file_index_ + 1 < dir_entries_.size()) ? selected_file_index_ + 1 : 0;
+            return;
+        }
+        if (pressed_x) {
+            ScanDirectory("ROOT:/");
+            return;
+        }
+        if (pressed_y) {
+            ScanDirectory(current_dir_path_);
+            return;
+        }
+        if (pressed_a && selected_file_index_ < dir_entries_.size()) {
+            const auto& e = dir_entries_[selected_file_index_];
+            if (e.is_directory) {
+                RefreshFileManager(e.full_path);
+            } else if (e.is_rom) {
+                NEMU_LOG_INFO("Frontend", "eShop browser: Instant boot for ROM '{}'", e.full_path);
+                active_subview_ = ActiveSubView::None;
+                launch_requested_ = e.full_path;
+            } else {
+                RefreshLibrary();
+            }
+        }
+        return;
+    }
     if (active_subview_ == ActiveSubView::NSO || active_subview_ == ActiveSubView::News ||
-        active_subview_ == ActiveSubView::EShop || active_subview_ == ActiveSubView::Album ||
-        active_subview_ == ActiveSubView::UserProfile) {
+        active_subview_ == ActiveSubView::Album || active_subview_ == ActiveSubView::UserProfile) {
         if (pressed_b) {
             active_subview_ = ActiveSubView::None;
             current_tab_ = FrontendTab::Library;
@@ -596,8 +642,6 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
         if (pressed_a) {
             if (active_subview_ == ActiveSubView::NSO) {
                 ShowToast("Cloud Saves synchronized to Xbox Storage");
-            } else if (active_subview_ == ActiveSubView::EShop) {
-                ScanDirectory("ROOT:/");
             } else {
                 active_subview_ = ActiveSubView::None;
                 current_tab_ = FrontendTab::Library;
@@ -1771,7 +1815,7 @@ void XboxFrontend::ProcessPointer(float mouse_x, float mouse_y, bool left_down, 
             current_tab_ = FrontendTab::Library;
             return;
         }
-        for (size_t c = 0; c < 6; ++c) {
+        for (size_t c = 0; c < 7; ++c) {
             float cy = 95.0f + static_cast<float>(c) * 54.0f;
             if (mouse_x >= 45.0f && mouse_x <= 325.0f && mouse_y >= cy && mouse_y <= cy + 48.0f) {
                 if (left_click) {
@@ -1826,7 +1870,39 @@ void XboxFrontend::ProcessPointer(float mouse_x, float mouse_y, bool left_down, 
         return;
     }
 
-    // Subviews: NSO, News, EShop, Album, UserProfile
+    // EShop browser: clickable rows (install / installed / dir entries)
+    if (active_subview_ == ActiveSubView::EShop || current_tab_ == FrontendTab::FileManager) {
+        if (left_click && mouse_x >= 850.0f && mouse_x <= 1240.0f && mouse_y >= 660.0f && mouse_y <= 710.0f) {
+            active_subview_ = ActiveSubView::None;
+            current_tab_ = FrontendTab::Library;
+            return;
+        }
+        for (size_t a = 0; a < dir_entries_.size() && a < 4; ++a) {
+            float ay = 205.0f + static_cast<float>(2 + a) * 102.0f;
+            if (ay > 560.0f) break;
+            if (left_click && mouse_x >= 60.0f && mouse_x <= 1220.0f && mouse_y >= ay && mouse_y <= ay + 86.0f) {
+                selected_file_index_ = a;
+                const auto& e = dir_entries_[a];
+                if (e.is_directory) {
+                    RefreshFileManager(e.full_path);
+                } else if (e.is_rom) {
+                    active_subview_ = ActiveSubView::None;
+                    launch_requested_ = e.full_path;
+                } else {
+                    RefreshLibrary();
+                }
+                return;
+            }
+        }
+        // Install row (row 0): full storage scan
+        if (left_click && mouse_x >= 60.0f && mouse_x <= 1220.0f && mouse_y >= 205.0f && mouse_y <= 291.0f) {
+            ScanDirectory("ROOT:/");
+            return;
+        }
+        return;
+    }
+
+    // Subviews: NSO, News, Album, UserProfile
     if (active_subview_ != ActiveSubView::None) {
         if (left_click && mouse_x >= 850.0f && mouse_x <= 1240.0f && mouse_y >= 660.0f && mouse_y <= 710.0f) {
             active_subview_ = ActiveSubView::None;
@@ -1977,12 +2053,23 @@ void XboxFrontend::ProcessPointer(float mouse_x, float mouse_y, bool left_down, 
 }
 
 void XboxFrontend::HandleSettingsInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b) {
-    (void)input;
     if (pressed_b) {
         active_subview_ = ActiveSubView::None;
         current_tab_ = FrontendTab::Library;
         return;
     }
+    // LB/RB cycle settings categories (0..6); mouse clicks also set it directly.
+    constexpr size_t kCatCount = 7;
+    if (input.lb && !prev_btn_lb_settings_) {
+        settings_category_ = (settings_category_ + kCatCount - 1) % kCatCount;
+        settings_row_ = 0;
+    }
+    if (input.rb && !prev_btn_rb_settings_) {
+        settings_category_ = (settings_category_ + 1) % kCatCount;
+        settings_row_ = 0;
+    }
+    prev_btn_lb_settings_ = input.lb;
+    prev_btn_rb_settings_ = input.rb;
     if (pressed_up) {
         settings_row_ = (settings_row_ > 0) ? settings_row_ - 1 : 4;
     }
@@ -2132,16 +2219,17 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
 
     UiGeometryBuilder::AddQuad(out, 40.0f, 80.0f, 1200.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
 
-    const char* cat_names[6] = {
+    const char* cat_names[7] = {
         "Quick Settings",
         "Screen Resolution",
         "Graphics Optimizers",
         "Controllers & Sensors",
         "Audio & Output",
-        "System & Storage"
+        "System & Storage",
+        "Diagnostics (Live)"
     };
 
-    for (size_t c = 0; c < 6; ++c) {
+    for (size_t c = 0; c < 7; ++c) {
         float cy = 95.0f + static_cast<float>(c) * 54.0f;
         bool is_active_cat = (c == settings_category_);
         if (is_active_cat) {
@@ -2224,6 +2312,20 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
         opts.push_back({"Emulator Firmware", GetEmulatorVersionString(), "Running build of the emulator core"});
         opts.push_back({"Storage (sdmc:/)", cap_str + " - " + free_str, "Live filesystem stats for the game storage mount"});
         opts.push_back({"Save Data & Config", "save:/ (config.ini, states, screenshots)", "Virtual file system roots mounted for game data"});
+    } else if (settings_category_ == 6) { // Diagnostics - live emulator telemetry
+        const auto& d = live_diag_;
+        auto kfmt = [](u64 v) {
+            char b[32];
+            if (v >= 1000000ULL) std::snprintf(b, sizeof(b), "%.1fM", v / 1e6);
+            else if (v >= 1000ULL) std::snprintf(b, sizeof(b), "%.1fK", v / 1e3);
+            else std::snprintf(b, sizeof(b), "%llu", static_cast<unsigned long long>(v));
+            return std::string(b);
+        };
+        opts.push_back({"Emulation Status", d.emulator_running ? "Running" : "Idle (HOME menu)", "Live emulator core state"});
+        opts.push_back({"CPU Instructions Executed", kfmt(d.total_instructions), "Total guest ARM64 instructions retired"});
+        opts.push_back({"JIT Blocks Compiled / Executed", kfmt(d.jit_blocks_compiled) + " / " + kfmt(d.jit_blocks_executed), "Dynamic recompiler block statistics"});
+        opts.push_back({"GPU Backend", d.backend_name + " - " + std::to_string(d.gpu_draw_calls) + " draws, " + std::to_string(d.gpu_frames_presented) + " frames", "Active rendering pipeline"});
+        opts.push_back({"Audio Backend", d.audio_backend_name, "Active audio output device"});
     }
 
     for (size_t r = 0; r < opts.size(); ++r) {
@@ -2697,32 +2799,42 @@ void XboxFrontend::DrawSwitchEShop(std::vector<core::gpu::RasterVertex>& out, co
         UiGeometryBuilder::AddText(out, "Internal Storage", 85.0f, 135.0f, 1.5f, UiColor::White());
     }
 
-    // Real installed titles from the library scan
-    std::vector<std::pair<std::string, std::string>> actions;
-    actions.push_back({"Install Software (NSP / XCI / NRO)", "Scan sdmc:/ and all mounted storage for new titles."});
+    // Live file browser: real dir_entries_ from the FileManager backend + action rows
+    // (A) on dir = open, on ROM = launch, (X) on ROM = add to library, (Y) = scan here
+    size_t browsable = std::min<size_t>(dir_entries_.size(), 4);
+    size_t row_count = 1 /*Install/Scan*/ + 1 /*Installed list*/ + browsable;
+
+    auto draw_row = [&](size_t idx, const std::string& t1, const std::string& t2, bool highlight) {
+        float ay = 205.0f + static_cast<float>(idx) * 102.0f;
+        if (ay > 560.0f) return;
+        UiGeometryBuilder::AddQuad(out, 60.0f, ay, 1160.0f, 86.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
+        UiGeometryBuilder::AddRectOutline(out, 60.0f, ay, 1160.0f, 86.0f, 1.5f,
+                                          highlight ? UiColor{0.0f, 0.82f, 0.90f, 1.0f} : UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+        if (overlay) {
+            gpu->UiTextOverlay(t1, 85.0f, ay + 18.0f, 19.0f, 1.0f, 0.74f, 0.20f, 1.0f, -1);
+            gpu->UiTextOverlay(t2, 85.0f, ay + 48.0f, 14.0f, 0.75f, 0.75f, 0.75f, 1.0f, -1);
+        }
+    };
+
+    draw_row(0, "Install Software (NSP / XCI / NRO)", "Scan all mounted storage for new titles (X)", false);
     if (library_.empty()) {
-        actions.push_back({"Installed Applications (0 Games)", "No titles found. Install software or press (Y) on HOME to scan."});
+        draw_row(1, "Installed Applications (0 Games)", "No titles found yet", false);
     } else {
         std::string list = library_[0].title;
         for (size_t i = 1; i < library_.size() && i < 3; ++i) list += ", " + library_[i].title;
         if (library_.size() > 3) list += "...";
-        actions.push_back({"Installed Applications (" + std::to_string(library_.size()) + " Games)", list});
+        draw_row(1, "Installed Applications (" + std::to_string(library_.size()) + " Games)", list, false);
     }
-    actions.push_back({"Software Updates & DLC", "Re-scan mounted storage for updates, patches and DLC."});
-    actions.push_back({"Back to Home Menu", "Return to the Nintendo Switch HOME menu."});
-
-    for (size_t a = 0; a < actions.size(); ++a) {
-        float ay = 205.0f + static_cast<float>(a) * 102.0f;
-        UiGeometryBuilder::AddQuad(out, 60.0f, ay, 1160.0f, 86.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
-        UiGeometryBuilder::AddRectOutline(out, 60.0f, ay, 1160.0f, 86.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
-
-        if (overlay) {
-            gpu->UiTextOverlay(actions[a].first, 85.0f, ay + 18.0f, 19.0f, 1.0f, 0.74f, 0.20f, 1.0f, -1);
-            gpu->UiTextOverlay(actions[a].second, 85.0f, ay + 48.0f, 14.0f, 0.75f, 0.75f, 0.75f, 1.0f, -1);
-        } else {
-            UiGeometryBuilder::AddText(out, actions[a].first, 85.0f, ay + 18.0f, 1.5f, UiColor::Gold());
-            UiGeometryBuilder::AddText(out, actions[a].second, 85.0f, ay + 48.0f, 1.2f, UiColor::TextDim());
+    // Browse current dir (dir_entries_ is kept fresh by RefreshFileManager)
+    if (dir_entries_.empty()) RefreshFileManager("sdmc:/");
+    for (size_t a = 0; a < browsable; ++a) {
+        const auto& e = dir_entries_[a];
+        char sz[32] = {0};
+        if (!e.is_directory && e.file_size > 0) {
+            std::snprintf(sz, sizeof(sz), " - %.2f GB", static_cast<double>(e.file_size) / 1e9);
         }
+        draw_row(2 + a, (e.is_directory ? "[DIR]  " : e.format_badge + "  ") + e.name,
+                 current_dir_path_ + sz, a == selected_file_index_);
     }
 
     UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});

@@ -105,6 +105,8 @@ public:
     [[nodiscard]] const std::shared_ptr<hid::XboxControllerDriver>& GetControllerDriver() const noexcept { return controller_driver_; }
     [[nodiscard]] const std::shared_ptr<kernel::KProcess>& GetProcess() const noexcept { return process_; }
     [[nodiscard]] const std::shared_ptr<kernel::KThread>& GetMainThread() const noexcept { return main_thread_; }
+    /// Live JIT recompiler stats for the Diagnostics screen (null when JIT disabled)
+    [[nodiscard]] const cpu::jit::JitCompiler* GetJitCompiler() const noexcept { return jit_.get(); }
 
 private:
     void PollInput();

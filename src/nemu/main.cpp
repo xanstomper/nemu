@@ -321,6 +321,26 @@ int main(int argc, char** argv) {
 
         // Render Eden UI frame
         frontend.Render(*emulator.GetGpuBackend());
+
+        // Push live emulator telemetry for the Diagnostics screen
+        {
+            frontend::XboxFrontend::LiveDiagnostics d;
+            d.frame_count = emulator.GetFrameCount();
+            d.total_instructions = emulator.GetTotalInstructions();
+            if (auto* jit = emulator.GetJitCompiler()) {
+                d.jit_blocks_compiled = jit->GetStats().blocks_compiled;
+                d.jit_blocks_executed = jit->GetStats().blocks_executed;
+            }
+            const auto& gs = emulator.GetGpuBackend()->GetStats();
+            d.gpu_draw_calls = gs.draw_calls;
+            d.gpu_frames_presented = gs.frames_presented;
+            d.emulator_running = (emulator.GetState() == system::EmulatorState::Running);
+            d.backend_name = std::string(emulator.GetGpuBackend()->GetBackendName());
+            if (auto audio = emulator.GetAudioBackend()) {
+                d.audio_backend_name = std::string(audio->GetBackendName());
+            }
+            frontend.PushDiagnostics(d);
+        }
         ++ui_frames;
 
         if (ui_test_mode && ui_frames >= 60) {
