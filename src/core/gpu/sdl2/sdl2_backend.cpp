@@ -54,8 +54,21 @@ bool Sdl2GpuBackend::Initialize(u32 render_width, u32 render_height) {
     SDL_GL_SetSwapInterval(1);
 
     // Render everything in UI coordinates (1280x720); SDL scales to the actual
-    // window size proportionally with linear anti-aliased filtering.
+    // window size proportionally. To keep text/icons razor-sharp on high-res
+    // displays we render into a 2x supersampled offscreen target when the
+    // output is larger than the UI resolution.
     SDL_RenderSetLogicalSize(renderer_, static_cast<int>(width_), static_cast<int>(height_));
+    int out_w = 0, out_h = 0;
+    if (SDL_GetRendererOutputSize(renderer_, &out_w, &out_h) == 0 &&
+        (out_w > static_cast<int>(width_) || out_h > static_cast<int>(height_))) {
+        ss_target_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32,
+                                       SDL_TEXTUREACCESS_TARGET,
+                                       static_cast<int>(width_) * 2, static_cast<int>(height_) * 2);
+        if (ss_target_) {
+            SDL_SetTextureBlendMode(ss_target_, SDL_BLENDMODE_BLEND);
+            NEMU_LOG_INFO("GPU", "2x supersampled render target for crisp fullscreen scaling");
+        }
+    }
 
 #ifdef NEMU_SDL2_UI
     // Crisp UI overlay: TrueType text + cover images.
@@ -111,9 +124,11 @@ void Sdl2GpuBackend::Shutdown() {
     ui_ops_.clear();
     if (raster_) raster_->Shutdown();
     if (texture_) SDL_DestroyTexture(texture_);
+    if (ss_target_) SDL_DestroyTexture(ss_target_);
     if (renderer_) SDL_DestroyRenderer(renderer_);
     if (window_) SDL_DestroyWindow(window_);
     texture_ = nullptr;
+    ss_target_ = nullptr;
     renderer_ = nullptr;
     window_ = nullptr;
     raster_.reset();
@@ -121,13 +136,26 @@ void Sdl2GpuBackend::Shutdown() {
     initialized_ = false;
 }
 
-void Sdl2GpuBackend::BeginFrame() { if (raster_) raster_->BeginFrame(); }
+void Sdl2GpuBackend::BeginFrame() {
+    if (raster_) raster_->BeginFrame();
+    // Start the frame on the 2x supersampled target when active.
+    if (ss_target_) SDL_SetRenderTarget(renderer_, ss_target_);
+}
 void Sdl2GpuBackend::EndFrame()   { if (raster_) raster_->EndFrame(); }
 
 void Sdl2GpuBackend::Present() {
     if (!renderer_ || !initialized_) return;
 
     FlushUiOverlay();
+
+    // Resolve the 2x supersampled offscreen target down to the window with
+    // linear filtering (downscale = crisp, unlike upscaled blurry output).
+    if (ss_target_) {
+        SDL_SetRenderTarget(renderer_, nullptr);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
+        SDL_RenderClear(renderer_);
+        SDL_RenderCopy(renderer_, ss_target_, nullptr, nullptr);
+    }
 
 #ifdef NEMU_SDL2_UI
     if (const char* dump = std::getenv("NEMU_SCREENSHOT_PATH")) {

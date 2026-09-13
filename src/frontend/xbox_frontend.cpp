@@ -1394,41 +1394,31 @@ void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& ou
     // Background: flat dark charcoal #2D2D2D matching the reference exactly
     UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.1765f, 0.1765f, 0.1765f, 1.0f});
 
-    // Header: profile avatar cluster + Nemulator version branding (left)
-    const std::string av_paths[3] = {
-        FindAsset("ui/avatar_link.png"),
-        FindAsset("ui/avatar_mario.png"),
-        FindAsset("ui/avatar_arwing.png")
-    };
-    const float av_x[3] = {68.0f, 122.0f, 172.0f};
+    // Header: single profile avatar (active user) + Nemulator version branding (left)
+    const std::string av_path = FindAsset("ui/avatar_arwing.png");
+    const float av_x = 68.0f;
     const float av_y = 56.0f;
     const float av_r = 22.0f;
     const float av_d = av_r * 2.0f;
 
-    // Active user (Link) luminous cyan ring
-    UiGeometryBuilder::AddRing(out, av_x[0], av_y, av_r + 3.5f, 2.5f, UiColor{0.20f, 0.85f, 0.90f, 1.0f});
+    // Active user luminous cyan ring
+    UiGeometryBuilder::AddRing(out, av_x, av_y, av_r + 3.5f, 2.5f, UiColor{0.20f, 0.85f, 0.90f, 1.0f});
 
-    for (int i = 0; i < 3; ++i) {
-        if (overlay && !av_paths[i].empty()) {
-            gpu->UiImageOverlay("avatar_" + std::to_string(i), av_paths[i],
-                                av_x[i] - av_r, av_y - av_r, av_d, av_d);
-        } else {
-            UiColor ring_c = (i == 0) ? UiColor{0.20f, 0.85f, 0.90f, 1.0f} :
-                             (i == 1) ? UiColor::SwitchRed() :
-                                        UiColor{0.80f, 0.82f, 0.88f, 1.0f};
-            UiGeometryBuilder::AddDisc(out, av_x[i], av_y, av_r, ring_c);
-            UiGeometryBuilder::AddDisc(out, av_x[i], av_y, av_r - 2.0f, UiColor::SwitchIconBg());
-            const char* inits[3] = {"L", "M", "A"};
-            UiGeometryBuilder::AddText(out, inits[i], av_x[i] - 5.0f, av_y - 8.0f, 1.6f, UiColor::White());
-        }
+    if (overlay && !av_path.empty()) {
+        gpu->UiImageOverlay("avatar_0", av_path, av_x - av_r, av_y - av_r, av_d, av_d);
+    } else {
+        UiGeometryBuilder::AddDisc(out, av_x, av_y, av_r, UiColor{0.20f, 0.85f, 0.90f, 1.0f});
+        UiGeometryBuilder::AddDisc(out, av_x, av_y, av_r - 2.0f, UiColor::SwitchIconBg());
+        UiGeometryBuilder::AddText(out, "A", av_x - 5.0f, av_y - 8.0f, 1.6f, UiColor::White());
     }
 
-    // Top-left branding: "Nemulator" with current version
+    // Top-left branding: "Nemu Xbox Horizon OS" with version preview
     if (overlay) {
-        gpu->UiTextOverlay("Nemulator", 212.0f, 38.0f, 22.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
-        gpu->UiTextOverlay("v0.8.4-preview • Eden Horizon OS", 212.0f, 62.0f, 13.0f, 0.25f, 0.76f, 0.88f, 0.95f, -1);
+        gpu->UiTextOverlay("Nemu Xbox Horizon OS", 108.0f, 32.0f, 21.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("v0.8.4-preview", 108.0f, 58.0f, 15.0f, 0.25f, 0.76f, 0.88f, 0.95f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "Nemulator v0.8.4", 212.0f, 48.0f, 1.6f, UiColor::EdenCyan());
+        UiGeometryBuilder::AddText(out, "Nemu Xbox Horizon OS", 108.0f, 32.0f, 1.6f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "v0.8.4-preview", 108.0f, 58.0f, 1.2f, UiColor::EdenCyan());
     }
 
     // Status cluster (top right): clock and Wi-Fi icon (battery removed per user requirement)
@@ -1483,18 +1473,17 @@ void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& ou
         bool hovered = hover_shortcut_index_ && (*hover_shortcut_index_ == i) && !sel;
 
         if (sel) {
-            UiGeometryBuilder::AddRing(out, cx, icon_y, icon_radius + 6.0f, 3.5f, UiColor{0.0f, 0.82f, 0.90f, 1.0f});
+            // Circular blue focus ring only (no square box)
+            float pulse = 0.88f + 0.12f * std::sin(glow_anim_timer_ * 4.0f);
+            UiGeometryBuilder::AddRing(out, cx, icon_y, icon_radius + 6.0f, 3.5f,
+                                       UiColor{0.0f, 0.82f * pulse, 0.90f * pulse, 0.95f});
             if (overlay) {
-                float pulse = 0.88f + 0.12f * std::sin(glow_anim_timer_ * 4.0f);
-                gpu->UiRectOutlineOverlay(cx - icon_radius - 5.0f, icon_y - icon_radius - 5.0f,
-                                          icon_d + 10.0f, icon_d + 10.0f, 3.0f,
-                                          0.0f, 0.82f * pulse, 0.90f * pulse, 0.85f);
                 gpu->UiTextOverlay(icon_labels[i], cx, 472.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
             } else {
                 UiGeometryBuilder::AddText(out, icon_labels[i], cx - 50.0f, 472.0f, 1.5f, UiColor::White());
             }
         } else if (hovered) {
-            UiGeometryBuilder::AddRing(out, cx, icon_y, icon_radius + 4.0f, 2.0f, UiColor{0.9f, 0.95f, 1.0f, 0.75f});
+            UiGeometryBuilder::AddRing(out, cx, icon_y, icon_radius + 4.0f, 2.0f, UiColor{0.0f, 0.82f, 0.90f, 0.85f});
         }
 
         std::string ipath = FindAsset(icon_names[i]);
@@ -1557,13 +1546,14 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out,
     glow_anim_timer_ += 0.04f;
     focus_animation_timer_ = std::min(1.0f, focus_animation_timer_ + 0.08f);
 
-    // Selected title display: Left-aligned above carousel at X=65.0f, Y=144.0f in authentic Switch Cyan
+    // Selected title display: Left-aligned above carousel at X=65.0f, Y=120.0f in authentic Switch Cyan
     if (selected_game_index_ < library_.size()) {
         const auto& g = library_[selected_game_index_];
         if (overlay) {
-            gpu->UiTextOverlay(g.title, 65.0f, 144.0f, 28.0f, 0.25f, 0.76f, 0.88f, 1.0f, -1);
+            gpu->UiFillRectOverlay(60.0f, 112.0f, 900.0f, 46.0f, 0.1765f, 0.1765f, 0.1765f, 1.0f);
+            gpu->UiTextOverlay(g.title, 65.0f, 120.0f, 28.0f, 0.25f, 0.76f, 0.88f, 1.0f, -1);
         } else {
-            UiGeometryBuilder::AddText(out, g.title, 65.0f, 144.0f, 2.2f, UiColor::SwitchTeal());
+            UiGeometryBuilder::AddText(out, g.title, 65.0f, 120.0f, 2.2f, UiColor::SwitchTeal());
         }
     }
 
@@ -1854,9 +1844,9 @@ void XboxFrontend::ProcessPointer(float mouse_x, float mouse_y, bool left_down, 
 
     const float base_x = 105.0f - home_scroll_offset_;
 
-    // 3. Top avatars (click opens Profile)
+    // 3. Top avatar (click opens Profile)
     if (mouse_y >= 30.0f && mouse_y <= 100.0f) {
-        if (mouse_x >= 55.0f && mouse_x <= 270.0f && left_click) {
+        if (mouse_x >= 40.0f && mouse_x <= 100.0f && left_click) {
             active_subview_ = ActiveSubView::UserProfile;
             return;
         }
@@ -1948,10 +1938,10 @@ void XboxFrontend::HandleSettingsInput(const core::hid::XboxGamepadState& input,
         return;
     }
     if (pressed_up) {
-        settings_row_ = (settings_row_ > 0) ? settings_row_ - 1 : 3;
+        settings_row_ = (settings_row_ > 0) ? settings_row_ - 1 : 4;
     }
     if (pressed_down) {
-        settings_row_ = (settings_row_ < 3) ? settings_row_ + 1 : 0;
+        settings_row_ = (settings_row_ < 4) ? settings_row_ + 1 : 0;
     }
     if (pressed_left || pressed_right || pressed_a) {
         auto& cfg = config_.GetConfig();
@@ -1973,25 +1963,47 @@ void XboxFrontend::HandleSettingsInput(const core::hid::XboxGamepadState& input,
                 cfg.resolution_scale = (cfg.resolution_scale == RS::Native_1_0x) ? RS::SeriesX_1_5x :
                                        (cfg.resolution_scale == RS::SeriesX_1_5x) ? RS::Ultra4K_2_0x :
                                        (cfg.resolution_scale == RS::Ultra4K_2_0x) ? RS::SeriesS_0_75x : RS::Native_1_0x;
+            } else if (settings_row_ == 2) {
+                cfg.audio_enabled = !cfg.audio_enabled;
             }
         } else if (settings_category_ == 2) { // Graphics
             if (settings_row_ == 0) {
                 using UM = core::gpu::pipeline::UpscalerMode;
                 cfg.upscaler = (cfg.upscaler == UM::FSR_1_0) ? UM::FSR_2_0 :
                                (cfg.upscaler == UM::FSR_2_0) ? UM::Bicubic : UM::FSR_1_0;
+            } else if (settings_row_ == 1) {
+                cfg.fsr_sharpness = (pressed_left) ? std::max(0.0f, cfg.fsr_sharpness - 0.05f)
+                                                   : std::min(2.0f, cfg.fsr_sharpness + 0.05f);
             } else if (settings_row_ == 2) {
                 using AA = core::gpu::pipeline::AntiAliasingMode;
                 cfg.anti_aliasing = (cfg.anti_aliasing == AA::MSAA_4x) ? AA::MSAA_2x :
                                     (cfg.anti_aliasing == AA::MSAA_2x) ? AA::FXAA : AA::MSAA_4x;
+            } else if (settings_row_ == 3) {
+                using FG = core::gpu::pipeline::FrameGenMode;
+                cfg.frame_generation = (cfg.frame_generation == FG::AFMF_Extrapolation_2x) ? FG::Disabled : FG::AFMF_Extrapolation_2x;
             }
         } else if (settings_category_ == 3) { // Controllers
-            if (settings_row_ == 1) {
+            if (settings_row_ == 0) {
+                cfg.controller_type = (cfg.controller_type == core::config::ControllerType::ProController)
+                    ? core::config::ControllerType::JoyConDual : core::config::ControllerType::ProController;
+            } else if (settings_row_ == 1) {
                 cfg.button_layout = (cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard)
                     ? core::hid::FaceButtonLayout::XboxMirrored : core::hid::FaceButtonLayout::NintendoStandard;
             } else if (settings_row_ == 2) {
                 cfg.vibration_enabled = !cfg.vibration_enabled;
+            } else if (settings_row_ == 3) {
+                cfg.inner_deadzone = (pressed_left) ? std::max(0.0f, cfg.inner_deadzone - 0.02f)
+                                                    : std::min(0.4f, cfg.inner_deadzone + 0.02f);
+                cfg.outer_deadzone = std::clamp(cfg.outer_deadzone, cfg.inner_deadzone + 0.05f, 1.0f);
             } else if (settings_row_ == 4) {
                 ShowToast("Xbox Controller Rumble Actuators Tested (Pulse 100%)");
+            }
+        } else if (settings_category_ == 4) { // Audio
+            if (settings_row_ == 0) {
+                cfg.surround_enabled = !cfg.surround_enabled;
+            } else if (settings_row_ == 1) {
+                cfg.audio_volume = (pressed_left) ? std::max(0u, cfg.audio_volume - 5u)
+                                                  : std::min(100u, cfg.audio_volume + 5u);
             }
         }
         config_.Save();
@@ -2126,7 +2138,7 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
                               (cfg.resolution_scale == core::config::ResolutionScale::SeriesS_0_75x) ? "0.75x 720p (Series S Balanced)" : "1.0x Native 1080p (Docked)";
         opts.push_back({"Resolution Scale Factor", res_str, "Upscale internal guest rendering for crisp 4K / 1440p output"});
         opts.push_back({"Aspect Ratio", "16:9 Standard", "Display aspect ratio (Widescreen 16:9)"});
-        opts.push_back({"RGB Dynamic Color Range", "Full Range (0 - 255)", "Rich black levels for Xbox HDMI TV displays"});
+        opts.push_back({"Audio Output", cfg.audio_enabled ? "Enabled" : "Muted", "Toggle emulator audio output"});
         opts.push_back({"Burn-In Protection", "Enabled", "Dims screen after 5 minutes of inactivity"});
     } else if (settings_category_ == 2) {
         std::string up_str = (cfg.upscaler == core::gpu::pipeline::UpscalerMode::FSR_2_0) ? "AMD FidelityFX Super Resolution 2.0" :
@@ -2152,7 +2164,7 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
     } else if (settings_category_ == 4) {
         opts.push_back({"Audio Output Mode", cfg.surround_enabled ? "5.1 Surround (Dolby Atmos)" : "Linear PCM 2.0 Stereo", "Multi-channel spatial audio mixer"});
         opts.push_back({"Master Volume", std::to_string(cfg.audio_volume) + "%", "Global emulator audio output volume"});
-        opts.push_back({"Mute when Inactive", "Disabled", "Keeps audio playing when Xbox Guide is open"});
+        opts.push_back({"Audio Enabled", cfg.audio_enabled ? "Enabled" : "Muted", "Master mute for all emulator audio"});
     } else if (settings_category_ == 5) {
         opts.push_back({"Console Nickname", "Xbox Series X (Nemu)", "Network identifier for local wireless play"});
         opts.push_back({"Horizon OS Firmware", "v18.1.0", "Emulated system version for Switch game compatibility"});
