@@ -203,8 +203,8 @@ private:
     bool prev_qm_b_{false};
 
     std::string profile_name_{"Player 1 (Xbox Full Trust)"};
-    std::string toast_message_{"Eden + RetroArch Frontend Ready"};
-    float toast_timer_{3.0f};
+    std::string toast_message_{};
+    float toast_timer_{0.0f};
 
     // Controller edge detection
     bool prev_dpad_up_{false};

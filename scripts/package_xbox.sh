@@ -33,6 +33,7 @@ cp "${ROOT_DIR}/packaging/xbox/AppxManifest.xml" "${STAGING_DIR}/AppxManifest.xm
 
 # Copy visual assets
 cp -r "${ROOT_DIR}/packaging/xbox/Assets/"* "${STAGING_DIR}/Assets/"
+cp -r "${ROOT_DIR}/assets" "${STAGING_DIR}/"
 
 # Copy cryptographic keys into package
 if [[ -d "${ROOT_DIR}/keys" ]]; then

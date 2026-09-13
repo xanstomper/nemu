@@ -135,9 +135,26 @@ void Sdl2GpuBackend::Present() {
         }
     }
 
+    SDL_SetRenderDrawColor(renderer_, 45, 45, 45, 255);
     SDL_RenderClear(renderer_);
     SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
     FlushUiOverlay();
+
+#ifdef NEMU_SDL2_UI
+    if (const char* dump = std::getenv("NEMU_SCREENSHOT_PATH")) {
+        static bool dumped = false;
+        if (!dumped && stats_.frames_presented >= 5) {
+            dumped = true;
+            SDL_Surface* sshot = SDL_CreateRGBSurfaceWithFormat(0, static_cast<int>(width_), static_cast<int>(height_), 32, SDL_PIXELFORMAT_RGBA32);
+            if (sshot) {
+                SDL_RenderReadPixels(renderer_, nullptr, SDL_PIXELFORMAT_RGBA32, sshot->pixels, sshot->pitch);
+                IMG_SavePNG(sshot, dump);
+                SDL_FreeSurface(sshot);
+            }
+        }
+    }
+#endif
+
     SDL_RenderPresent(renderer_);
 
     ui_text_ops_.clear();

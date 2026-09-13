@@ -134,7 +134,8 @@ int main() {
 
         auto launch = fe.ConsumeLaunchRequest();
         NEMU_TEST_ASSERT(launch.has_value(), "Launch request recorded");
-        NEMU_TEST_ASSERT(*launch == "builtin:/demo.nro", "Launch path matches selected item");
+        const auto& lib = fe.GetLibrary();
+        NEMU_TEST_ASSERT(*launch == lib[fe.GetSelectedGameIndex()].virtual_path, "Launch path matches selected item");
 
         auto second_consume = fe.ConsumeLaunchRequest();
         NEMU_TEST_ASSERT(!second_consume.has_value(), "Launch request consumed (one-shot)");

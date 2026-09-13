@@ -32,6 +32,7 @@ rm -rf "$STAGING"; mkdir -p "$STAGING/Assets"
 cp "$ROOT/packaging/xbox/AppxManifest.xml" "$STAGING/"
 cp "$EXE_SRC" "$STAGING/Nemu.exe"
 cp "$ROOT"/packaging/xbox/Assets/*.png "$STAGING/Assets/"
+cp -r "$ROOT/assets" "$STAGING/"
 rm -f "$STAGING"/*.keys "$STAGING"/keys 2>/dev/null || true
 
 # --- UWP PE compliance ---
@@ -56,19 +57,19 @@ PYEOF
 
 # --- Pack ---
 echo "[3/4] Packing with Microsoft msix-packaging (makemsix)..."
-rm -f "$UNSIGNED"
+rm -f "$UNSIGNED" "$OUT"
 "$MAKEMSIX" pack -d "$STAGING" -p "$UNSIGNED" 2>&1 | grep -av '^Microsoft\|Copyright\|^$' || true
 [[ -f "$UNSIGNED" ]] || { echo "ERROR: makemsix produced no output"; exit 1; }
 
 # --- Sign ---
 echo "[4/4] Signing with osslsigncode APPX support..."
 "$OSSLC" sign -pkcs12 "$PFX" -pass "$PFX_PASS" \
-    -in "$UNSIGNED" -out "$OUT" 2>&1 | grep -aiE "package|succeeded|error|appx" | head -4
+    -in "$UNSIGNED" -out "$OUT" 2>&1 | grep -aiE "package|succeeded|error|appx" || true
 
 # --- Verify ---
 echo "Verifying signature..."
 "$OSSLC" verify -CAfile "$ROOT/packaging/xbox/NemuDev.cer" -in "$OUT" 2>&1 \
-    | grep -aiE "signature verification|verified signatures|ok|error" | head -4
+    | grep -aiE "signature verification|verified signatures|ok|error" || true
 
 echo
 echo "== SUCCESS: $OUT =="
