@@ -1,5 +1,10 @@
 #include "sdl2_backend.hpp"
+#include "platform/logger.hpp"
 #include <cstring>
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <algorithm>
 
 #ifdef NEMU_SDL2
 
@@ -40,6 +45,22 @@ bool Sdl2GpuBackend::Initialize(u32 render_width, u32 render_height) {
         }
     }
 
+    // Render everything in UI coordinates (1280x720); SDL scales to the actual
+    // window size proportionally, so the layout survives window resizing.
+    SDL_RenderSetLogicalSize(renderer_, static_cast<int>(width_), static_cast<int>(height_));
+
+#ifdef NEMU_SDL2_UI
+    // Crisp UI overlay: TrueType text + cover images.
+    if (TTF_Init() == 0 && IMG_Init(IMG_INIT_JPG | IMG_INIT_PNG) != 0) {
+        const std::string fp = FontPath();
+        if (!fp.empty()) {
+            ui_available_ = true;
+        } else {
+            NEMU_LOG_WARN("SDL2", "No UI font found; overlay text disabled");
+        }
+    }
+#endif
+
     // Internal software rasterizer does all the actual Draw/clear work.
     raster_ = std::make_unique<NullGpuBackend>();
     if (!raster_->Initialize(render_width, render_height)) {
@@ -66,6 +87,21 @@ void Sdl2GpuBackend::RecreateTexture() {
 }
 
 void Sdl2GpuBackend::Shutdown() {
+#ifdef NEMU_SDL2_UI
+    for (auto& [_, tex] : text_cache_) SDL_DestroyTexture(tex);
+    for (auto& [_, tex] : cover_cache_) SDL_DestroyTexture(tex);
+    text_cache_.clear();
+    cover_cache_.clear();
+    for (auto& [_, font] : fonts_) TTF_CloseFont(font);
+    fonts_.clear();
+    if (ui_available_) {
+        IMG_Quit();
+        TTF_Quit();
+    }
+    ui_available_ = false;
+#endif
+    ui_text_ops_.clear();
+    ui_image_ops_.clear();
     if (raster_) raster_->Shutdown();
     if (texture_) SDL_DestroyTexture(texture_);
     if (renderer_) SDL_DestroyRenderer(renderer_);
@@ -101,7 +137,11 @@ void Sdl2GpuBackend::Present() {
 
     SDL_RenderClear(renderer_);
     SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
+    FlushUiOverlay();
     SDL_RenderPresent(renderer_);
+
+    ui_text_ops_.clear();
+    ui_image_ops_.clear();
 
     stats_.frames_presented++;
 }
@@ -145,6 +185,115 @@ bool Sdl2GpuBackend::PumpEvents() {
     return keep_open;
 }
 
+
+void Sdl2GpuBackend::UiTextOverlay(std::string_view text, float x, float y, float size_px,
+                                   float r, float g, float b, float a, int align) {
+    if (!ui_available_ || text.empty()) return;
+    ui_text_ops_.push_back(UiTextOp{std::string(text), x, y, size_px, r, g, b, a, align});
+}
+
+void Sdl2GpuBackend::UiImageOverlay(std::string_view key, std::string_view host_path,
+                                    float x, float y, float w, float h) {
+    if (!ui_available_ || host_path.empty()) return;
+    ui_image_ops_.push_back(UiImageOp{std::string(key), std::string(host_path), x, y, w, h});
+}
+
+void Sdl2GpuBackend::FlushUiOverlay() {
+#ifdef NEMU_SDL2_UI
+    if (!renderer_) return;
+
+    // Covers first (under text), in queue order.
+    for (const auto& op : ui_image_ops_) {
+        SDL_Texture* tex = CoverTexture(op.host_path);
+        if (!tex) continue;
+        SDL_Rect dst{static_cast<int>(op.x), static_cast<int>(op.y),
+                     static_cast<int>(op.w), static_cast<int>(op.h)};
+        SDL_RenderCopy(renderer_, tex, nullptr, &dst);
+    }
+
+    // Text on top.
+    for (const auto& op : ui_text_ops_) {
+        SDL_Texture* tex = TextTexture(op);
+        if (!tex) continue;
+        int tw = 0, th = 0;
+        SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+        float dx = op.x;
+        if (op.align == 0) dx = op.x - tw * 0.5f;
+        else if (op.align == 1) dx = op.x - static_cast<float>(tw);
+        SDL_Rect dst{static_cast<int>(dx), static_cast<int>(op.y), tw, th};
+        SDL_SetTextureAlphaMod(tex, static_cast<Uint8>(std::clamp(op.a, 0.0f, 1.0f) * 255.0f));
+        SDL_RenderCopy(renderer_, tex, nullptr, &dst);
+    }
+#endif
+}
+
+#ifdef NEMU_SDL2_UI
+std::string Sdl2GpuBackend::FontPath() {
+    if (const char* env = std::getenv("NEMU_FONT_PATH")) {
+        if (std::filesystem::exists(env)) return env;
+    }
+    static const char* kCandidates[] = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    };
+    for (const char* p : kCandidates) {
+        if (std::filesystem::exists(p)) return p;
+    }
+    return {};
+}
+
+TTF_Font* Sdl2GpuBackend::FontForSize(float size_px) {
+    const int pts = std::clamp(static_cast<int>(size_px), 8, 96);
+    auto it = fonts_.find(pts);
+    if (it != fonts_.end()) return it->second;
+    const std::string fp = FontPath();
+    if (fp.empty()) return nullptr;
+    TTF_Font* font = TTF_OpenFont(fp.c_str(), pts);
+    if (font) fonts_[pts] = font;
+    return font;
+}
+
+SDL_Texture* Sdl2GpuBackend::TextTexture(const UiTextOp& op) {
+    // Cache key: text | size | color (alpha excluded; applied per frame).
+    const int cr = static_cast<int>(op.r * 255.0f);
+    const int cg = static_cast<int>(op.g * 255.0f);
+    const int cb = static_cast<int>(op.b * 255.0f);
+    const std::string cache_key = op.text + "|" + std::to_string(static_cast<int>(op.size)) +
+                                  "|" + std::to_string(cr) + "," + std::to_string(cg) + "," + std::to_string(cb);
+    auto it = text_cache_.find(cache_key);
+    if (it != text_cache_.end()) return it->second;
+
+    TTF_Font* font = FontForSize(op.size);
+    if (!font) return nullptr;
+    SDL_Color c{static_cast<Uint8>(cr), static_cast<Uint8>(cg), static_cast<Uint8>(cb), 255};
+    SDL_Surface* surf = TTF_RenderUTF8_Blended(font, op.text.c_str(), c);
+    if (!surf) return nullptr;
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer_, surf);
+    SDL_FreeSurface(surf);
+    if (tex) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        text_cache_[cache_key] = tex;
+    }
+    return tex;
+}
+
+SDL_Texture* Sdl2GpuBackend::CoverTexture(const std::string& host_path) {
+    auto it = cover_cache_.find(host_path);
+    if (it != cover_cache_.end()) return it->second;  // nullptr values are cached misses
+    SDL_Texture* tex = nullptr;
+    SDL_Surface* surf = IMG_Load(host_path.c_str());
+    if (surf) {
+        tex = SDL_CreateTextureFromSurface(renderer_, surf);
+        SDL_FreeSurface(surf);
+        if (tex) SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    }
+    cover_cache_[host_path] = tex;  // cache negative result too
+    return tex;
+}
+#endif // NEMU_SDL2_UI
 } // namespace nemu::core::gpu::sdl2
 
 #endif // NEMU_SDL2

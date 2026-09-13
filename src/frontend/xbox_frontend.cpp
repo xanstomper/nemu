@@ -6,6 +6,8 @@
 #include <iomanip>
 #include <sstream>
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
 
 namespace nemu::frontend {
 
@@ -69,7 +71,7 @@ void XboxFrontend::LoadPlaylist() {
             }
 
             if (!exists) {
-                library_.push_back(GameEntry{
+                GameEntry ge{
                     .title = parts[0],
                     .filename = parts[1],
                     .virtual_path = parts[2],
@@ -78,7 +80,9 @@ void XboxFrontend::LoadPlaylist() {
                     .optimizer_tag = "FSR 2.0 • 4x MSAA • 60 FPS",
                     .file_size = fsize,
                     .title_id = tid
-                });
+                };
+                AttachCover(ge);
+                library_.push_back(std::move(ge));
             }
         }
     }
@@ -178,7 +182,7 @@ void XboxFrontend::ScanDirectoryRecursive(const std::filesystem::path& host_path
                 tid = 0x0100BF900806A000ULL;
             }
 
-            library_.push_back(GameEntry{
+            GameEntry ge{
                 .title = title,
                 .filename = filename,
                 .virtual_path = vpath,
@@ -187,7 +191,9 @@ void XboxFrontend::ScanDirectoryRecursive(const std::filesystem::path& host_path
                 .optimizer_tag = "FSR 2.0 • 4x MSAA • 60 FPS",
                 .file_size = static_cast<size_t>(entry.file_size(ec)),
                 .title_id = tid
-            });
+            };
+            AttachCover(ge);
+            library_.push_back(std::move(ge));
         }
     }
 }
@@ -250,7 +256,7 @@ void XboxFrontend::RefreshLibrary() {
                             tid = 0x0100BF900806A000ULL;
                         }
 
-                        library_.push_back(GameEntry{
+                        GameEntry ge{
                             .title = title,
                             .filename = entry.path().filename().string(),
                             .virtual_path = vpath,
@@ -259,7 +265,9 @@ void XboxFrontend::RefreshLibrary() {
                             .optimizer_tag = "FSR 2.0 • 4x MSAA • 60 FPS",
                             .file_size = static_cast<size_t>(entry.file_size(ec)),
                             .title_id = tid
-                        });
+                        };
+                        AttachCover(ge);
+                        library_.push_back(std::move(ge));
                     }
                 }
             }
@@ -1011,7 +1019,7 @@ void XboxFrontend::Render(core::gpu::IGpuBackend& gpu) {
     gpu.ClearRenderTarget(bg);
 
     std::vector<core::gpu::RasterVertex> ui_vertices;
-    BuildUiGeometry(ui_vertices);
+    BuildUiGeometry(ui_vertices, &gpu);
     if (!ui_vertices.empty()) {
         gpu.SetRasterVertices(ui_vertices);
         gpu.DrawArrays(core::gpu::PrimitiveTopology::Triangles, 0, static_cast<u32>(ui_vertices.size()));
@@ -1192,6 +1200,13 @@ void XboxFrontend::HandleQuickMenuInput(const core::hid::XboxGamepadState& input
 // Nintendo Switch HOME view
 // ---------------------------------------------------------------------------
 
+// Centralized animation tuning (console-like: fast, smooth, controlled).
+namespace home_anim {
+constexpr float kCarouselEase = 0.22f;      // per-frame approach rate of tile row
+constexpr float kTitleFadeIn = 0.18f;       // per-frame approach rate of title alpha
+constexpr float kFocusLift = 10.0f;         // px the focused tile rises
+} // namespace home_anim
+
 /// Per-tile accent colors (deterministic key-art stand-ins for the software
 /// rasterizer, which cannot decode real box art).
 static UiColor SwitchTileAccent(size_t i) {
@@ -1205,7 +1220,43 @@ static UiColor SwitchTileAccent(size_t i) {
     }
 }
 
-void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& out, bool draw_shortcuts) {
+void XboxFrontend::AttachCover(GameEntry& entry) {
+    // Cover art resolution (data-driven, user-supplied assets only):
+    //   1. <rom_stem>.jpg / .png next to the ROM
+    //   2. <rom_dir>/covers/<title_id 16-hex>.jpg / .png
+    //   3. <rom_dir>/covers/<rom_stem>.jpg / .png
+    auto resolved = vfs_.ResolvePath(entry.virtual_path);
+    if (!resolved) return;
+    const std::filesystem::path rom = *resolved;
+    const auto dir = rom.parent_path();
+    const auto stem = rom.stem().string();
+
+    auto try_file = [&entry](const std::filesystem::path& p) {
+        std::error_code ec;
+        if (std::filesystem::exists(p, ec) && std::filesystem::is_regular_file(p, ec)) {
+            entry.cover_host_path = p.string();
+            return true;
+        }
+        return false;
+    };
+
+    for (const char* ext : {".jpg", ".jpeg", ".png"}) {
+        if (try_file(dir / (stem + ext))) return;
+    }
+    if (entry.title_id != 0) {
+        char tid_hex[17];
+        std::snprintf(tid_hex, sizeof(tid_hex), "%016llX",
+                      static_cast<unsigned long long>(entry.title_id));
+        for (const char* ext : {".jpg", ".jpeg", ".png"}) {
+            if (try_file(dir / "covers" / (std::string(tid_hex) + ext))) return;
+        }
+    }
+    for (const char* ext : {".jpg", ".jpeg", ".png"}) {
+        if (try_file(dir / "covers" / (stem + ext))) return;
+    }
+}
+
+void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu, bool draw_shortcuts) {
     // Background: subtle vertical gradient like the console HOME menu.
     for (int band = 0; band < 8; ++band) {
         float t = static_cast<float>(band) / 7.0f;
@@ -1227,22 +1278,35 @@ void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& ou
         {106.0f, UiColor::SwitchRed(), "M"},
         {160.0f, UiColor::Gold(),      "L"},
     };
+    const bool overlay = gpu && gpu->SupportsUiOverlay();
     for (const auto& av : avatars) {
         UiGeometryBuilder::AddDisc(out, av.x, 38.0f, 21.0f, av.bg);
         UiGeometryBuilder::AddRing(out, av.x, 38.0f, 21.5f, 2.0f, UiColor::White());
-        float iw = static_cast<float>(av.initial.size()) * 4.4f;
-        UiGeometryBuilder::AddText(out, av.initial, av.x - iw, 30.0f, 1.6f, UiColor::White());
+        if (overlay) {
+            gpu->UiTextOverlay(av.initial, av.x, 28.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
+        } else {
+            float iw = static_cast<float>(av.initial.size()) * 4.4f;
+            UiGeometryBuilder::AddText(out, av.initial, av.x - iw, 30.0f, 1.6f, UiColor::White());
+        }
     }
 
     // Status cluster (right): clock, Wi-Fi, battery percentage + icon.
-    UiGeometryBuilder::AddText(out, GetSystemClockString(), 1068, 28, 1.6f, UiColor::White());
+    if (overlay) {
+        gpu->UiTextOverlay(GetSystemClockString(), 1092.0f, 26.0f, 22.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1);
+    } else {
+        UiGeometryBuilder::AddText(out, GetSystemClockString(), 1068, 28, 1.6f, UiColor::White());
+    }
 
     // Wi-Fi glyph: dot + two rising arcs.
     UiGeometryBuilder::AddDisc(out, 1176.0f, 45.0f, 2.5f, UiColor::White());
     UiGeometryBuilder::AddQuad(out, 1171, 38, 11, 3, UiColor::White());
     UiGeometryBuilder::AddQuad(out, 1166, 30, 21, 3, UiColor::White());
 
-    UiGeometryBuilder::AddText(out, "100%", 1198, 30, 1.3f, UiColor::White());
+    if (overlay) {
+        gpu->UiTextOverlay("100%", 1236.0f, 30.0f, 17.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1);
+    } else {
+        UiGeometryBuilder::AddText(out, "100%", 1198, 30, 1.3f, UiColor::White());
+    }
     UiGeometryBuilder::AddRectOutline(out, 1244, 30, 30, 16, 2.0f, UiColor::White());
     UiGeometryBuilder::AddQuad(out, 1248, 34, 21, 8, UiColor::SwitchGreen());
     UiGeometryBuilder::AddQuad(out, 1276, 35, 4, 7, UiColor::White());
@@ -1317,10 +1381,22 @@ void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& ou
             }
         }
     }
+    // Bottom-right controller hints, like the reference "(A) Continue (+) Start".
+    if (overlay) {
+        gpu->UiTextOverlay("A", 1150.0f, 688.0f, 15.0f, 0.90f, 0.90f, 0.95f, 1.0f, 1);
+        gpu->UiTextOverlay("Continue", 1156.0f, 688.0f, 15.0f, 0.75f, 0.78f, 0.85f, 1.0f, -1);
+        gpu->UiTextOverlay("+", 1228.0f, 688.0f, 15.0f, 0.90f, 0.90f, 0.95f, 1.0f, 1);
+        gpu->UiTextOverlay("Options", 1236.0f, 688.0f, 15.0f, 0.75f, 0.78f, 0.85f, 1.0f, -1);
+    } else {
+        UiGeometryBuilder::AddText(out, "(A) Continue   (+) Options", 1040, 690, 1.2f, UiColor::TextDim());
+    }
 }
 
-void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out) {
-    DrawSwitchHomeChrome(out, true);
+void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out,
+                                      core::gpu::IGpuBackend* gpu) {
+    DrawSwitchHomeChrome(out, gpu, true);
+
+    const bool overlay = gpu && gpu->SupportsUiOverlay();
 
     // Horizontal tile row. The row slides smoothly: the rendered offset eases
     // toward the focused tile each frame (console-style focus animation).
@@ -1329,21 +1405,35 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out)
     const float row_y = 208.0f;
 
     const float target_offset = static_cast<float>(selected_game_index_) * step;
-    home_scroll_offset_ += (target_offset - home_scroll_offset_) * 0.22f;
+    home_scroll_offset_ += (target_offset - home_scroll_offset_) * home_anim::kCarouselEase;
     if (std::fabs(target_offset - home_scroll_offset_) < 0.5f) {
         home_scroll_offset_ = target_offset;
     }
     const float base_x = 640.0f - tile * 0.5f - home_scroll_offset_;
 
+    // Title fade-in when the selection changes.
+    if (home_last_selected_ != selected_game_index_) {
+        home_last_selected_ = selected_game_index_;
+        home_title_alpha_ = 0.0f;
+    }
+    home_title_alpha_ += (1.0f - home_title_alpha_) * home_anim::kTitleFadeIn;
+
     // Focused software name above the tile row, in the accent teal, exactly
     // like the console HOME.
     if (!home_in_shortcuts_ && selected_game_index_ < library_.size()) {
         const auto& g = library_[selected_game_index_];
-        float tw = static_cast<float>(g.title.size()) * 8.2f;
-        UiGeometryBuilder::AddText(out, g.title, 640.0f - tw * 0.5f, 118.0f, 2.6f, UiColor::SwitchTeal());
-        std::string sub = g.format_badge + "   " + g.playtime_str;
-        float sw = static_cast<float>(sub.size()) * 3.9f;
-        UiGeometryBuilder::AddText(out, sub, 640.0f - sw * 0.5f, 160.0f, 1.3f, UiColor::TextDim());
+        const float a = home_title_alpha_;
+        if (overlay) {
+            gpu->UiTextOverlay(g.title, 640.0f, 112.0f, 34.0f, 0.24f, 0.78f, 0.82f, a, 0);
+            std::string sub = g.format_badge + "   " + g.playtime_str;
+            gpu->UiTextOverlay(sub, 640.0f, 158.0f, 15.0f, 0.55f, 0.58f, 0.65f, a, 0);
+        } else {
+            float tw = static_cast<float>(g.title.size()) * 8.2f;
+            UiGeometryBuilder::AddText(out, g.title, 640.0f - tw * 0.5f, 118.0f, 2.6f, UiColor::SwitchTeal());
+            std::string sub = g.format_badge + "   " + g.playtime_str;
+            float sw = static_cast<float>(sub.size()) * 3.9f;
+            UiGeometryBuilder::AddText(out, sub, 640.0f - sw * 0.5f, 160.0f, 1.3f, UiColor::TextDim());
+        }
     }
 
     for (size_t i = 0; i < library_.size(); ++i) {
@@ -1352,7 +1442,7 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out)
         if (cx + tile < -40.0f || cx > 1320.0f) continue;
 
         bool is_focus = (i == selected_game_index_) && !home_in_shortcuts_;
-        float cy = is_focus ? row_y - 10.0f : row_y;
+        float cy = is_focus ? row_y - home_anim::kFocusLift : row_y;
 
         // Focus glow: soft outer ring + crisp teal border, like the console.
         if (is_focus) {
@@ -1363,20 +1453,36 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out)
             UiGeometryBuilder::AddRectOutline(out, cx, cy, tile, tile, 1.5f, UiColor::CardBorder());
         }
 
-        // Tile body (key-art stand-in).
+        // Tile body: accent placeholder behind the cover (letterbox if the
+        // cover's aspect differs).
         UiGeometryBuilder::AddQuad(out, cx, cy, tile, tile, SwitchTileAccent(i));
 
-        // Big initial letter as a placeholder emblem.
-        std::string ini = g.title.empty() ? "?" : g.title.substr(0, 1);
-        UiGeometryBuilder::AddText(out, ini, cx + tile * 0.5f - 10.0f, cy + tile * 0.5f - 22.0f, 5.0f, UiColor::White());
+        if (overlay && !g.cover_host_path.empty()) {
+            gpu->UiImageOverlay(g.cover_host_path, g.cover_host_path, cx, cy, tile, tile);
+        } else if (overlay) {
+            std::string ini = g.title.empty() ? "?" : g.title.substr(0, 1);
+            gpu->UiTextOverlay(ini, cx + tile * 0.5f, cy + tile * 0.5f - 34.0f, 64.0f,
+                               1.0f, 1.0f, 1.0f, 0.9f, 0);
+        } else {
+            std::string ini = g.title.empty() ? "?" : g.title.substr(0, 1);
+            UiGeometryBuilder::AddText(out, ini, cx + tile * 0.5f - 10.0f, cy + tile * 0.5f - 22.0f, 5.0f, UiColor::White());
+        }
 
         // Format badge top-left inside the tile.
-        UiGeometryBuilder::AddText(out, g.format_badge, cx + 10, cy + 10, 1.1f, UiColor::White());
+        if (overlay) {
+            gpu->UiTextOverlay(g.format_badge, cx + 10.0f, cy + 8.0f, 12.0f, 1.0f, 1.0f, 1.0f, 0.85f, -1);
+        } else {
+            UiGeometryBuilder::AddText(out, g.format_badge, cx + 10, cy + 10, 1.1f, UiColor::White());
+        }
 
         // Title near the bottom inside the tile.
         std::string disp = g.title;
         if (disp.size() > 15) disp = disp.substr(0, 13) + "..";
-        UiGeometryBuilder::AddText(out, disp, cx + 10, cy + tile - 28.0f, 1.25f, UiColor::White());
+        if (overlay) {
+            gpu->UiTextOverlay(disp, cx + 10.0f, cy + tile - 26.0f, 14.0f, 0.96f, 0.96f, 0.98f, 1.0f, -1);
+        } else {
+            UiGeometryBuilder::AddText(out, disp, cx + 10, cy + tile - 28.0f, 1.25f, UiColor::TextWhite());
+        }
     }
 
     // "All Software" tile with a 2x2 grid glyph.
@@ -1390,11 +1496,16 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out)
             for (int c = 0; c < 2; ++c)
                 UiGeometryBuilder::AddQuad(out, gx + static_cast<float>(c) * 22.0f,
                                            gy + static_cast<float>(r) * 22.0f, 16, 16, UiColor::TextWhite());
-        UiGeometryBuilder::AddText(out, "All Software", ax + 28, row_y + tile - 28.0f, 1.2f, UiColor::TextDim());
+        if (overlay) {
+            gpu->UiTextOverlay("All Software", ax + tile * 0.5f, row_y + tile - 26.0f, 13.0f,
+                               0.55f, 0.58f, 0.65f, 1.0f, 0);
+        } else {
+            UiGeometryBuilder::AddText(out, "All Software", ax + 28, row_y + tile - 28.0f, 1.2f, UiColor::TextDim());
+        }
     }
 }
 
-void XboxFrontend::BuildUiGeometry(std::vector<core::gpu::RasterVertex>& out) {
+void XboxFrontend::BuildUiGeometry(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu) {
     out.reserve(8192);
 
     // The Switch HOME view draws its own header (avatar, clock, battery) and
@@ -1444,9 +1555,9 @@ void XboxFrontend::BuildUiGeometry(std::vector<core::gpu::RasterVertex>& out) {
                 // Switch-style empty HOME: quiet hint, big centered message
                 UiGeometryBuilder::AddText(out, "No software found.", 500, 330, 1.9f, UiColor::TextWhite());
                 UiGeometryBuilder::AddText(out, "Copy games to sdmc:/ then press (Y) to scan.", 420, 372, 1.4f, UiColor::TextDim());
-                DrawSwitchHomeChrome(out, false);
+                DrawSwitchHomeChrome(out, gpu, false);
             } else {
-                DrawSwitchHomeView(out);
+                DrawSwitchHomeView(out, gpu);
             }
 
             if (show_game_options_) {

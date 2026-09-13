@@ -51,12 +51,19 @@ endif()
 
 # Optional SDL2 windowed backend (Linux desktop visual UI).
 find_package(SDL2 QUIET)
+find_package(SDL2_ttf QUIET)
+find_package(SDL2_image QUIET)
 if(SDL2_FOUND)
     list(APPEND GPU_SOURCES
         sdl2/sdl2_backend.hpp
         sdl2/sdl2_backend.cpp
     )
     message(STATUS "Nemu.Gpu: SDL2 windowed backend ENABLED")
+    if(SDL2_ttf_FOUND AND SDL2_image_FOUND)
+        message(STATUS "Nemu.Gpu: SDL2 UI overlay (TTF text + covers) ENABLED")
+    else()
+        message(STATUS "Nemu.Gpu: SDL2_ttf/image missing - overlay disabled")
+    endif()
 else()
     message(STATUS "Nemu.Gpu: SDL2 not found - backend disabled (headless only)")
 endif()
@@ -84,6 +91,10 @@ if(SDL2_FOUND)
     target_compile_definitions(Nemu.Gpu PUBLIC NEMU_SDL2=1)
     target_include_directories(Nemu.Gpu PUBLIC ${SDL2_INCLUDE_DIRS})
     target_link_libraries(Nemu.Gpu PUBLIC ${SDL2_LIBRARIES})
+    if(SDL2_ttf_FOUND AND SDL2_image_FOUND)
+        target_compile_definitions(Nemu.Gpu PUBLIC NEMU_SDL2_UI=1)
+        target_link_libraries(Nemu.Gpu PUBLIC SDL2_ttf::SDL2_ttf SDL2_image::SDL2_image)
+    endif()
 endif()
 
 target_compile_features(Nemu.Gpu PUBLIC cxx_std_20)

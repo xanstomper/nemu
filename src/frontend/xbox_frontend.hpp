@@ -32,6 +32,7 @@ struct GameEntry {
     std::string format_badge;   // "[NSP]", "[XCI]", "[NRO]"
     std::string playtime_str;   // "Played 2h 15m" or "First Played Today"
     std::string optimizer_tag;  // "FSR 2.0 • 4x MSAA • 60 FPS"
+    std::string cover_host_path; // host path to cover art (jpg/png), empty = placeholder tile
     size_t file_size{0};
     u64 title_id{0};
 };
@@ -144,13 +145,17 @@ private:
     void ScanDirectoryRecursive(const std::filesystem::path& host_path, std::string_view vpath_prefix);
     void ShowToast(std::string message);
 
-    void BuildUiGeometry(std::vector<core::gpu::RasterVertex>& out);
+    void BuildUiGeometry(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
     void BuildQuickMenuGeometry(std::vector<core::gpu::RasterVertex>& out);
 
     // Nintendo Switch HOME view (avatar/clock/battery header, game tile row,
     // bottom shortcut bar)
-    void DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& out, bool draw_shortcuts);
-    void DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out);
+    void DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu, bool draw_shortcuts);
+    void DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+
+    /// Resolve cover art for a library entry (rom-sidecar jpg/png, or a
+    /// covers/ directory lookup by title id). Empty result = placeholder tile.
+    void AttachCover(GameEntry& entry);
 
     core::filesystem::VirtualFileSystem& vfs_;
     core::config::ConfigManager& config_;
@@ -165,6 +170,8 @@ private:
     bool home_in_shortcuts_{false};
     size_t home_shortcut_index_{0};
     float home_scroll_offset_{0.0f}; // animated tile-row offset (tiles)
+    size_t home_last_selected_{SIZE_MAX};
+    float home_title_alpha_{1.0f};   // fades in when the selection changes
 
     // File Manager state
     std::string current_dir_path_{"sdmc:/"};

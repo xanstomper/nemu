@@ -95,6 +95,22 @@ public:
     /// visual verification). Returns false if no framebuffer is available.
     virtual bool DumpFramePPM(const char* path) { (void)path; return false; }
 
+    // --- Optional crisp UI overlay -----------------------------------------
+    // Backends with real font/image capability (e.g. SDL2 desktop) composite
+    // anti-aliased text and cover images over the rasterized frame at present
+    // time. The frontend queues overlay ops while building UI geometry and the
+    // backend flushes them inside Present(). Coordinates are in the same UI
+    // space as the raster vertices (default 1280x720). Default implementations
+    // are no-ops so other backends (Null, D3D12) are unaffected.
+    [[nodiscard]] virtual bool SupportsUiOverlay() const noexcept { return false; }
+    /// Queue a text draw. align: -1 left, 0 center, 1 right (relative to x).
+    virtual void UiTextOverlay(std::string_view /*text*/, float /*x*/, float /*y*/,
+                               float /*size_px*/, float /*r*/, float /*g*/, float /*b*/,
+                               float /*a*/, int /*align*/) {}
+    /// Queue a cover image drawn into the given rect (cached by key/path).
+    virtual void UiImageOverlay(std::string_view /*key*/, std::string_view /*host_path*/,
+                                float /*x*/, float /*y*/, float /*w*/, float /*h*/) {}
+
     [[nodiscard]] virtual GpuStats GetStats() const noexcept = 0;
     [[nodiscard]] virtual std::string_view GetBackendName() const noexcept = 0;
 
