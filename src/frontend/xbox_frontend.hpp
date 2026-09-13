@@ -144,6 +144,12 @@ public:
         return r;
     }
 
+    /// In-game Fast Forward (RetroArch-style toggle, 2x speed). Toggled from
+    /// the Quick Menu; the main loop reads IsFastForwardActive() to run 2x
+    /// frame quanta and drop the 60 FPS frame sleep.
+    void ToggleFastForward() noexcept;
+    [[nodiscard]] bool IsFastForwardActive() const noexcept { return fast_forward_; }
+
     /// Process in-game input (handles Quick Menu toggle and navigation)
     bool ProcessInGameInput(const core::hid::XboxGamepadState& input);
 
@@ -331,6 +337,7 @@ private:
     bool close_game_requested_{false};
     bool save_state_requested_{false};
     bool load_state_requested_{false};
+    bool fast_forward_{false};
 
     // In-game button edge detection
     bool prev_btn_back_in_game_{false};

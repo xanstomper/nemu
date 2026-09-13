@@ -1269,7 +1269,7 @@ void XboxFrontend::HandleQuickMenuInput(const core::hid::XboxGamepadState& input
                                         bool pressed_left, bool pressed_right,
                                         bool pressed_a, bool pressed_b) {
     (void)input;
-    constexpr size_t TOTAL_QM_ROWS = 9;
+    constexpr size_t TOTAL_QM_ROWS = 10;
 
     if (pressed_up) {
         quick_menu_row_ = (quick_menu_row_ > 0) ? quick_menu_row_ - 1 : TOTAL_QM_ROWS - 1;
@@ -1362,7 +1362,19 @@ void XboxFrontend::HandleQuickMenuInput(const core::hid::XboxGamepadState& input
                 NEMU_LOG_INFO("Frontend", "QuickMenu: Close content, returning to Eden UI");
             }
             break;
+
+        case 9: // Fast Forward (Toggle 2x)
+            if (pressed_a) {
+                ToggleFastForward();
+            }
+            break;
     }
+}
+
+void XboxFrontend::ToggleFastForward() noexcept {
+    fast_forward_ = !fast_forward_;
+    ShowToast(std::string("Fast Forward: ") + (fast_forward_ ? "ON (2x)" : "OFF"));
+    NEMU_LOG_INFO("Frontend", "QuickMenu: Fast Forward {} (2x)", fast_forward_ ? "ON" : "OFF");
 }
 
 // ---------------------------------------------------------------------------
@@ -3297,12 +3309,13 @@ void XboxFrontend::BuildQuickMenuGeometry(std::vector<core::gpu::RasterVertex>& 
         "Core Options (Resolution / FSR)",
         "Controls (Nintendo / Xbox Layout)",
         "Take Screenshot",
-        "Close Content (Return to Eden UI)"
+        "Close Content (Return to Eden UI)",
+        "Fast Forward (Toggle 2x)"
     };
 
     auto& cfg = config_.GetConfig();
 
-    for (size_t i = 0; i < 9; ++i) {
+    for (size_t i = 0; i < 10; ++i) {
         float iy = 185.0f + static_cast<float>(i) * 44.0f;
         bool is_sel = (i == quick_menu_row_);
 

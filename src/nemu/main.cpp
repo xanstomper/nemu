@@ -343,13 +343,27 @@ int main(int argc, char** argv) {
                         emulator.Resume();
                     }
 
-                    // Step emulation frame quantum
-                    if (!emulator.StepFrame()) {
-                        break;
+                    // Step emulation frame quantum (2x throughput when
+                    // fast-forwarding, like RetroArch's fast forward)
+                    {
+                        const auto ff_steps = frontend.IsFastForwardActive() ? 2u : 1u;
+                        bool emulation_ended = false;
+                        for (auto it = 0u; it < ff_steps; ++it) {
+                            if (!emulator.StepFrame()) {
+                                emulation_ended = true;
+                                break;
+                            }
+                        }
+                        if (emulation_ended) {
+                            break;
+                        }
                     }
 
-                    // ~60 FPS pacing
-                    std::this_thread::sleep_for(std::chrono::microseconds(16666));
+                    // ~60 FPS pacing (drop the sleep while fast-forwarding so
+                    // the host runs ahead instead of blocking)
+                    if (!frontend.IsFastForwardActive()) {
+                        std::this_thread::sleep_for(std::chrono::microseconds(16666));
+                    }
                 }
 
                 if (!reload_requested) {
