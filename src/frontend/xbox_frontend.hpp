@@ -133,7 +133,7 @@ public:
     [[nodiscard]] std::string_view GetToastMessage() const noexcept { return toast_message_; }
 
 private:
-    void HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_start, bool pressed_y);
+    void HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b, bool pressed_start, bool pressed_y);
     void HandleFileManagerInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b, bool pressed_x, bool pressed_y);
     void HandleOptimizersInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a);
     void HandleControllersInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, core::hid::XboxControllerDriver* driver);
@@ -147,6 +147,11 @@ private:
     void BuildUiGeometry(std::vector<core::gpu::RasterVertex>& out);
     void BuildQuickMenuGeometry(std::vector<core::gpu::RasterVertex>& out);
 
+    // Nintendo Switch HOME view (avatar/clock/battery header, game tile row,
+    // bottom shortcut bar)
+    void DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& out, bool draw_shortcuts);
+    void DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out);
+
     core::filesystem::VirtualFileSystem& vfs_;
     core::config::ConfigManager& config_;
 
@@ -155,6 +160,10 @@ private:
     size_t selected_game_index_{0};
     size_t selected_setting_row_{0};
     std::optional<std::string> launch_requested_;
+
+    // Switch HOME view state: tile row vs. bottom shortcut bar
+    bool home_in_shortcuts_{false};
+    size_t home_shortcut_index_{0};
 
     // File Manager state
     std::string current_dir_path_{"sdmc:/"};

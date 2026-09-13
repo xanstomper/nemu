@@ -33,6 +33,15 @@ struct UiColor {
     static constexpr UiColor BadgeNsp() { return {0.55f, 0.20f, 0.85f, 1.0f}; }
     static constexpr UiColor BadgeXci() { return {0.10f, 0.65f, 0.35f, 1.0f}; }
     static constexpr UiColor BadgeNro() { return {0.15f, 0.50f, 0.90f, 1.0f}; }
+
+    // Nintendo Switch HOME menu palette
+    static constexpr UiColor SwitchHomeBg()    { return {0.082f, 0.090f, 0.112f, 1.0f}; }
+    static constexpr UiColor SwitchHomeBg2()   { return {0.105f, 0.114f, 0.138f, 1.0f}; }
+    static constexpr UiColor SwitchTileFocus() { return {0.93f, 0.95f, 1.00f, 1.0f}; }
+    static constexpr UiColor SwitchAccent()    { return {0.24f, 0.55f, 0.95f, 1.0f}; }
+    static constexpr UiColor SwitchGreen()     { return {0.20f, 0.82f, 0.35f, 1.0f}; }
+    static constexpr UiColor SwitchOrange()    { return {0.95f, 0.45f, 0.10f, 1.0f}; }
+    static constexpr UiColor AvatarBg()        { return {0.16f, 0.36f, 0.72f, 1.0f}; }
 };
 
 inline constexpr uint8_t kFont8x8[95][8] = {
