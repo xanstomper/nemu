@@ -49,6 +49,18 @@ if(WIN32)
     )
 endif()
 
+# Optional SDL2 windowed backend (Linux desktop visual UI).
+find_package(SDL2 QUIET)
+if(SDL2_FOUND)
+    list(APPEND GPU_SOURCES
+        sdl2/sdl2_backend.hpp
+        sdl2/sdl2_backend.cpp
+    )
+    message(STATUS "Nemu.Gpu: SDL2 windowed backend ENABLED")
+else()
+    message(STATUS "Nemu.Gpu: SDL2 not found - backend disabled (headless only)")
+endif()
+
 add_library(Nemu.Gpu STATIC ${GPU_SOURCES})
 
 target_include_directories(Nemu.Gpu PUBLIC
@@ -66,6 +78,12 @@ if(WIN32)
         dxgi
         d3dcompiler
     )
+endif()
+
+if(SDL2_FOUND)
+    target_compile_definitions(Nemu.Gpu PUBLIC NEMU_SDL2=1)
+    target_include_directories(Nemu.Gpu PUBLIC ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(Nemu.Gpu PUBLIC ${SDL2_LIBRARIES})
 endif()
 
 target_compile_features(Nemu.Gpu PUBLIC cxx_std_20)

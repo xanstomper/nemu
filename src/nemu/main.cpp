@@ -20,6 +20,32 @@ using namespace nemu::core;
 
 static std::atomic<bool> g_app_running{true};
 
+#ifdef NEMU_SDL2
+#include <SDL.h>
+#include "core/gpu/sdl2/sdl2_backend.hpp"
+#include "core/hid/controller_mapping.hpp"
+
+// Desktop keyboard -> Xbox gamepad bridge so the full Eden UI is navigable on
+// a PC without a physical controller (same input the console sends).
+static core::hid::XboxGamepadState PollSdlKeyboard() {
+    core::hid::XboxGamepadState out{};
+    SDL_PumpEvents();
+    const Uint8* k = SDL_GetKeyboardState(nullptr);
+    if (!k) return out;
+    out.dpad_up    = k[SDL_SCANCODE_UP]    || k[SDL_SCANCODE_W];
+    out.dpad_down  = k[SDL_SCANCODE_DOWN]  || k[SDL_SCANCODE_S];
+    out.dpad_left  = k[SDL_SCANCODE_LEFT]  || k[SDL_SCANCODE_A];
+    out.dpad_right = k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D];
+    out.a          = k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_J];
+    out.b          = k[SDL_SCANCODE_ESCAPE] || k[SDL_SCANCODE_K];
+    out.x          = k[SDL_SCANCODE_I];
+    out.y          = k[SDL_SCANCODE_U];
+    out.start      = k[SDL_SCANCODE_RETURN] && k[SDL_SCANCODE_LCTRL];
+    out.back       = k[SDL_SCANCODE_BACKSPACE];
+    return out;
+}
+#endif
+
 static void SignalHandler(int) {
     g_app_running = false;
 }
@@ -115,6 +141,33 @@ int main(int argc, char** argv) {
                 input_state = *polled;
             }
         }
+#ifdef NEMU_SDL2
+        {
+            auto kb = PollSdlKeyboard();
+            input_state.dpad_up    = input_state.dpad_up    || kb.dpad_up;
+            input_state.dpad_down  = input_state.dpad_down  || kb.dpad_down;
+            input_state.dpad_left  = input_state.dpad_left  || kb.dpad_left;
+            input_state.dpad_right = input_state.dpad_right || kb.dpad_right;
+            input_state.a          = input_state.a          || kb.a;
+            input_state.b          = input_state.b          || kb.b;
+            input_state.x          = input_state.x          || kb.x;
+            input_state.y          = input_state.y          || kb.y;
+            input_state.start      = input_state.start      || kb.start;
+            input_state.back       = input_state.back       || kb.back;
+        }
+#endif
+        // Let the SDL2 window process events (close button, focus).
+#ifdef NEMU_SDL2
+        {
+            auto backend = emulator.GetGpuBackend();
+            if (backend) {
+                auto sdl_backend = std::dynamic_pointer_cast<gpu::sdl2::Sdl2GpuBackend>(backend);
+                if (sdl_backend && !sdl_backend->PumpEvents()) {
+                    g_app_running = false;
+                }
+            }
+        }
+#endif
 
         // Exit combo on Xbox controller: Back + Start in Home UI
         if (input_state.back && input_state.start) {
@@ -163,6 +216,21 @@ int main(int argc, char** argv) {
                             in_game_input = *polled;
                         }
                     }
+#ifdef NEMU_SDL2
+                    {
+                        auto kb = PollSdlKeyboard();
+                        in_game_input.dpad_up    = in_game_input.dpad_up    || kb.dpad_up;
+                        in_game_input.dpad_down  = in_game_input.dpad_down  || kb.dpad_down;
+                        in_game_input.dpad_left  = in_game_input.dpad_left  || kb.dpad_left;
+                        in_game_input.dpad_right = in_game_input.dpad_right || kb.dpad_right;
+                        in_game_input.a          = in_game_input.a          || kb.a;
+                        in_game_input.b          = in_game_input.b          || kb.b;
+                        in_game_input.x          = in_game_input.x          || kb.x;
+                        in_game_input.y          = in_game_input.y          || kb.y;
+                        in_game_input.start      = in_game_input.start      || kb.start;
+                        in_game_input.back       = in_game_input.back       || kb.back;
+                    }
+#endif
 
                     // Process input through frontend (handles Quick Menu toggle, navigation, buttons)
                     frontend.ProcessInGameInput(in_game_input);
