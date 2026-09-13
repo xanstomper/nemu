@@ -202,13 +202,32 @@ void Sdl2GpuBackend::FlushUiOverlay() {
 #ifdef NEMU_SDL2_UI
     if (!renderer_) return;
 
-    // Covers first (under text), in queue order.
+    // Covers first (under text), in queue order. Aspect is preserved with a
+    // center crop ("cover" fit) so artwork fills the tile without distortion.
     for (const auto& op : ui_image_ops_) {
         SDL_Texture* tex = CoverTexture(op.host_path);
         if (!tex) continue;
+        int iw = 0, ih = 0;
+        SDL_QueryTexture(tex, nullptr, nullptr, &iw, &ih);
         SDL_Rect dst{static_cast<int>(op.x), static_cast<int>(op.y),
                      static_cast<int>(op.w), static_cast<int>(op.h)};
-        SDL_RenderCopy(renderer_, tex, nullptr, &dst);
+        if (iw > 0 && ih > 0) {
+            const float src_ar = static_cast<float>(iw) / static_cast<float>(ih);
+            const float dst_ar = op.w / op.h;
+            SDL_Rect src{0, 0, iw, ih};
+            if (src_ar > dst_ar) {          // source wider: crop left/right
+                const int cw = static_cast<int>(ih * dst_ar);
+                src.x = (iw - cw) / 2;
+                src.w = cw;
+            } else if (src_ar < dst_ar) {   // source taller: crop top/bottom
+                const int ch = static_cast<int>(iw / dst_ar);
+                src.y = (ih - ch) / 2;
+                src.h = ch;
+            }
+            SDL_RenderCopy(renderer_, tex, &src, &dst);
+        } else {
+            SDL_RenderCopy(renderer_, tex, nullptr, &dst);
+        }
     }
 
     // Text on top.
@@ -233,9 +252,11 @@ std::string Sdl2GpuBackend::FontPath() {
         if (std::filesystem::exists(env)) return env;
     }
     static const char* kCandidates[] = {
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
     };

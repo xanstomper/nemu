@@ -1257,138 +1257,142 @@ void XboxFrontend::AttachCover(GameEntry& entry) {
 }
 
 void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu, bool draw_shortcuts) {
-    // Background: subtle vertical gradient like the console HOME menu.
+    const bool overlay = gpu && gpu->SupportsUiOverlay();
+
+    // Background: near-flat dark charcoal like the reference (extremely subtle
+    // vertical drift, no visible banding).
     for (int band = 0; band < 8; ++band) {
         float t = static_cast<float>(band) / 7.0f;
         UiColor c{
-            0.082f + (0.105f - 0.082f) * t,
-            0.090f + (0.114f - 0.090f) * t,
-            0.112f + (0.138f - 0.112f) * t,
+            0.084f + (0.098f - 0.084f) * t,
+            0.086f + (0.100f - 0.086f) * t,
+            0.094f + (0.108f - 0.094f) * t,
             1.0f
         };
         UiGeometryBuilder::AddQuad(out, 0, static_cast<float>(band) * 90.0f, 1280, 90, c);
     }
 
-    // Header: profile avatar cluster (left) - main profile + two local users,
-    // drawn as circles with initials like the console user row.
+    // Header: profile avatar cluster (left) - plain circles, no rings, like
+    // the console user row.
     const std::string main_initial = profile_name_.empty() ? "P" : profile_name_.substr(0, 1);
     struct Avatar { float x; UiColor bg; std::string initial; };
     const Avatar avatars[] = {
-        {52.0f,  UiColor::AvatarBg(),  main_initial},
-        {106.0f, UiColor::SwitchRed(), "M"},
-        {160.0f, UiColor::Gold(),      "L"},
+        {88.0f,  UiColor::AvatarBg(),  main_initial},
+        {158.0f, UiColor::SwitchRed(), "M"},
+        {228.0f, UiColor::Gold(),      "L"},
     };
-    const bool overlay = gpu && gpu->SupportsUiOverlay();
     for (const auto& av : avatars) {
-        UiGeometryBuilder::AddDisc(out, av.x, 38.0f, 21.0f, av.bg);
-        UiGeometryBuilder::AddRing(out, av.x, 38.0f, 21.5f, 2.0f, UiColor::White());
+        UiGeometryBuilder::AddDisc(out, av.x, 48.0f, 24.0f, av.bg);
         if (overlay) {
-            gpu->UiTextOverlay(av.initial, av.x, 28.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
+            gpu->UiTextOverlay(av.initial, av.x, 38.0f, 22.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
         } else {
             float iw = static_cast<float>(av.initial.size()) * 4.4f;
-            UiGeometryBuilder::AddText(out, av.initial, av.x - iw, 30.0f, 1.6f, UiColor::White());
+            UiGeometryBuilder::AddText(out, av.initial, av.x - iw, 40.0f, 1.6f, UiColor::White());
         }
     }
 
     // Status cluster (right): clock, Wi-Fi, battery percentage + icon.
     if (overlay) {
-        gpu->UiTextOverlay(GetSystemClockString(), 1092.0f, 26.0f, 22.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1);
+        gpu->UiTextOverlay(GetSystemClockString(), 1124.0f, 32.0f, 30.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1);
     } else {
-        UiGeometryBuilder::AddText(out, GetSystemClockString(), 1068, 28, 1.6f, UiColor::White());
+        UiGeometryBuilder::AddText(out, GetSystemClockString(), 1068, 34, 1.6f, UiColor::White());
     }
 
     // Wi-Fi glyph: dot + two rising arcs.
-    UiGeometryBuilder::AddDisc(out, 1176.0f, 45.0f, 2.5f, UiColor::White());
-    UiGeometryBuilder::AddQuad(out, 1171, 38, 11, 3, UiColor::White());
-    UiGeometryBuilder::AddQuad(out, 1166, 30, 21, 3, UiColor::White());
+    UiGeometryBuilder::AddDisc(out, 1160.0f, 52.0f, 3.0f, UiColor::White());
+    UiGeometryBuilder::AddQuad(out, 1154, 44, 13, 3.5f, UiColor::White());
+    UiGeometryBuilder::AddQuad(out, 1148, 34, 25, 3.5f, UiColor::White());
 
     if (overlay) {
-        gpu->UiTextOverlay("100%", 1236.0f, 30.0f, 17.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1);
+        gpu->UiTextOverlay("100%", 1204.0f, 40.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1);
     } else {
-        UiGeometryBuilder::AddText(out, "100%", 1198, 30, 1.3f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "100%", 1198, 40, 1.3f, UiColor::White());
     }
-    UiGeometryBuilder::AddRectOutline(out, 1244, 30, 30, 16, 2.0f, UiColor::White());
-    UiGeometryBuilder::AddQuad(out, 1248, 34, 21, 8, UiColor::SwitchGreen());
-    UiGeometryBuilder::AddQuad(out, 1276, 35, 4, 7, UiColor::White());
+    UiGeometryBuilder::AddRectOutline(out, 1218, 38, 40, 20, 2.0f, UiColor::White());
+    UiGeometryBuilder::AddQuad(out, 1223, 43, 29, 10, UiColor::SwitchGreen());
+    UiGeometryBuilder::AddQuad(out, 1260, 46, 5, 9, UiColor::White());
 
     if (!draw_shortcuts) return;
 
     // Bottom circular icon bar: Switch Online / News / eShop / Album /
     // Controllers / Settings / Power.
-    const float icon_y = 610.0f;
-    const float spacing = 92.0f;
-    const float start_x = 640.0f - spacing * 3.0f;
+    const float icon_y = 553.0f;
+    const float spacing = 95.0f;
+    const float start_x = 355.0f;
     for (size_t i = 0; i < 7; ++i) {
         float cx = start_x + static_cast<float>(i) * spacing;
         bool sel = home_in_shortcuts_ && (i == home_shortcut_index_);
 
-        // Selection halo.
         if (sel) {
-            UiGeometryBuilder::AddRing(out, cx, icon_y, 29.0f, 3.0f, UiColor::SwitchTeal());
+            UiGeometryBuilder::AddRing(out, cx, icon_y, 34.0f, 3.0f, UiColor::SwitchTeal());
         }
 
         switch (i) {
             case 0: { // Nintendo Switch Online: red disc + white ring + dot
-                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchRed());
-                UiGeometryBuilder::AddRing(out, cx, icon_y, 13.0f, 2.5f, UiColor::White());
-                UiGeometryBuilder::AddDisc(out, cx, icon_y, 4.0f, UiColor::White());
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 29.0f, UiColor::SwitchRed());
+                UiGeometryBuilder::AddRing(out, cx, icon_y, 16.0f, 2.5f, UiColor::White());
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 5.0f, UiColor::White());
                 break;
             }
             case 1: { // News: speech bubble
-                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchIconBg());
-                UiGeometryBuilder::AddQuad(out, cx - 11, icon_y - 9, 22, 15, UiColor::White());
-                UiGeometryBuilder::AddQuad(out, cx - 7, icon_y + 5, 8, 7, UiColor::White());
-                UiGeometryBuilder::AddQuad(out, cx - 7, icon_y - 4, 14, 2.5f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 29.0f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddQuad(out, cx - 13, icon_y - 10, 26, 17, UiColor::White());
+                UiGeometryBuilder::AddQuad(out, cx - 8, icon_y + 6, 9, 8, UiColor::White());
+                UiGeometryBuilder::AddQuad(out, cx - 8, icon_y - 4, 16, 3, UiColor::SwitchIconBg());
                 break;
             }
             case 2: { // Nintendo eShop: orange shopping bag
-                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchIconBg());
-                UiGeometryBuilder::AddRing(out, cx, icon_y - 7, 6.0f, 2.5f, UiColor::SwitchOrange());
-                UiGeometryBuilder::AddQuad(out, cx - 11, icon_y - 5, 22, 17, UiColor::SwitchOrange());
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 29.0f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddRing(out, cx, icon_y - 8, 7.0f, 2.5f, UiColor::SwitchOrange());
+                UiGeometryBuilder::AddQuad(out, cx - 13, icon_y - 6, 26, 20, UiColor::SwitchOrange());
                 break;
             }
             case 3: { // Album: picture frame with mountain + sun
-                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchIconBg());
-                UiGeometryBuilder::AddQuad(out, cx - 11, icon_y - 9, 22, 18, UiColor::SwitchAccent());
-                UiGeometryBuilder::AddDisc(out, cx + 6, icon_y - 4, 2.5f, UiColor::White());
-                UiGeometryBuilder::AddQuad(out, cx - 11, icon_y + 3, 12, 6, UiColor::White());
-                UiGeometryBuilder::AddQuad(out, cx - 2, icon_y - 1, 12, 10, UiColor::White());
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 29.0f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddQuad(out, cx - 13, icon_y - 10, 26, 21, UiColor::SwitchAccent());
+                UiGeometryBuilder::AddDisc(out, cx + 7, icon_y - 4, 3.0f, UiColor::White());
+                UiGeometryBuilder::AddQuad(out, cx - 13, icon_y + 4, 14, 7, UiColor::White());
+                UiGeometryBuilder::AddQuad(out, cx - 2, icon_y - 1, 15, 12, UiColor::White());
                 break;
             }
             case 4: { // Controllers: gamepad
-                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchIconBg());
-                UiGeometryBuilder::AddQuad(out, cx - 13, icon_y - 7, 26, 14, UiColor::White());
-                UiGeometryBuilder::AddQuad(out, cx - 8, icon_y - 2, 4, 4, UiColor::SwitchIconBg());
-                UiGeometryBuilder::AddDisc(out, cx + 6, icon_y, 2.5f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 29.0f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddQuad(out, cx - 15, icon_y - 8, 30, 16, UiColor::White());
+                UiGeometryBuilder::AddDisc(out, cx - 8, icon_y, 3.0f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddDisc(out, cx + 7, icon_y, 3.0f, UiColor::SwitchIconBg());
                 break;
             }
-            case 5: { // System Settings: gear (disc + 8 spokes)
-                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchIconBg());
-                UiGeometryBuilder::AddDisc(out, cx, icon_y, 8.5f, UiColor::White());
+            case 5: { // System Settings: gear (hub + 8 round teeth)
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 29.0f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddRing(out, cx, icon_y, 11.0f, 5.0f, UiColor::White());
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 4.0f, UiColor::SwitchIconBg());
                 for (int s = 0; s < 8; ++s) {
                     float a = static_cast<float>(s) * 0.7853982f;
-                    UiGeometryBuilder::AddQuad(out, cx + std::cos(a) * 13.0f - 2.5f,
-                                               icon_y + std::sin(a) * 13.0f - 2.5f,
-                                               5, 5, UiColor::White());
+                    UiGeometryBuilder::AddDisc(out, cx + std::cos(a) * 15.5f,
+                                               icon_y + std::sin(a) * 15.5f, 3.0f, UiColor::White());
                 }
                 break;
             }
             case 6: { // Power / Sleep
-                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchIconBg());
-                UiGeometryBuilder::AddRing(out, cx, icon_y + 2, 10.0f, 2.5f, UiColor::White());
-                UiGeometryBuilder::AddQuad(out, cx - 2, icon_y - 14, 4, 11, UiColor::White());
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 29.0f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddRing(out, cx, icon_y + 2, 12.0f, 2.5f, UiColor::White());
+                UiGeometryBuilder::AddQuad(out, cx - 2.5f, icon_y - 16, 5, 13, UiColor::White());
                 break;
             }
         }
     }
+
+    // Thin separator line above the controller hints.
+    UiGeometryBuilder::AddQuad(out, 48, 656, 1184, 1.5f, UiColor{0.17f, 0.17f, 0.19f, 1.0f});
+
     // Bottom-right controller hints, like the reference "(A) Continue (+) Start".
     if (overlay) {
-        gpu->UiTextOverlay("A", 1150.0f, 688.0f, 15.0f, 0.90f, 0.90f, 0.95f, 1.0f, 1);
-        gpu->UiTextOverlay("Continue", 1156.0f, 688.0f, 15.0f, 0.75f, 0.78f, 0.85f, 1.0f, -1);
-        gpu->UiTextOverlay("+", 1228.0f, 688.0f, 15.0f, 0.90f, 0.90f, 0.95f, 1.0f, 1);
-        gpu->UiTextOverlay("Options", 1236.0f, 688.0f, 15.0f, 0.75f, 0.78f, 0.85f, 1.0f, -1);
+        gpu->UiTextOverlay("(A)", 1050.0f, 682.0f, 16.0f, 0.90f, 0.90f, 0.95f, 1.0f, -1);
+        gpu->UiTextOverlay("Continue", 1082.0f, 682.0f, 16.0f, 0.75f, 0.78f, 0.85f, 1.0f, -1);
+        gpu->UiTextOverlay("(+)", 1180.0f, 682.0f, 16.0f, 0.90f, 0.90f, 0.95f, 1.0f, -1);
+        gpu->UiTextOverlay("Start", 1212.0f, 682.0f, 16.0f, 0.75f, 0.78f, 0.85f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "(A) Continue   (+) Options", 1040, 690, 1.2f, UiColor::TextDim());
+        UiGeometryBuilder::AddText(out, "(A) Continue   (+) Start", 1040, 684, 1.2f, UiColor::TextDim());
     }
 }
 
@@ -1398,12 +1402,13 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out,
 
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
-    // Horizontal tile row. The row slides smoothly: the rendered offset eases
-    // toward the focused tile each frame (console-style focus animation).
-    const float tile = 190.0f;
-    const float step = 216.0f;
-    const float row_y = 208.0f;
+    // Horizontal game carousel, sized from the reference: large square tiles,
+    // ~4.4 visible across 1280px.
+    const float tile = 264.0f;
+    const float step = 290.0f;
+    const float row_y = 228.0f;
 
+    // The row slides smoothly toward the focused tile (console animation).
     const float target_offset = static_cast<float>(selected_game_index_) * step;
     home_scroll_offset_ += (target_offset - home_scroll_offset_) * home_anim::kCarouselEase;
     if (std::fabs(target_offset - home_scroll_offset_) < 0.5f) {
@@ -1418,21 +1423,16 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out,
     }
     home_title_alpha_ += (1.0f - home_title_alpha_) * home_anim::kTitleFadeIn;
 
-    // Focused software name above the tile row, in the accent teal, exactly
-    // like the console HOME.
+    // Focused software name above the carousel, left-aligned with the row,
+    // in the accent teal - exactly like the console HOME.
     if (!home_in_shortcuts_ && selected_game_index_ < library_.size()) {
         const auto& g = library_[selected_game_index_];
         const float a = home_title_alpha_;
+        const float left_x = 640.0f - tile * 0.5f;
         if (overlay) {
-            gpu->UiTextOverlay(g.title, 640.0f, 112.0f, 34.0f, 0.24f, 0.78f, 0.82f, a, 0);
-            std::string sub = g.format_badge + "   " + g.playtime_str;
-            gpu->UiTextOverlay(sub, 640.0f, 158.0f, 15.0f, 0.55f, 0.58f, 0.65f, a, 0);
+            gpu->UiTextOverlay(g.title, left_x, 128.0f, 38.0f, 0.24f, 0.78f, 0.82f, a, -1);
         } else {
-            float tw = static_cast<float>(g.title.size()) * 8.2f;
-            UiGeometryBuilder::AddText(out, g.title, 640.0f - tw * 0.5f, 118.0f, 2.6f, UiColor::SwitchTeal());
-            std::string sub = g.format_badge + "   " + g.playtime_str;
-            float sw = static_cast<float>(sub.size()) * 3.9f;
-            UiGeometryBuilder::AddText(out, sub, 640.0f - sw * 0.5f, 160.0f, 1.3f, UiColor::TextDim());
+            UiGeometryBuilder::AddText(out, g.title, left_x, 134.0f, 2.6f, UiColor::SwitchTeal());
         }
     }
 
@@ -1444,67 +1444,49 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out,
         bool is_focus = (i == selected_game_index_) && !home_in_shortcuts_;
         float cy = is_focus ? row_y - home_anim::kFocusLift : row_y;
 
-        // Focus glow: soft outer ring + crisp teal border, like the console.
+        // Unfocused tiles are pure artwork - no border (reference behavior).
+        // Focused tile gets the teal glow shadow + crisp cyan outline.
         if (is_focus) {
-            UiColor glow{0.14f, 0.45f, 0.48f, 1.0f};
-            UiGeometryBuilder::AddRectOutline(out, cx - 10, cy - 10, tile + 20, tile + 20, 8.0f, glow);
+            UiColor glow{0.13f, 0.42f, 0.45f, 1.0f};
+            UiGeometryBuilder::AddRectOutline(out, cx - 9, cy - 9, tile + 18, tile + 18, 7.0f, glow);
             UiGeometryBuilder::AddRectOutline(out, cx - 4, cy - 4, tile + 8, tile + 8, 4.0f, UiColor::SwitchTeal());
-        } else {
-            UiGeometryBuilder::AddRectOutline(out, cx, cy, tile, tile, 1.5f, UiColor::CardBorder());
         }
 
-        // Tile body: accent placeholder behind the cover (letterbox if the
-        // cover's aspect differs).
+        // Accent placeholder sits behind the cover (visible only as
+        // letterboxing while the cover loads).
         UiGeometryBuilder::AddQuad(out, cx, cy, tile, tile, SwitchTileAccent(i));
 
         if (overlay && !g.cover_host_path.empty()) {
             gpu->UiImageOverlay(g.cover_host_path, g.cover_host_path, cx, cy, tile, tile);
         } else if (overlay) {
             std::string ini = g.title.empty() ? "?" : g.title.substr(0, 1);
-            gpu->UiTextOverlay(ini, cx + tile * 0.5f, cy + tile * 0.5f - 34.0f, 64.0f,
+            gpu->UiTextOverlay(ini, cx + tile * 0.5f, cy + tile * 0.5f - 44.0f, 84.0f,
                                1.0f, 1.0f, 1.0f, 0.9f, 0);
         } else {
             std::string ini = g.title.empty() ? "?" : g.title.substr(0, 1);
             UiGeometryBuilder::AddText(out, ini, cx + tile * 0.5f - 10.0f, cy + tile * 0.5f - 22.0f, 5.0f, UiColor::White());
         }
-
-        // Format badge top-left inside the tile.
-        if (overlay) {
-            gpu->UiTextOverlay(g.format_badge, cx + 10.0f, cy + 8.0f, 12.0f, 1.0f, 1.0f, 1.0f, 0.85f, -1);
-        } else {
-            UiGeometryBuilder::AddText(out, g.format_badge, cx + 10, cy + 10, 1.1f, UiColor::White());
-        }
-
-        // Title near the bottom inside the tile.
-        std::string disp = g.title;
-        if (disp.size() > 15) disp = disp.substr(0, 13) + "..";
-        if (overlay) {
-            gpu->UiTextOverlay(disp, cx + 10.0f, cy + tile - 26.0f, 14.0f, 0.96f, 0.96f, 0.98f, 1.0f, -1);
-        } else {
-            UiGeometryBuilder::AddText(out, disp, cx + 10, cy + tile - 28.0f, 1.25f, UiColor::TextWhite());
-        }
     }
 
-    // "All Software" tile with a 2x2 grid glyph.
+    // "All Software" tile after the library, label beneath it.
     float ax = base_x + static_cast<float>(library_.size()) * step;
     if (ax < 1320.0f) {
         UiGeometryBuilder::AddQuad(out, ax, row_y, tile, tile, UiColor::CardBg());
         UiGeometryBuilder::AddRectOutline(out, ax, row_y, tile, tile, 1.5f, UiColor::CardBorder());
-        float gx = ax + tile * 0.5f - 19.0f;
-        float gy = row_y + tile * 0.5f - 42.0f;
+        float gx = ax + tile * 0.5f - 26.0f;
+        float gy = row_y + tile * 0.5f - 56.0f;
         for (int r = 0; r < 2; ++r)
             for (int c = 0; c < 2; ++c)
-                UiGeometryBuilder::AddQuad(out, gx + static_cast<float>(c) * 22.0f,
-                                           gy + static_cast<float>(r) * 22.0f, 16, 16, UiColor::TextWhite());
+                UiGeometryBuilder::AddQuad(out, gx + static_cast<float>(c) * 30.0f,
+                                           gy + static_cast<float>(r) * 30.0f, 22, 22, UiColor::TextWhite());
         if (overlay) {
-            gpu->UiTextOverlay("All Software", ax + tile * 0.5f, row_y + tile - 26.0f, 13.0f,
+            gpu->UiTextOverlay("All Software", ax + tile * 0.5f, row_y + tile + 14.0f, 15.0f,
                                0.55f, 0.58f, 0.65f, 1.0f, 0);
         } else {
-            UiGeometryBuilder::AddText(out, "All Software", ax + 28, row_y + tile - 28.0f, 1.2f, UiColor::TextDim());
+            UiGeometryBuilder::AddText(out, "All Software", ax + 60, row_y + tile + 16.0f, 1.3f, UiColor::TextDim());
         }
     }
 }
-
 void XboxFrontend::BuildUiGeometry(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu) {
     out.reserve(8192);
 
@@ -1809,11 +1791,15 @@ void XboxFrontend::BuildUiGeometry(std::vector<core::gpu::RasterVertex>& out, co
         UiGeometryBuilder::AddText(out, "(Back+Start) Exit", 1060, 684, 1.3f, UiColor::TextDim());
     }
 
-    // 5. Toast Notification Banner
+    // 5. Toast Notification Banner (restrained console style: dark pill,
+    // no neon border)
     if (toast_timer_ > 0.0f) {
-        UiGeometryBuilder::AddQuad(out, 340, 12, 600, 36, UiColor::HeaderDark());
-        UiGeometryBuilder::AddRectOutline(out, 340, 12, 600, 36, 2.0f, UiColor::EdenCyan());
-        UiGeometryBuilder::AddText(out, "[*] " + toast_message_, 360, 22, 1.4f, UiColor::EdenCyan());
+        UiGeometryBuilder::AddQuad(out, 390, 14, 500, 32, UiColor{0.10f, 0.10f, 0.115f, 0.92f});
+        if (gpu && gpu->SupportsUiOverlay()) {
+            gpu->UiTextOverlay(toast_message_, 640.0f, 21.0f, 15.0f, 0.82f, 0.84f, 0.90f, 1.0f, 0);
+        } else {
+            UiGeometryBuilder::AddText(out, toast_message_, 420, 22, 1.3f, UiColor::TextWhite());
+        }
     }
 }
 
