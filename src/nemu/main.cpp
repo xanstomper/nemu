@@ -29,6 +29,7 @@ static std::atomic<bool> g_app_running{true};
 // a PC without a physical controller (same input the console sends).
 static core::hid::XboxGamepadState PollSdlKeyboard() {
     core::hid::XboxGamepadState out{};
+    SDL_PumpEvents();
     const Uint8* k = SDL_GetKeyboardState(nullptr);
     if (!k) return out;
     out.dpad_up    = k[SDL_SCANCODE_UP]    || k[SDL_SCANCODE_W];
@@ -251,6 +252,25 @@ int main(int argc, char** argv) {
                     }
 #ifdef NEMU_SDL2
                     {
+                        // Pump the window event queue every frame so the OS
+                        // never marks us unresponsive and keyboard state stays
+                        // fresh (this was the source of the freeze).
+                        auto backend = emulator.GetGpuBackend();
+                        auto sdl_backend = std::dynamic_pointer_cast<gpu::sdl2::Sdl2GpuBackend>(backend);
+                        if (sdl_backend) {
+                            if (!sdl_backend->PumpEvents()) {
+                                g_app_running = false;
+                                emulator.Stop();
+                                break;
+                            }
+                            auto ptr = sdl_backend->ConsumePointerState();
+                            if (ptr.right_clicked) {
+                                // Right-click opens the Quick Menu in-game
+                                if (!frontend.IsQuickMenuOpen()) {
+                                    frontend.SetQuickMenuOpen(true);
+                                }
+                            }
+                        }
                         auto kb = PollSdlKeyboard();
                         in_game_input.dpad_up    = in_game_input.dpad_up    || kb.dpad_up;
                         in_game_input.dpad_down  = in_game_input.dpad_down  || kb.dpad_down;
@@ -264,6 +284,14 @@ int main(int argc, char** argv) {
                         in_game_input.back       = in_game_input.back       || kb.back;
                     }
 #endif
+
+                    // Hard exit combo always available, even inside emulation
+                    if (in_game_input.back && in_game_input.start) {
+                        NEMU_LOG_INFO("Frontend", "Exit combo during emulation; terminating");
+                        g_app_running = false;
+                        emulator.Stop();
+                        break;
+                    }
 
                     // Process input through frontend (handles Quick Menu toggle, navigation, buttons)
                     frontend.ProcessInGameInput(in_game_input);

@@ -2296,6 +2296,8 @@ void XboxFrontend::HandleSettingsInput(const core::hid::XboxGamepadState& input,
                     ? core::config::CpuBackendMode::Interpreter : core::config::CpuBackendMode::Jit;
             } else if (settings_row_ == 3) {
                 cfg.fastmem_enabled = !cfg.fastmem_enabled;
+            } else if (settings_row_ == 4) {
+                cfg.multithreaded_cpu = !cfg.multithreaded_cpu;
             }
         } else if (settings_category_ == 1) { // Display
             if (settings_row_ == 0) {
@@ -2344,6 +2346,12 @@ void XboxFrontend::HandleSettingsInput(const core::hid::XboxGamepadState& input,
             } else if (settings_row_ == 1) {
                 cfg.audio_volume = (pressed_left) ? std::max(0u, cfg.audio_volume - 5u)
                                                   : std::min(100u, cfg.audio_volume + 5u);
+            }
+        } else if (settings_category_ == 5) { // System & Storage
+            if (settings_row_ == 1) { // System Language
+                cfg.system_language = (pressed_left)
+                    ? static_cast<core::config::SystemLanguage>((static_cast<u32>(cfg.system_language) + 5) % 6)
+                    : static_cast<core::config::SystemLanguage>((static_cast<u32>(cfg.system_language) + 1) % 6);
             }
         }
         config_.Save();
@@ -2476,6 +2484,7 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
         opts.push_back({"Vertical Sync (VSync)", cfg.vsync ? "Enabled (60 Hz)" : "Disabled", "Smooth 60 Hz frame delivery aligned with TV refresh"});
         opts.push_back({"ARM64 JIT Dynamic Recompiler", (cfg.cpu_backend == core::config::CpuBackendMode::Jit) ? "Enabled" : "Disabled", "Hardware dynamic code generation for peak performance"});
         opts.push_back({"Fastmem MMU Exception Trap", cfg.fastmem_enabled ? "Enabled" : "Disabled", "Zero-overhead direct host pointer memory mapping"});
+        opts.push_back({"Multithreaded CPU", cfg.multithreaded_cpu ? "Enabled" : "Disabled", "Parallel guest thread execution across host cores"});
     } else if (settings_category_ == 1) {
         std::string res_str = (cfg.resolution_scale == core::config::ResolutionScale::Ultra4K_2_0x) ? "2.0x 4K UHD (Series X Ultra)" :
                               (cfg.resolution_scale == core::config::ResolutionScale::SeriesX_1_5x) ? "1.5x 1440p (Series X Enhanced)" :
@@ -2518,7 +2527,10 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
         std::string cap_str = st.valid
             ? ([](double v){ char b[48]; std::snprintf(b, sizeof(b), "%.1f GB Total", v); return std::string(b); })(gb(st.capacity_bytes))
             : std::string("Unavailable");
+        // Order must match enum class SystemLanguage (English=0, Japanese=1, ..., Italian=5).
+        const char* lang_names[] = {"English", "Japanese", "French", "German", "Spanish", "Italian"};
         opts.push_back({"Console Nickname", "Nemu (Xbox Horizon OS)", "Network identifier for local wireless play"});
+        opts.push_back({"System Language", std::string(lang_names[static_cast<u32>(cfg.system_language) % 6]), "Horizon OS system language (applies to set:u service)"});
         opts.push_back({"Emulator Firmware", GetEmulatorVersionString(), "Running build of the emulator core"});
         opts.push_back({"Storage (sdmc:/)", cap_str + " - " + free_str, "Live filesystem stats for the game storage mount"});
         opts.push_back({"Save Data & Config", "save:/ (config.ini, states, screenshots)", "Virtual file system roots mounted for game data"});
