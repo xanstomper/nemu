@@ -562,9 +562,10 @@ void XboxFrontend::HandleLibraryInput(const core::hid::XboxGamepadState& input, 
         return;
     }
 
-    // Bottom shortcut bar (News / eShop / Album / Controllers / System / Sleep)
+    // Bottom icon bar (Switch Online / News / eShop / Album / Controllers /
+    // System Settings / Power)
     if (home_in_shortcuts_) {
-        constexpr size_t kShortcutCount = 6;
+        constexpr size_t kShortcutCount = 7;
         if (pressed_left) {
             home_shortcut_index_ = (home_shortcut_index_ + kShortcutCount - 1) % kShortcutCount;
         }
@@ -577,12 +578,13 @@ void XboxFrontend::HandleLibraryInput(const core::hid::XboxGamepadState& input, 
         }
         if (pressed_a) {
             switch (home_shortcut_index_) {
-                case 0: ShowToast("News: no feed available yet"); break;
-                case 1: ShowToast("Nintendo eShop: not available in this build"); break;
-                case 2: current_tab_ = FrontendTab::FileManager; home_in_shortcuts_ = false; break; // Album -> File Manager
-                case 3: current_tab_ = FrontendTab::Controllers; home_in_shortcuts_ = false; break;
-                case 4: current_tab_ = FrontendTab::System; home_in_shortcuts_ = false; break;
-                case 5: ShowToast("Sleep Mode is not supported in this build"); break;
+                case 0: ShowToast("Nintendo Switch Online is not available in this build"); break;
+                case 1: ShowToast("News: no feed available yet"); break;
+                case 2: ShowToast("Nintendo eShop: not available in this build"); break;
+                case 3: current_tab_ = FrontendTab::FileManager; home_in_shortcuts_ = false; break; // Album -> File Manager
+                case 4: current_tab_ = FrontendTab::Controllers; home_in_shortcuts_ = false; break;
+                case 5: current_tab_ = FrontendTab::System; home_in_shortcuts_ = false; break;
+                case 6: ShowToast("Sleep Mode is not supported in this build"); break;
             }
         }
         if (pressed_b) {
@@ -1216,41 +1218,103 @@ void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& ou
         UiGeometryBuilder::AddQuad(out, 0, static_cast<float>(band) * 90.0f, 1280, 90, c);
     }
 
-    // Header: avatar + profile name (left), clock + wifi + battery (right).
-    UiGeometryBuilder::AddQuad(out, 36, 16, 44, 44, UiColor::AvatarBg());
-    UiGeometryBuilder::AddRectOutline(out, 36, 16, 44, 44, 2.0f, UiColor::White());
-    std::string initial = profile_name_.empty() ? "P" : profile_name_.substr(0, 1);
-    UiGeometryBuilder::AddText(out, initial, 51, 26, 1.9f, UiColor::White());
-    UiGeometryBuilder::AddText(out, profile_name_, 94, 30, 1.5f, UiColor::TextWhite());
+    // Header: profile avatar cluster (left) - main profile + two local users,
+    // drawn as circles with initials like the console user row.
+    const std::string main_initial = profile_name_.empty() ? "P" : profile_name_.substr(0, 1);
+    struct Avatar { float x; UiColor bg; std::string initial; };
+    const Avatar avatars[] = {
+        {52.0f,  UiColor::AvatarBg(),  main_initial},
+        {106.0f, UiColor::SwitchRed(), "M"},
+        {160.0f, UiColor::Gold(),      "L"},
+    };
+    for (const auto& av : avatars) {
+        UiGeometryBuilder::AddDisc(out, av.x, 38.0f, 21.0f, av.bg);
+        UiGeometryBuilder::AddRing(out, av.x, 38.0f, 21.5f, 2.0f, UiColor::White());
+        float iw = static_cast<float>(av.initial.size()) * 4.4f;
+        UiGeometryBuilder::AddText(out, av.initial, av.x - iw, 30.0f, 1.6f, UiColor::White());
+    }
 
-    UiGeometryBuilder::AddText(out, GetSystemClockString(), 1096, 26, 1.6f, UiColor::White());
+    // Status cluster (right): clock, Wi-Fi, battery percentage + icon.
+    UiGeometryBuilder::AddText(out, GetSystemClockString(), 1068, 28, 1.6f, UiColor::White());
 
     // Wi-Fi glyph: dot + two rising arcs.
-    UiGeometryBuilder::AddQuad(out, 1188, 44, 4, 4, UiColor::White());
-    UiGeometryBuilder::AddQuad(out, 1184, 38, 12, 3, UiColor::White());
-    UiGeometryBuilder::AddQuad(out, 1180, 31, 20, 3, UiColor::White());
+    UiGeometryBuilder::AddDisc(out, 1176.0f, 45.0f, 2.5f, UiColor::White());
+    UiGeometryBuilder::AddQuad(out, 1171, 38, 11, 3, UiColor::White());
+    UiGeometryBuilder::AddQuad(out, 1166, 30, 21, 3, UiColor::White());
 
-    // Battery: outline + green fill + nub.
-    UiGeometryBuilder::AddRectOutline(out, 1226, 30, 30, 16, 2.0f, UiColor::White());
-    UiGeometryBuilder::AddQuad(out, 1230, 34, 21, 8, UiColor::SwitchGreen());
-    UiGeometryBuilder::AddQuad(out, 1258, 35, 4, 7, UiColor::White());
+    UiGeometryBuilder::AddText(out, "100%", 1198, 30, 1.3f, UiColor::White());
+    UiGeometryBuilder::AddRectOutline(out, 1244, 30, 30, 16, 2.0f, UiColor::White());
+    UiGeometryBuilder::AddQuad(out, 1248, 34, 21, 8, UiColor::SwitchGreen());
+    UiGeometryBuilder::AddQuad(out, 1276, 35, 4, 7, UiColor::White());
 
     if (!draw_shortcuts) return;
 
-    // Bottom shortcut row: News / Nintendo eShop / Album / Controllers /
-    // System Settings / Sleep Mode.
-    static const char* kLabels[] = {
-        "News", "Nintendo eShop", "Album", "Controllers", "System Settings", "Sleep Mode"
-    };
-    static const char* kGlyphs[] = {"Nw", "eS", "Al", "Co", "Sy", "Sl"};
-    for (size_t i = 0; i < 6; ++i) {
-        float sx = 96.0f + static_cast<float>(i) * 178.0f;
+    // Bottom circular icon bar: Switch Online / News / eShop / Album /
+    // Controllers / Settings / Power.
+    const float icon_y = 610.0f;
+    const float spacing = 92.0f;
+    const float start_x = 640.0f - spacing * 3.0f;
+    for (size_t i = 0; i < 7; ++i) {
+        float cx = start_x + static_cast<float>(i) * spacing;
         bool sel = home_in_shortcuts_ && (i == home_shortcut_index_);
-        UiColor col = sel ? UiColor::White() : UiColor::TextDim();
-        UiGeometryBuilder::AddText(out, kGlyphs[i], sx, 636, 1.6f, col);
-        UiGeometryBuilder::AddText(out, kLabels[i], sx, 668, 1.1f, col);
+
+        // Selection halo.
         if (sel) {
-            UiGeometryBuilder::AddQuad(out, sx - 4, 662, 52, 3, UiColor::SwitchAccent());
+            UiGeometryBuilder::AddRing(out, cx, icon_y, 29.0f, 3.0f, UiColor::SwitchTeal());
+        }
+
+        switch (i) {
+            case 0: { // Nintendo Switch Online: red disc + white ring + dot
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchRed());
+                UiGeometryBuilder::AddRing(out, cx, icon_y, 13.0f, 2.5f, UiColor::White());
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 4.0f, UiColor::White());
+                break;
+            }
+            case 1: { // News: speech bubble
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddQuad(out, cx - 11, icon_y - 9, 22, 15, UiColor::White());
+                UiGeometryBuilder::AddQuad(out, cx - 7, icon_y + 5, 8, 7, UiColor::White());
+                UiGeometryBuilder::AddQuad(out, cx - 7, icon_y - 4, 14, 2.5f, UiColor::SwitchIconBg());
+                break;
+            }
+            case 2: { // Nintendo eShop: orange shopping bag
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddRing(out, cx, icon_y - 7, 6.0f, 2.5f, UiColor::SwitchOrange());
+                UiGeometryBuilder::AddQuad(out, cx - 11, icon_y - 5, 22, 17, UiColor::SwitchOrange());
+                break;
+            }
+            case 3: { // Album: picture frame with mountain + sun
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddQuad(out, cx - 11, icon_y - 9, 22, 18, UiColor::SwitchAccent());
+                UiGeometryBuilder::AddDisc(out, cx + 6, icon_y - 4, 2.5f, UiColor::White());
+                UiGeometryBuilder::AddQuad(out, cx - 11, icon_y + 3, 12, 6, UiColor::White());
+                UiGeometryBuilder::AddQuad(out, cx - 2, icon_y - 1, 12, 10, UiColor::White());
+                break;
+            }
+            case 4: { // Controllers: gamepad
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddQuad(out, cx - 13, icon_y - 7, 26, 14, UiColor::White());
+                UiGeometryBuilder::AddQuad(out, cx - 8, icon_y - 2, 4, 4, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddDisc(out, cx + 6, icon_y, 2.5f, UiColor::SwitchIconBg());
+                break;
+            }
+            case 5: { // System Settings: gear (disc + 8 spokes)
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 8.5f, UiColor::White());
+                for (int s = 0; s < 8; ++s) {
+                    float a = static_cast<float>(s) * 0.7853982f;
+                    UiGeometryBuilder::AddQuad(out, cx + std::cos(a) * 13.0f - 2.5f,
+                                               icon_y + std::sin(a) * 13.0f - 2.5f,
+                                               5, 5, UiColor::White());
+                }
+                break;
+            }
+            case 6: { // Power / Sleep
+                UiGeometryBuilder::AddDisc(out, cx, icon_y, 24.0f, UiColor::SwitchIconBg());
+                UiGeometryBuilder::AddRing(out, cx, icon_y + 2, 10.0f, 2.5f, UiColor::White());
+                UiGeometryBuilder::AddQuad(out, cx - 2, icon_y - 14, 4, 11, UiColor::White());
+                break;
+            }
         }
     }
 }
@@ -1258,11 +1322,29 @@ void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& ou
 void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out) {
     DrawSwitchHomeChrome(out, true);
 
-    // Horizontal tile row, focused tile centered and raised.
-    const float tile = 180.0f;
-    const float step = 214.0f;
-    const float row_y = 232.0f;
-    const float base_x = 640.0f - tile * 0.5f - static_cast<float>(selected_game_index_) * step;
+    // Horizontal tile row. The row slides smoothly: the rendered offset eases
+    // toward the focused tile each frame (console-style focus animation).
+    const float tile = 190.0f;
+    const float step = 216.0f;
+    const float row_y = 208.0f;
+
+    const float target_offset = static_cast<float>(selected_game_index_) * step;
+    home_scroll_offset_ += (target_offset - home_scroll_offset_) * 0.22f;
+    if (std::fabs(target_offset - home_scroll_offset_) < 0.5f) {
+        home_scroll_offset_ = target_offset;
+    }
+    const float base_x = 640.0f - tile * 0.5f - home_scroll_offset_;
+
+    // Focused software name above the tile row, in the accent teal, exactly
+    // like the console HOME.
+    if (!home_in_shortcuts_ && selected_game_index_ < library_.size()) {
+        const auto& g = library_[selected_game_index_];
+        float tw = static_cast<float>(g.title.size()) * 8.2f;
+        UiGeometryBuilder::AddText(out, g.title, 640.0f - tw * 0.5f, 118.0f, 2.6f, UiColor::SwitchTeal());
+        std::string sub = g.format_badge + "   " + g.playtime_str;
+        float sw = static_cast<float>(sub.size()) * 3.9f;
+        UiGeometryBuilder::AddText(out, sub, 640.0f - sw * 0.5f, 160.0f, 1.3f, UiColor::TextDim());
+    }
 
     for (size_t i = 0; i < library_.size(); ++i) {
         const auto& g = library_[i];
@@ -1270,17 +1352,23 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out)
         if (cx + tile < -40.0f || cx > 1320.0f) continue;
 
         bool is_focus = (i == selected_game_index_) && !home_in_shortcuts_;
-        float cy = is_focus ? row_y - 14.0f : row_y;
+        float cy = is_focus ? row_y - 10.0f : row_y;
 
-        // Glow + white focus border, like the console selection highlight.
+        // Focus glow: soft outer ring + crisp teal border, like the console.
         if (is_focus) {
-            UiGeometryBuilder::AddRectOutline(out, cx - 7, cy - 7, tile + 14, tile + 14, 6.0f, UiColor::SwitchTileFocus());
+            UiColor glow{0.14f, 0.45f, 0.48f, 1.0f};
+            UiGeometryBuilder::AddRectOutline(out, cx - 10, cy - 10, tile + 20, tile + 20, 8.0f, glow);
+            UiGeometryBuilder::AddRectOutline(out, cx - 4, cy - 4, tile + 8, tile + 8, 4.0f, UiColor::SwitchTeal());
+        } else {
+            UiGeometryBuilder::AddRectOutline(out, cx, cy, tile, tile, 1.5f, UiColor::CardBorder());
         }
 
-        // Tile body (key-art stand-in) + thin border.
+        // Tile body (key-art stand-in).
         UiGeometryBuilder::AddQuad(out, cx, cy, tile, tile, SwitchTileAccent(i));
-        UiGeometryBuilder::AddRectOutline(out, cx, cy, tile, tile, 1.5f,
-            is_focus ? UiColor::SwitchTileFocus() : UiColor::CardBorder());
+
+        // Big initial letter as a placeholder emblem.
+        std::string ini = g.title.empty() ? "?" : g.title.substr(0, 1);
+        UiGeometryBuilder::AddText(out, ini, cx + tile * 0.5f - 10.0f, cy + tile * 0.5f - 22.0f, 5.0f, UiColor::White());
 
         // Format badge top-left inside the tile.
         UiGeometryBuilder::AddText(out, g.format_badge, cx + 10, cy + 10, 1.1f, UiColor::White());
@@ -1288,7 +1376,7 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out)
         // Title near the bottom inside the tile.
         std::string disp = g.title;
         if (disp.size() > 15) disp = disp.substr(0, 13) + "..";
-        UiGeometryBuilder::AddText(out, disp, cx + 10, cy + tile - 30.0f, 1.25f, UiColor::White());
+        UiGeometryBuilder::AddText(out, disp, cx + 10, cy + tile - 28.0f, 1.25f, UiColor::White());
     }
 
     // "All Software" tile with a 2x2 grid glyph.
@@ -1302,27 +1390,7 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out)
             for (int c = 0; c < 2; ++c)
                 UiGeometryBuilder::AddQuad(out, gx + static_cast<float>(c) * 22.0f,
                                            gy + static_cast<float>(r) * 22.0f, 16, 16, UiColor::TextWhite());
-        UiGeometryBuilder::AddText(out, "All Software", ax + 28, row_y + tile - 30.0f, 1.2f, UiColor::TextDim());
-    }
-
-    // Nintendo eShop tile (orange with a bag glyph).
-    float ex = ax + step;
-    if (ex < 1320.0f) {
-        UiGeometryBuilder::AddQuad(out, ex, row_y, tile, tile, UiColor::SwitchOrange());
-        UiGeometryBuilder::AddRectOutline(out, ex, row_y, tile, tile, 1.5f, UiColor::CardBorder());
-        UiGeometryBuilder::AddQuad(out, ex + 60, row_y + 74, 60, 52, UiColor::White());
-        UiGeometryBuilder::AddRectOutline(out, ex + 72, row_y + 56, 36, 24, 3.0f, UiColor::White());
-        UiGeometryBuilder::AddText(out, "eShop", ex + 64, row_y + tile - 30.0f, 1.2f, UiColor::White());
-    }
-
-    // Focused software title + subtitle under the row.
-    if (!home_in_shortcuts_ && selected_game_index_ < library_.size()) {
-        const auto& g = library_[selected_game_index_];
-        float tw = static_cast<float>(g.title.size()) * 6.6f;
-        UiGeometryBuilder::AddText(out, g.title, 640.0f - tw * 0.5f, 452.0f, 2.2f, UiColor::TextWhite());
-        std::string sub = g.format_badge + "   " + g.playtime_str;
-        float sw = static_cast<float>(sub.size()) * 3.9f;
-        UiGeometryBuilder::AddText(out, sub, 640.0f - sw * 0.5f, 496.0f, 1.3f, UiColor::TextDim());
+        UiGeometryBuilder::AddText(out, "All Software", ax + 28, row_y + tile - 28.0f, 1.2f, UiColor::TextDim());
     }
 }
 

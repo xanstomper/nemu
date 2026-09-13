@@ -6,6 +6,7 @@
 #include <string_view>
 #include <cstdint>
 #include <algorithm>
+#include <cmath>
 
 namespace nemu::frontend {
 
@@ -37,10 +38,12 @@ struct UiColor {
     // Nintendo Switch HOME menu palette
     static constexpr UiColor SwitchHomeBg()    { return {0.082f, 0.090f, 0.112f, 1.0f}; }
     static constexpr UiColor SwitchHomeBg2()   { return {0.105f, 0.114f, 0.138f, 1.0f}; }
+    static constexpr UiColor SwitchTeal()      { return {0.24f, 0.78f, 0.82f, 1.0f}; }
     static constexpr UiColor SwitchTileFocus() { return {0.93f, 0.95f, 1.00f, 1.0f}; }
     static constexpr UiColor SwitchAccent()    { return {0.24f, 0.55f, 0.95f, 1.0f}; }
     static constexpr UiColor SwitchGreen()     { return {0.20f, 0.82f, 0.35f, 1.0f}; }
     static constexpr UiColor SwitchOrange()    { return {0.95f, 0.45f, 0.10f, 1.0f}; }
+    static constexpr UiColor SwitchIconBg()    { return {0.235f, 0.247f, 0.278f, 1.0f}; }
     static constexpr UiColor AvatarBg()        { return {0.16f, 0.36f, 0.72f, 1.0f}; }
 };
 
@@ -174,6 +177,41 @@ public:
         AddQuad(out, px, py + thickness, thickness, ph - (thickness * 2.0f), col, sw, sh);
         // Right
         AddQuad(out, px + pw - thickness, py + thickness, thickness, ph - (thickness * 2.0f), col, sw, sh);
+    }
+
+    /// Filled circle centered at (cx, cy), built from 1px-tall horizontal spans
+    /// (midpoint circle fill). Cheap and smooth at UI scale.
+    static void AddDisc(std::vector<core::gpu::RasterVertex>& out,
+                        float cx, float cy, float r, UiColor col,
+                        float sw = 1280.0f, float sh = 720.0f) {
+        const int rows = static_cast<int>(r) + 1;
+        for (int dy = -rows; dy <= rows; ++dy) {
+            const float y = static_cast<float>(dy);
+            if (y < -r || y > r) continue;
+            const float half = std::sqrt(r * r - y * y);
+            AddQuad(out, cx - half, cy + y, half * 2.0f, 1.0f, col, sw, sh);
+        }
+    }
+
+    /// Circle outline (ring) of the given thickness centered at (cx, cy).
+    static void AddRing(std::vector<core::gpu::RasterVertex>& out,
+                        float cx, float cy, float r, float thickness, UiColor col,
+                        float sw = 1280.0f, float sh = 720.0f) {
+        const float r_in = r - thickness;
+        const int rows = static_cast<int>(r) + 1;
+        for (int dy = -rows; dy <= rows; ++dy) {
+            const float y = static_cast<float>(dy);
+            if (y < -r || y > r) continue;
+            const float ho = std::sqrt(r * r - y * y);
+            float hi = 0.0f;
+            if (y >= -r_in && y <= r_in && r_in > 0.0f) {
+                hi = std::sqrt(r_in * r_in - y * y);
+            }
+            // Left span
+            AddQuad(out, cx - ho, cy + y, ho - hi, 1.0f, col, sw, sh);
+            // Right span
+            AddQuad(out, cx + hi, cy + y, ho - hi, 1.0f, col, sw, sh);
+        }
     }
 
     static void AddText(std::vector<core::gpu::RasterVertex>& out,

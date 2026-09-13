@@ -164,6 +164,7 @@ private:
     // Switch HOME view state: tile row vs. bottom shortcut bar
     bool home_in_shortcuts_{false};
     size_t home_shortcut_index_{0};
+    float home_scroll_offset_{0.0f}; // animated tile-row offset (tiles)
 
     // File Manager state
     std::string current_dir_path_{"sdmc:/"};
