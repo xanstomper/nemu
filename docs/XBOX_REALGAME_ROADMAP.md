@@ -112,19 +112,22 @@ difference.
 
 A real game's libnx `crt0` calls `__nx_appletInit` → `appletInitialize`,
 `fsInitialize`, `timeInitialize`, `setInitialize`, `hidInitialize` before its
-first frame. Nemu's IPC services exist but many commands return
-`IpcResult::Unimplemented` (verified: `applet_service.cpp`, `fsp_srv_service.cpp`,
-`time_service.cpp`, `set_*_service.cpp` all contain stubs). Filling these
-exactly is the **biggest single boot win** and the smallest port.
+first frame. Nemu's IPC services exist but several commands return
+`IpcResult::Unimplemented`. **Verified stub distribution (2026-09-14):**
+`applet_service` (3), `fsp_srv_service` (4), `time_service` (2), `hid_service`
+(1); `set:sys` is essentially implemented (GetFirmwareVersion/GetLanguageCode
+reply correctly) — **not** a stub target. Filling the applet/fs/time/hid
+replies exactly is the **biggest single boot win** and the smallest port.
 
 **Task:** port permissive (Ryujinx-MIT) or GPLv3 (Strato) implementations of the
 *called-with-success-reply* commands in:
 - `src/core/kernel/ipc/applet_service.cpp` (IApplicationFunctions / appletInit)
 - `src/core/kernel/ipc/fsp_srv_service.cpp` (IFileSystem/IFile open+read+getsize,
   needed to load the game's own RomFS/assets)
-- `src/core/kernel/ipc/time_service.cpp`, `set_sys_service.cpp` (clock/settings
-  reads the CRT0 uses)
+- `src/core/kernel/ipc/time_service.cpp` (clock reads the CRT0 uses)
 - `src/core/kernel/ipc/hid_service.cpp` (CreateAppletResource shared mem)
+- `set_sys_service.cpp` is largely implemented already — only verify its
+  reply encodings against a real game's expectations, no large port needed.
 
 Contract: keep Nemu's `IpcService` interface; only replace the *reply encoding*
 inside each handler; add a unit test per command mirroring the existing
