@@ -817,6 +817,53 @@ int main() {
         std::cout << "  - Differential Test 16 (SMC cache invalidation): PASSED" << std::endl;
     }
 
+    // Test 17: Runtime CPU-backend toggle (interpreter -> JIT mid-trace).
+    // The live toggle in emulator.cpp (config -> create a fresh JIT compiler or
+    // Clear()) must not corrupt guest state when the execution backend changes
+    // mid-program. Run a straight-line program to a midpoint with the
+    // interpreter, then construct a fresh JIT compiler and finish on it; the
+    // final registers must exactly match a pure-interpreter trace.
+    {
+        const vaddr_t base = 0x5000'0000ULL;
+        NEMU_TEST_ASSERT(memory.Map(base, 0x2000, memory::MemoryPermission::All), "Map toggle page");
+
+        // X0 = 10+20+30+40+50 = 150 via a register walk that only emits
+        // ADDIU (no branches), so the trace endpoint is exactly `base + n*4`.
+        std::vector<u32> code;
+        code.push_back(MovzX(0, 0));
+        code.push_back(AddXi(0, 0, 10));
+        code.push_back(AddXi(0, 0, 20));
+        code.push_back(AddXi(0, 0, 30));
+        code.push_back(AddXi(0, 0, 40));
+        code.push_back(AddXi(0, 0, 50));
+        const vaddr_t halt = base + code.size() * 4;
+        memory.WriteBlock(base, code.data(), code.size() * 4);
+
+        // Pure-interpreter reference trace.
+        cpu::CpuState ref;
+        ref.Reset(); ref.pc = base; ref.SetX(30, halt);
+        {
+            cpu::Interpreter interp(ref, memory);
+            RunInterpTo(interp, ref, halt, "Test 17 toggle reference interp");
+        }
+
+        // Toggle trace: interpreter to the midpoint, then a brand-new JIT.
+        const vaddr_t mid = base + 3 * 4; // after 10+20+30
+        cpu::CpuState toggled;
+        toggled.Reset(); toggled.pc = base; toggled.SetX(30, halt);
+        {
+            cpu::Interpreter interp(toggled, memory);
+            RunInterpTo(interp, toggled, mid, "Test 17 toggle interp-to-mid");
+        }
+        // A fresh JIT compiler (as the emulator does on toggle to JIT).
+        cpu::jit::JitCompiler toggle_jit;
+        RunJitTo(toggle_jit, toggled, memory, halt, "Test 17 toggle JIT-rest");
+
+        AssertCpuStatesMatchFull(ref, toggled, "Test 17 runtime backend toggle");
+        NEMU_TEST_ASSERT(toggled.GetX(0) == 150ull, "Test 17 X0 == 150 across backend toggle");
+        std::cout << "  - Differential Test 17 (runtime backend toggle): PASSED" << std::endl;
+    }
+
     const auto stats = jit.GetStats();
     NEMU_TEST_ASSERT(stats.blocks_compiled > 0, "Blocks compiled must be > 0");
     NEMU_TEST_ASSERT(stats.blocks_executed > 0, "Blocks executed must be > 0");
