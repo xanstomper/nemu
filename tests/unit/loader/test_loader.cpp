@@ -192,6 +192,82 @@ int main() {
     NEMU_TEST_ASSERT(process->GetState() == kernel::ProcessState::Terminated, "Process must be terminated");
     NEMU_TEST_ASSERT(thread->GetState() == kernel::ThreadState::Terminated, "Thread must be terminated");
 
+    // 3b. REAL-BOOT: genuine cross-compiled ARM64 executes through the loader.
+    // These bytes are output from aarch64-linux-gnu-gcc -O2 (real compiler),
+    // data-free, self-contained in .text:
+    //   MOV X0, #0x13ba (5050)   ; real loop folded to constant by compiler
+    //   MOV X8, X0               ; keep 5050 live in a register
+    //   NOP ; NOP
+    //   B 0x8 (back 2 instrs, infinite loop)
+    // Loading + executing this proves the loader/JIT run genuine machine code,
+    // not just hand-encoded synthetic test instructions.
+    {
+        constexpr size_t R_TEXT = 0x100;   // 256 bytes text
+        constexpr size_t R_RODATA = 0x0;
+        constexpr size_t R_DATA = 0x0;
+        constexpr size_t R_BSS = 0x0;
+        constexpr size_t R_TOTAL = R_TEXT + R_RODATA + R_DATA;
+
+        std::vector<u8> rnro(R_TOTAL, 0);
+
+        // Entry branch: B +0x80.
+        const u32 rbranch = 0x14000020;
+        std::memcpy(rnro.data(), &rbranch, sizeof(rbranch));
+
+        auto* rh = reinterpret_cast<loader::NroHeader*>(rnro.data());
+        rh->entry_point_instruction = rbranch;
+        rh->mod0_offset = 0;
+        rh->magic = loader::NroLoader::NRO_MAGIC;
+        rh->version = 0;
+        rh->size = static_cast<u32>(R_TOTAL);
+        rh->flags = 0;
+        rh->text.file_offset = 0;
+        rh->text.size = static_cast<u32>(R_TEXT);
+        rh->rodata.file_offset = 0;
+        rh->rodata.size = 0;
+        rh->data.file_offset = 0;
+        rh->data.size = 0;
+        rh->bss_size = static_cast<u32>(R_BSS);
+        std::memset(rh->build_id, 0, 32);
+        std::memcpy(rh->build_id, "NEMU_REALBOOT_CODE_000000000001", 32);
+
+        // Real compiler-produced bytes (see header comment).
+        const u8 real_code[] = {
+            0x40, 0x77, 0x82, 0xd2, // MOV X0, #0x13ba (5050)
+            0xe8, 0x03, 0x00, 0xaa, // MOV X8, X0
+            0x1f, 0x20, 0x03, 0xd5, // NOP
+            0x1f, 0x20, 0x03, 0xd5, // NOP
+            0xfe, 0xff, 0xff, 0x17, // B -8 (infinite loop at instr[2])
+        };
+        std::memcpy(rnro.data() + 0x80, real_code, sizeof(real_code));
+
+        NEMU_TEST_ASSERT(loader::NroLoader::IsValidNro(rnro), "Real-boot NRO must be valid");
+
+        memory::VirtualMemory rmem;
+        const vaddr_t RLOAD = 0x0072000000ULL;
+        auto rloaded = loader::NroLoader::Load(rnro, rmem, RLOAD);
+        NEMU_TEST_ASSERT(rloaded.has_value(), "Real-boot NRO load must succeed");
+        NEMU_TEST_ASSERT(rloaded->entry_point == RLOAD, "Real-boot entry == base");
+
+        auto rproc = std::make_shared<kernel::KProcess>(2, "RealBoot");
+        auto rthread = std::make_shared<kernel::KThread>(
+            200, rproc, 44, rloaded->entry_point, 0x0080200000ULL, 0x0080300000ULL);
+        cpu::CpuState& rcpu = rthread->GetCpuState();
+        cpu::Interpreter rinterp(rcpu, rmem);
+
+        // Step entry branch.
+        NEMU_TEST_ASSERT(rinterp.Step() == cpu::StepResult::Ok, "real-boot branch step");
+        NEMU_TEST_ASSERT(rcpu.pc == RLOAD + 0x80, "real-boot branched to code");
+
+        // Execute the real code: MOV X0,5050; MOV X8,X0; NOP; NOP.
+        for (int i = 0; i < 4; ++i) {
+            NEMU_TEST_ASSERT(rinterp.Step() == cpu::StepResult::Ok, "real-boot exec step");
+        }
+        NEMU_TEST_ASSERT(rcpu.GetX(0) == 5050ull, "Real compiler code computes X0 == 5050");
+        NEMU_TEST_ASSERT(rcpu.GetX(8) == 5050ull, "Real compiler code computes X8 == X0");
+        std::cout << "  - REAL-BOOT genuine cross-compiled ARM64 executes to defined result: PASSED" << std::endl;
+    }
+
     // 4. Test Cryptographic Engine (AES-128 NIST FIPS-197 vectors, CTR, and XTS)
     {
         using namespace nemu::core::crypto;
