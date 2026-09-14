@@ -82,7 +82,7 @@ difference.
 | # | Item | Reality |
 | :--- | :--- | :--- |
 | C1 | **Retail keys** | Real titles need user-provided `prod.keys`/`title.keys`. Nemu has the crypto + loader plumbing but must not bundle keys. |
-| C2 | **On-device D3D12 runtime** | `D3DCompile`/`CreateGraphicsPipelineState` must be proven on real Xbox hardware (this Linux box/Wine cannot). This is the one gate no amount of desktop testing closes. |
+| C2 | **On-device D3D12 runtime** | `D3DCompile`/`CreateGraphicsPipelineState` must be proven on real Xbox hardware (this Linux box/Wine cannot). This is the one gate no amount of desktop testing closes. **Also note:** the scriptable NRO-headless-boot probe (`--run`) is `#ifdef NEMU_PLATFORM_LINUX` only, so the same real-NRO boot test that works on Linux is not compiled into the Windows/Xbox `Nemu.exe`. Add a Windows-safe headless boot path (or a scripted Win boot assertion) before on-device bring-up, or rely on the interactive frontend to load the NRO. |
 | C3 | **RAM ceiling** | Xbox Dev Mode ~5-6 GB is tight; 34x ASTC or unbounded buffer caches can exceed it. Must enforce cache eviction + advanced-resource UWP limits. |
 
 ## 4. Porting-map: which proven-project patterns map directly
