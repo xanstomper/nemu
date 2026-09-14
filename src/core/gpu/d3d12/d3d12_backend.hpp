@@ -3,6 +3,7 @@
 #include "core/gpu/gpu_interface.hpp"
 #include "core/gpu/pipeline/pipeline_cache.hpp"
 #include <vector>
+#include <array>
 #include <cstdint>
 
 #ifdef _WIN32
@@ -40,6 +41,13 @@ public:
     // PipelineBridge/PipelineCache; otherwise it falls back to the embedded
     // color-passthrough pipeline so rendering always works.
     void SetGuestShaders(std::span<const u8> vs_bytecode, std::span<const u8> ps_bytecode) override;
+
+    // Feed guest shader constant-buffer data. Each `slot` maps to a root CBV
+    // (b/slot) declared by the translated root signature built by PipelineCache
+    // (root_params[0..num_cbufs-1] are CBVs in slot order). Data is copied into a
+    // private upload resource aligned to D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT
+    // and bound via SetGraphicsRootConstantBufferView at draw time.
+    void SetGuestConstantBuffer(u32 slot, const void* data, u32 bytes) override;
 
     [[nodiscard]] GpuStats GetStats() const noexcept override { return stats_; }
     [[nodiscard]] std::string_view GetBackendName() const noexcept override { return "Direct3D 12 (Xbox Series S/X & Win32)"; }
@@ -84,6 +92,8 @@ private:
     void UploadGeometry();
     void BindPipelineAndTopology(PrimitiveTopology topology);
     bool BindTranslatedPipeline(PrimitiveTopology topology);
+    void BindGuestConstantBuffers(UINT cbv_first_slot);
+    void ReleaseGuestCbuffers();
     DXGI_FORMAT index_format() const noexcept { return DXGI_FORMAT_R32_UINT; }
 
     bool initialized_{false};
@@ -130,6 +140,17 @@ private:
     std::vector<u8> guest_ps_;
     pipeline::PipelineStateKey translated_key_{};
     bool translated_key_valid_{false};
+
+    // Guest constant buffers: one aligned upload resource per active slot, plus
+    // the CPU copy used to refresh on the next draw.
+    struct GuestCbuf {
+        std::vector<u8> data;
+        Microsoft::WRL::ComPtr<ID3D12Resource> upload;
+        bool dirty{false};
+    };
+    static constexpr u32 kMaxGuestCbufSlots = 16;
+    std::array<GuestCbuf, kMaxGuestCbufSlots> guest_cbufs_{};
+    u32 guest_num_cbufs_{0};
 };
 
 } // namespace nemu::core::gpu

@@ -6,6 +6,7 @@
 #include "core/gpu/shader/shader_translator.hpp"
 #include <d3dcompiler.h>
 #include <cstring>
+#include <algorithm>
 
 namespace nemu::core::gpu {
 
@@ -286,6 +287,7 @@ void D3D12GpuBackend::Shutdown() {
             fence_event_ = nullptr;
         }
         pipeline_cache_.Clear();
+        ReleaseGuestCbuffers();
         index_buffer_.Reset();
         vertex_buffer_.Reset();
         pso_.Reset();
@@ -430,6 +432,74 @@ void D3D12GpuBackend::SetGuestShaders(std::span<const u8> vs_bytecode, std::span
     }
 }
 
+void D3D12GpuBackend::SetGuestConstantBuffer(u32 slot, const void* data, u32 bytes) {
+    if (slot >= kMaxGuestCbufSlots) {
+        NEMU_LOG_WARN("D3D12", "SetGuestConstantBuffer: slot {} out of range (max {})", slot, kMaxGuestCbufSlots - 1);
+        return;
+    }
+    auto& cbuf = guest_cbufs_[slot];
+    cbuf.data.assign(static_cast<const u8*>(data), static_cast<const u8*>(data) + bytes);
+    cbuf.dirty = true;
+    guest_num_cbufs_ = std::max(guest_num_cbufs_, slot + 1);
+}
+
+void D3D12GpuBackend::BindGuestConstantBuffers(UINT /*cbv_first_slot*/) {
+    // Upload + bind each active guest constant buffer as a root CBV.
+    for (u32 slot = 0; slot < guest_num_cbufs_; ++slot) {
+        auto& cbuf = guest_cbufs_[slot];
+        if (cbuf.data.empty()) {
+            continue;
+        }
+        // Constant buffers must be allocated on a 256-byte boundary and their
+        // size rounded up to a multiple of 256 (D3D12 layout requirement).
+        const u32 align = D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT; // 256
+        const UINT64 size_aligned = ((cbuf.data.size() + align - 1) / align) * align;
+
+        if (!cbuf.upload || cbuf.dirty) {
+            if (cbuf.upload) {
+                cbuf.upload.Reset();
+            }
+            D3D12_RESOURCE_DESC desc{};
+            desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+            desc.Width = size_aligned;
+            desc.Height = 1;
+            desc.DepthOrArraySize = 1;
+            desc.MipLevels = 1;
+            desc.SampleDesc.Count = 1;
+            desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+            const D3D12_HEAP_PROPERTIES heap{ D3D12_HEAP_TYPE_UPLOAD, D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+                                              D3D12_MEMORY_POOL_UNKNOWN, 1, 1 };
+            ID3D12Resource* res = nullptr;
+            HRESULT hr = device_->CreateCommittedResource(
+                &heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ,
+                nullptr, IID_PPV_ARGS(&res));
+            if (FAILED(hr)) {
+                NEMU_LOG_WARN("D3D12", "BindGuestConstantBuffers: CreateCommittedResource 0x{:08X}", static_cast<u32>(hr));
+                cbuf.upload.Reset();
+                continue;
+            }
+            cbuf.upload.Attach(res);
+        }
+
+        void* mapped = nullptr;
+        if (SUCCEEDED(cbuf.upload->Map(0, nullptr, &mapped))) {
+            std::memcpy(mapped, cbuf.data.data(), cbuf.data.size());
+            cbuf.upload->Unmap(0, nullptr);
+        }
+        cbuf.dirty = false;
+
+        command_list_->SetGraphicsRootConstantBufferView(slot, cbuf.upload->GetGPUVirtualAddress());
+    }
+}
+
+void D3D12GpuBackend::ReleaseGuestCbuffers() {
+    for (auto& cbuf : guest_cbufs_) {
+        cbuf.upload.Reset();
+    }
+    guest_num_cbufs_ = 0;
+}
+
 void D3D12GpuBackend::DrawArrays(PrimitiveTopology topology, u32 first_vertex, u32 vertex_count) {
     stats_.draw_calls++;
     stats_.vertices_submitted += vertex_count;
@@ -545,6 +615,7 @@ bool D3D12GpuBackend::BindTranslatedPipeline(PrimitiveTopology topology) {
     key.ps_bytecode_hash = HashBytes64(guest_ps_.data(), guest_ps_.size());
     key.topology = topology;
     key.blend_enable = false;
+    key.num_cbufs = guest_num_cbufs_;
 
     // Build/retrieve the translated PSO through the full chain (decode ->
     // HLSL -> validate -> D3DCompile -> PSO). This is the heart of the
@@ -565,6 +636,9 @@ bool D3D12GpuBackend::BindTranslatedPipeline(PrimitiveTopology topology) {
     command_list_->SetPipelineState(translated_pso);
     if (translated_root) {
         command_list_->SetGraphicsRootSignature(translated_root);
+    }
+    if (guest_num_cbufs_ > 0) {
+        BindGuestConstantBuffers(0);
     }
 
     D3D12_PRIMITIVE_TOPOLOGY d3d_topo = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
