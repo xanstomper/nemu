@@ -11,9 +11,9 @@ namespace {
 static const char* kDefaultVertexShader = R"(
 struct VSOut {
     float4 pos : SV_Position;
-    float4 color : COLOR0;
+    float4 color : TEXCOORD0;
 };
-VSOut main(float2 pos : POSITION, float4 color : COLOR0) {
+VSOut main(float2 pos : POSITION, float4 color : TEXCOORD0) {
     VSOut o;
     o.pos = float4(pos, 0.0f, 1.0f);
     o.color = color;
@@ -24,7 +24,7 @@ VSOut main(float2 pos : POSITION, float4 color : COLOR0) {
 static const char* kDefaultPixelShader = R"(
 struct PSIn {
     float4 pos : SV_Position;
-    float4 color : COLOR0;
+    float4 color : TEXCOORD0;
 };
 float4 main(PSIn input) : SV_Target {
     return input.color;
@@ -222,9 +222,11 @@ bool PipelineCache::GetOrCreatePipeline(
     }
 
     // 3. Build Graphics Pipeline State
+    // The input layout must agree with the MaxwellShaderDecoder HLSL emitter:
+    // `POSITION` (x,y) + `TEXCOORD0` (RGBA), i.e. exactly one RasterVertex.
     D3D12_INPUT_ELEMENT_DESC layout[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 8, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 8, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     };
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc{};

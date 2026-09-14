@@ -84,6 +84,15 @@ public:
     virtual void DrawArrays(PrimitiveTopology topology, u32 first_vertex, u32 vertex_count) = 0;
     virtual void DrawIndexed(PrimitiveTopology topology, u32 index_count, u32 first_index, u32 base_vertex) = 0;
 
+    // --- Guest draw state (translation-layer input) -----------------------
+    // These carry the real guest graphics state that the D3D12 backend feeds
+    // through the Maxwell->HLSL->PSO translation chain (ShaderTranslator,
+    // PipelineBridge, PipelineCache). Defaults are no-ops so backends that only
+    // render the software/passthrough path (Null, SDL2, or a D3D12 backend in
+    // fallback mode) are unaffected.
+    virtual void SetGuestShaders(std::span<const u8> /*vs_bytecode*/, std::span<const u8> /*ps_bytecode*/) {}
+    virtual void SetGuestConstantBuffer(u32 /*slot*/, const void* /*data*/, u32 /*bytes*/) {}
+
     // --- Vertex / material binding and host-observable frame capture ---
     // These are the software-rasterizable entry points. Backends that only
     // forward to a hardware API (e.g. D3D12) may leave them as no-ops; the

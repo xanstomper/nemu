@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/gpu/gpu_interface.hpp"
+#include "core/gpu/pipeline/pipeline_cache.hpp"
 #include <vector>
 #include <cstdint>
 
@@ -33,6 +34,12 @@ public:
 
     void SetRasterVertices(std::span<const RasterVertex> vertices) override;
     void SetRasterIndices(std::span<const u32> indices) override;
+
+    // Feed guest Maxwell shader bytecode into the translation pipeline. When
+    // present (and translatable) the backend builds a real PSO through
+    // PipelineBridge/PipelineCache; otherwise it falls back to the embedded
+    // color-passthrough pipeline so rendering always works.
+    void SetGuestShaders(std::span<const u8> vs_bytecode, std::span<const u8> ps_bytecode) override;
 
     [[nodiscard]] GpuStats GetStats() const noexcept override { return stats_; }
     [[nodiscard]] std::string_view GetBackendName() const noexcept override { return "Direct3D 12 (Xbox Series S/X & Win32)"; }
@@ -76,6 +83,7 @@ private:
     D3D12_CPU_DESCRIPTOR_HANDLE CurrentRtv() const noexcept;
     void UploadGeometry();
     void BindPipelineAndTopology(PrimitiveTopology topology);
+    bool BindTranslatedPipeline(PrimitiveTopology topology);
     DXGI_FORMAT index_format() const noexcept { return DXGI_FORMAT_R32_UINT; }
 
     bool initialized_{false};
@@ -115,6 +123,13 @@ private:
     UINT index_buffer_size_{0};
     std::vector<RasterVertex> vertices_;
     std::vector<u32> indices_;
+
+    // Translation-layer state: guest Maxwell shader programs and derived PSO.
+    pipeline::PipelineCache pipeline_cache_;
+    std::vector<u8> guest_vs_;
+    std::vector<u8> guest_ps_;
+    pipeline::PipelineStateKey translated_key_{};
+    bool translated_key_valid_{false};
 };
 
 } // namespace nemu::core::gpu

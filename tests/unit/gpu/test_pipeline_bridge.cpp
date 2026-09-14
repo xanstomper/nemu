@@ -119,6 +119,23 @@ int main() {
     }
     std::cout << "  - PipelineBridge (decode->HLSL->validate->cache): PASSED" << std::endl;
 
+    // -- Coherent vertex-input semantics for the D3D12 PSO --
+    // The MaxwellShaderDecoder HLSL emitter and PipelineCache's PSO input layout
+    // must agree so CreateGraphicsPipelineState succeeds on real D3D12/Xbox.
+    // The emitter models RasterVertex as POSITION (x,y) + TEXCOORD0 (RGBA).
+    {
+        auto tl = shader::ShaderTranslator::Translate(vs_prog, shader::ShaderStage::Vertex);
+        PB_ASSERT(tl.ok, "vs translates for layout check");
+        PB_ASSERT(tl.hlsl_source.find("in_pos : POSITION") != std::string::npos,
+                  "emitted VS binds POSITION");
+        PB_ASSERT(tl.hlsl_source.find("TEXCOORD") != std::string::npos,
+                  "emitted VS exposes attribute semantics");
+        // The default shaders used by PipelineCache now match the layout wired
+        // into the PSO input layout (POSITION + TEXCOORD0), so the translated
+        // and fallback paths share identical vertex semantics.
+        std::cout << "  - Emitter/PSO input-layout semantic coherence: PASSED" << std::endl;
+    }
+
     std::cout << "[Test: Shader -> HLSL -> PipelineCache Bridge PASSED]" << std::endl;
     return 0;
 }

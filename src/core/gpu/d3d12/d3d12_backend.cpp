@@ -2,6 +2,8 @@
 
 #ifdef _WIN32
 #include "platform/logger.hpp"
+#include "core/gpu/pipeline/pipeline_bridge.hpp"
+#include "core/gpu/shader/shader_translator.hpp"
 #include <d3dcompiler.h>
 #include <cstring>
 
@@ -117,6 +119,10 @@ bool D3D12GpuBackend::Initialize(u32 render_width, u32 render_height) {
         .right = static_cast<LONG>(width_),
         .bottom = static_cast<LONG>(height_)
     };
+
+    // Wire the real D3D12 device into the translation-layer pipeline cache so
+    // guest Maxwell shaders compile to native PSOs at draw time.
+    pipeline_cache_.SetDevice(device_.Get());
 
     // Bring up the real render path (swap chain, RTV heap, PSO, geometry).
     // Failure is non-fatal: the backend stays usable for clears/commands and
@@ -279,6 +285,7 @@ void D3D12GpuBackend::Shutdown() {
             CloseHandle(fence_event_);
             fence_event_ = nullptr;
         }
+        pipeline_cache_.Clear();
         index_buffer_.Reset();
         vertex_buffer_.Reset();
         pso_.Reset();
@@ -410,6 +417,19 @@ void D3D12GpuBackend::SetRasterIndices(std::span<const u32> indices) {
     indices_.assign(indices.begin(), indices.end());
 }
 
+void D3D12GpuBackend::SetGuestShaders(std::span<const u8> vs_bytecode, std::span<const u8> ps_bytecode) {
+    guest_vs_.assign(vs_bytecode.begin(), vs_bytecode.end());
+    guest_ps_.assign(ps_bytecode.begin(), ps_bytecode.end());
+    translated_key_valid_ = false; // (re)built lazily on the next draw
+
+    if (!guest_vs_.empty() && !guest_ps_.empty()) {
+        NEMU_LOG_INFO("D3D12", "SetGuestShaders: {} bytes VS + {} bytes PS queued for translation",
+                      guest_vs_.size(), guest_ps_.size());
+    } else {
+        NEMU_LOG_INFO("D3D12", "SetGuestShaders: cleared; passthrough pipeline will be used");
+    }
+}
+
 void D3D12GpuBackend::DrawArrays(PrimitiveTopology topology, u32 first_vertex, u32 vertex_count) {
     stats_.draw_calls++;
     stats_.vertices_submitted += vertex_count;
@@ -417,7 +437,9 @@ void D3D12GpuBackend::DrawArrays(PrimitiveTopology topology, u32 first_vertex, u
         return;
     }
     UploadGeometry();
-    BindPipelineAndTopology(topology);
+    if (!BindTranslatedPipeline(topology)) {
+        BindPipelineAndTopology(topology);
+    }
     command_list_->DrawInstanced(vertex_count, 1, first_vertex, 0);
 }
 
@@ -428,7 +450,9 @@ void D3D12GpuBackend::DrawIndexed(PrimitiveTopology topology, u32 index_count, u
         return;
     }
     UploadGeometry();
-    BindPipelineAndTopology(topology);
+    if (!BindTranslatedPipeline(topology)) {
+        BindPipelineAndTopology(topology);
+    }
     command_list_->DrawIndexedInstanced(index_count, 1, first_index, static_cast<INT>(base_vertex), 0);
 }
 
@@ -496,6 +520,84 @@ void D3D12GpuBackend::UploadGeometry() {
             index_buffer_->Unmap(0, nullptr);
         }
     }
+}
+
+// FNV-1a 64-bit over a byte range (matches the intent of the pipeline key).
+static u64 HashBytes64(const void* data, size_t len) noexcept {
+    const auto* p = static_cast<const u8*>(data);
+    u64 h = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < len; ++i) {
+        h ^= p[i];
+        h *= 0x100000001b3ULL;
+    }
+    return h;
+}
+
+bool D3D12GpuBackend::BindTranslatedPipeline(PrimitiveTopology topology) {
+    // Translation path only engages when a real guest VS+PS pair is present.
+    if (guest_vs_.empty() || guest_ps_.empty() || !device_ || !command_list_) {
+        return false;
+    }
+
+    // Stable cache key derived from the guest shader bytecode + draw state.
+    pipeline::PipelineStateKey key;
+    key.vs_bytecode_hash = HashBytes64(guest_vs_.data(), guest_vs_.size());
+    key.ps_bytecode_hash = HashBytes64(guest_ps_.data(), guest_ps_.size());
+    key.topology = topology;
+    key.blend_enable = false;
+
+    // Build/retrieve the translated PSO through the full chain (decode ->
+    // HLSL -> validate -> D3DCompile -> PSO). This is the heart of the
+    // Maxwell->Direct3D translation layer.
+    auto result = pipeline::PipelineBridge::Build(guest_vs_, guest_ps_, key, &pipeline_cache_);
+    if (!result.Passed()) {
+        NEMU_LOG_WARN("D3D12", "Guest shader translation failed ({}); using passthrough", result.error);
+        translated_key_valid_ = false;
+        return false;
+    }
+
+    ID3D12PipelineState* translated_pso = pipeline_cache_.GetPipelineState(key);
+    ID3D12RootSignature* translated_root = pipeline_cache_.GetRootSignature(key);
+    if (!translated_pso) {
+        return false;
+    }
+
+    command_list_->SetPipelineState(translated_pso);
+    if (translated_root) {
+        command_list_->SetGraphicsRootSignature(translated_root);
+    }
+
+    D3D12_PRIMITIVE_TOPOLOGY d3d_topo = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    switch (topology) {
+        case PrimitiveTopology::Points: d3d_topo = D3D_PRIMITIVE_TOPOLOGY_POINTLIST; break;
+        case PrimitiveTopology::Lines: d3d_topo = D3D_PRIMITIVE_TOPOLOGY_LINELIST; break;
+        case PrimitiveTopology::LineStrip: d3d_topo = D3D_PRIMITIVE_TOPOLOGY_LINESTRIP; break;
+        case PrimitiveTopology::Triangles: d3d_topo = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST; break;
+        case PrimitiveTopology::TriangleStrip: d3d_topo = D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP; break;
+        default: break;
+    }
+    command_list_->IASetPrimitiveTopology(d3d_topo);
+
+    // Bind the same RasterVertex geometry (x,y + rgba) for the translated PSO.
+    const UINT stride = sizeof(D3D12Vertex);
+    D3D12_VERTEX_BUFFER_VIEW view{};
+    if (vertex_buffer_) {
+        view.BufferLocation = vertex_buffer_->GetGPUVirtualAddress();
+        view.StrideInBytes = stride;
+        view.SizeInBytes = vertex_buffer_size_;
+        command_list_->IASetVertexBuffers(0, 1, &view);
+    }
+    if (index_buffer_ && !indices_.empty()) {
+        D3D12_INDEX_BUFFER_VIEW ibv{};
+        ibv.BufferLocation = index_buffer_->GetGPUVirtualAddress();
+        ibv.Format = index_format();
+        ibv.SizeInBytes = index_buffer_size_;
+        command_list_->IASetIndexBuffer(&ibv);
+    }
+
+    translated_key_ = key;
+    translated_key_valid_ = true;
+    return true;
 }
 
 void D3D12GpuBackend::BindPipelineAndTopology(PrimitiveTopology topology) {
