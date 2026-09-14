@@ -5,6 +5,7 @@
 #include "core/gpu/nvhost/nvdevice.hpp"
 #include "core/gpu/presentation/nvnflinger.hpp"
 #include "core/gpu/texture/astc_decoder.hpp"
+#include "core/gpu/texture/texture_types.hpp"
 #include "core/gpu/shader/maxwell_shader_decoder.hpp"
 #include "core/gpu/shader/shader_translator.hpp"
 #include "core/memory/virtual_memory.hpp"
@@ -755,6 +756,86 @@ int main() {
 
         rec->Shutdown();
         std::cout << "  - Maxwell3D guest shader -> backend plumbing: PASSED" << std::endl;
+    }
+
+    // 15. Test Maxwell3D guest texture binding -> backend (P2-3 guest side)
+    {
+        struct TextureRecordingBackend final : public gpu::IGpuBackend {
+            std::shared_ptr<gpu::NullGpuBackend> raster = std::make_shared<gpu::NullGpuBackend>();
+            int texture_bindings{0};
+            int texture_count_calls{0};
+            u32 last_count{0};
+            u64 last_tex_addr{0};
+            u32 last_width{0};
+            u32 last_height{0};
+
+            bool Initialize(u32 w, u32 h) override { return raster->Initialize(w, h); }
+            void Shutdown() override { raster->Shutdown(); }
+            void BeginFrame() override { raster->BeginFrame(); }
+            void EndFrame() override { raster->EndFrame(); }
+            void Present() override { raster->Present(); }
+            void SetViewport(const gpu::Viewport& v) override { raster->SetViewport(v); }
+            void SetScissor(const gpu::ScissorRect& s) override { raster->SetScissor(s); }
+            void ClearRenderTarget(const gpu::ClearColor& c) override { raster->ClearRenderTarget(c); }
+            void ClearDepthStencil(float d, u8 st) override { raster->ClearDepthStencil(d, st); }
+            void DrawArrays(gpu::PrimitiveTopology t, u32 a, u32 n) override { raster->DrawArrays(t, a, n); }
+            void DrawIndexed(gpu::PrimitiveTopology t, u32 ic, u32 fi, u32 bv) override { raster->DrawIndexed(t, ic, fi, bv); }
+            [[nodiscard]] gpu::GpuStats GetStats() const noexcept override { return raster->GetStats(); }
+            [[nodiscard]] std::string_view GetBackendName() const noexcept override { return "TextureRecordingBackend"; }
+
+            void SetGuestTextureBinding(u32, const texture::TextureDescriptor& desc, memory::VirtualMemory*) override {
+                ++texture_bindings;
+                last_tex_addr = desc.gpu_address;
+                last_width = desc.width;
+                last_height = desc.height;
+            }
+            void SetGuestTextureCount(u32 count) override {
+                ++texture_count_calls;
+                last_count = count;
+            }
+        };
+
+        memory::VirtualMemory vmem;
+        NEMU_TEST_ASSERT(vmem.Map(0x3000'0000ULL, 0x10000, memory::MemoryPermission::All), "Map tex mem");
+
+        auto rec = std::make_shared<TextureRecordingBackend>();
+        NEMU_TEST_ASSERT(rec->Initialize(320, 240), "texture recording backend init");
+
+        Maxwell3D maxwell(rec);
+        maxwell.SetMemory(&vmem);
+
+        // Set texture state, then issue a draw that should trigger BindGuestTextures.
+        const u64 tex_gpu = 0x3000'1000ULL;
+        maxwell.ProcessMethod(MaxwellMethod::TextureAddressHigh, static_cast<u32>(tex_gpu >> 32));
+        maxwell.ProcessMethod(MaxwellMethod::TextureAddressLow, static_cast<u32>(tex_gpu & 0xFFFFFFFF));
+        maxwell.ProcessMethod(MaxwellMethod::TextureWidth, 64u);
+        maxwell.ProcessMethod(MaxwellMethod::TextureHeight, 32u);
+
+        rec->BeginFrame();
+        maxwell.SubmitPushbuffer(std::span<const u32>(std::array<u32, 2>{ (1u << 16) | MaxwellMethod::DrawArrays, (3u << 8) | 3u }));
+        rec->EndFrame();
+
+        NEMU_TEST_ASSERT(rec->texture_bindings == 1, "guest texture bound to backend once");
+        NEMU_TEST_ASSERT(rec->last_tex_addr == tex_gpu, "texture address forwarded to backend");
+        NEMU_TEST_ASSERT(rec->last_width == 64u && rec->last_height == 32u, "texture dims forwarded to backend");
+        NEMU_TEST_ASSERT(rec->texture_count_calls >= 1 && rec->last_count == 1, "texture count set to 1");
+
+        // Repeat draw must not re-bind (dirty cleared).
+        rec->BeginFrame();
+        maxwell.SubmitPushbuffer(std::span<const u32>(std::array<u32, 2>{ (1u << 16) | MaxwellMethod::DrawArrays, (3u << 8) | 3u }));
+        rec->EndFrame();
+        NEMU_TEST_ASSERT(rec->texture_bindings == 1, "no redundant texture bind on repeat draw");
+
+        // Clearing the address unbinds (count 0).
+        maxwell.ProcessMethod(MaxwellMethod::TextureAddressHigh, 0);
+        maxwell.ProcessMethod(MaxwellMethod::TextureAddressLow, 0);
+        rec->BeginFrame();
+        maxwell.SubmitPushbuffer(std::span<const u32>(std::array<u32, 2>{ (1u << 16) | MaxwellMethod::DrawArrays, (3u << 8) | 3u }));
+        rec->EndFrame();
+        NEMU_TEST_ASSERT(rec->last_count == 0, "texture count cleared to 0 on unbind");
+
+        rec->Shutdown();
+        std::cout << "  - Maxwell3D guest texture -> backend plumbing: PASSED" << std::endl;
     }
 
     std::cout << "[Test: Tegra X1 Maxwell GPU & Texture Pipeline PASSED]" << std::endl;

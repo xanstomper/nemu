@@ -1,5 +1,6 @@
 #include "maxwell_3d.hpp"
 #include "texture/astc_decoder.hpp"
+#include "texture/texture_types.hpp"
 #include "core/memory/virtual_memory.hpp"
 #include "platform/logger.hpp"
 #include <algorithm>
@@ -92,6 +93,16 @@ void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
             break;
         }
 
+        case MaxwellMethod::TextureAddressHigh:
+        case MaxwellMethod::TextureAddressLow:
+        case MaxwellMethod::TextureFormat:
+        case MaxwellMethod::TextureWidth:
+        case MaxwellMethod::TextureHeight: {
+            // Guest texture state changed: re-bind on the next draw.
+            textures_dirty_ = true;
+            break;
+        }
+
         default:
             NEMU_LOG_DEBUG("GPU", "Maxwell3D method 0x{:04X} = 0x{:08X}", method, argument);
             break;
@@ -130,6 +141,9 @@ void Maxwell3D::ExecuteDrawArrays(u32 argument) {
 
     if (programs_dirty_) {
         BindGuestShaders();
+    }
+    if (textures_dirty_) {
+        BindGuestTextures();
     }
 
     const u32 topology_raw = argument & 0x0F;
@@ -171,6 +185,9 @@ void Maxwell3D::ExecuteDrawElements(u32 argument) {
 
     if (programs_dirty_) {
         BindGuestShaders();
+    }
+    if (textures_dirty_) {
+        BindGuestTextures();
     }
 
     const u32 topology_raw = argument & 0x0F;
@@ -277,6 +294,39 @@ void Maxwell3D::BindGuestShaders() {
     backend_->SetGuestShaders(vs_bytes, fs_bytes);
     programs_dirty_ = false;
     NEMU_LOG_DEBUG("GPU", "Bound guest shaders to backend (VS {} B, PS {} B)", vs_bytes.size(), fs_bytes.size());
+}
+
+void Maxwell3D::BindGuestTextures() {
+    if (!backend_) {
+        textures_dirty_ = false;
+        return;
+    }
+
+    // Build a single texture binding from the Maxwell texture state registers.
+    const u64 tex_addr = (static_cast<u64>(regs_.regs[MaxwellMethod::TextureAddressHigh]) << 32) |
+                          static_cast<u64>(regs_.regs[MaxwellMethod::TextureAddressLow]);
+
+    if (tex_addr == 0) {
+        backend_->SetGuestTextureCount(0);
+        textures_dirty_ = false;
+        return;
+    }
+
+    texture::TextureDescriptor desc{};
+    desc.gpu_address = tex_addr;
+    desc.width = std::max(1u, regs_.regs[MaxwellMethod::TextureWidth]);
+    desc.height = std::max(1u, regs_.regs[MaxwellMethod::TextureHeight]);
+    desc.depth = 1;
+    desc.mip_levels = 1;
+    desc.is_block_linear = true;
+    desc.block_height_gobs = 1;
+    desc.bytes_per_pixel = 4;
+    desc.format = texture::TextureFormat::RGBA8_UNORM;
+
+    backend_->SetGuestTextureBinding(0, desc, memory_);
+    backend_->SetGuestTextureCount(1);
+    textures_dirty_ = false;
+    NEMU_LOG_DEBUG("GPU", "Bound guest texture to backend ({}x{} @ 0x{:X})", desc.width, desc.height, desc.gpu_address);
 }
 
 bool Maxwell3D::DecompressAstc(

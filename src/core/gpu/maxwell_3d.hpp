@@ -110,11 +110,13 @@ private:
     void EmitDebugGeometry(); // stage a recognizable test triangle for draws
     void EmitDebugIndexedGeometry(); // stage indexed test geometry
     void BindGuestShaders(); // upload guest VS/PS bytecode to the backend
+    void BindGuestTextures(); // upload guest texture binding to the backend
 
     std::shared_ptr<IGpuBackend> backend_;
     memory::VirtualMemory* memory_{nullptr};
     Maxwell3DRegisters regs_{};
     bool programs_dirty_{false};
+    bool textures_dirty_{false};
     // Reusable scratch buffer staging guest-draw vertex data
     mutable common::ScratchBuffer<RasterVertex> geometry_scratch_;
     mutable common::ScratchBuffer<u32> index_scratch_;
