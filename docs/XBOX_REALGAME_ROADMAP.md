@@ -108,6 +108,31 @@ difference.
 4. **C2 is the unavoidable on-device gate** — no substitute; schedule a real
    hardware bring-up with a concrete NRO on the console.
 
+### Recommended first port (do this first — smallest, highest boot-payoff)
+
+A real game's libnx `crt0` calls `__nx_appletInit` → `appletInitialize`,
+`fsInitialize`, `timeInitialize`, `setInitialize`, `hidInitialize` before its
+first frame. Nemu's IPC services exist but many commands return
+`IpcResult::Unimplemented` (verified: `applet_service.cpp`, `fsp_srv_service.cpp`,
+`time_service.cpp`, `set_*_service.cpp` all contain stubs). Filling these
+exactly is the **biggest single boot win** and the smallest port.
+
+**Task:** port permissive (Ryujinx-MIT) or GPLv3 (Strato) implementations of the
+*called-with-success-reply* commands in:
+- `src/core/kernel/ipc/applet_service.cpp` (IApplicationFunctions / appletInit)
+- `src/core/kernel/ipc/fsp_srv_service.cpp` (IFileSystem/IFile open+read+getsize,
+  needed to load the game's own RomFS/assets)
+- `src/core/kernel/ipc/time_service.cpp`, `set_sys_service.cpp` (clock/settings
+  reads the CRT0 uses)
+- `src/core/kernel/ipc/hid_service.cpp` (CreateAppletResource shared mem)
+
+Contract: keep Nemu's `IpcService` interface; only replace the *reply encoding*
+inside each handler; add a unit test per command mirroring the existing
+`tests/unit/ipc/test_ipc.cpp` style; dead-code-free, `-Wall -Wextra -Wpedantic`
+clean; buddy-build Linux + Windows cross. This is the A-line that most quickly
+gets a *real* NRO past crt0, at which point the unfilled shader/GPU tier
+becomes the visible next blocker instead of a mystery lock.
+
 ## 6. Verdict
 
 Nemu is architecturally on the right track (layered backend, HLE, loader, GPU
