@@ -144,37 +144,43 @@ void Sdl2GpuBackend::BeginFrame() {
 void Sdl2GpuBackend::EndFrame()   { if (raster_) raster_->EndFrame(); }
 
 void Sdl2GpuBackend::Present() {
-    if (!renderer_ || !initialized_) return;
+    if (!initialized_) return;
 
-    FlushUiOverlay();
+    // The software rasterizer always produced a (possibly headless) frame, so
+    // count it regardless of whether a window renderer exists. On a headless
+    // host SDL_CreateRenderer fails and renderer_ is null; we still must not
+    // drop the frame accounting so the emulator render path is observable.
+    if (renderer_) {
+        FlushUiOverlay();
 
-    // Resolve the 2x supersampled offscreen target down to the window with
-    // linear filtering (downscale = crisp, unlike upscaled blurry output).
-    if (ss_target_) {
-        SDL_SetRenderTarget(renderer_, nullptr);
-        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
-        SDL_RenderClear(renderer_);
-        SDL_RenderCopy(renderer_, ss_target_, nullptr, nullptr);
-    }
+        // Resolve the 2x supersampled offscreen target down to the window with
+        // linear filtering (downscale = crisp, unlike upscaled blurry output).
+        if (ss_target_) {
+            SDL_SetRenderTarget(renderer_, nullptr);
+            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
+            SDL_RenderClear(renderer_);
+            SDL_RenderCopy(renderer_, ss_target_, nullptr, nullptr);
+        }
 
 #ifdef NEMU_SDL2_UI
-    if (const char* dump = std::getenv("NEMU_SCREENSHOT_PATH")) {
-        static bool dumped = false;
-        if (!dumped && stats_.frames_presented >= 30) {
-            dumped = true;
-            SDL_Surface* sshot = SDL_CreateRGBSurfaceWithFormat(0, static_cast<int>(width_), static_cast<int>(height_), 32, SDL_PIXELFORMAT_RGBA32);
-            if (sshot) {
-                SDL_RenderReadPixels(renderer_, nullptr, SDL_PIXELFORMAT_RGBA32, sshot->pixels, sshot->pitch);
-                IMG_SavePNG(sshot, dump);
-                SDL_FreeSurface(sshot);
+        if (const char* dump = std::getenv("NEMU_SCREENSHOT_PATH")) {
+            static bool dumped = false;
+            if (!dumped && stats_.frames_presented >= 30) {
+                dumped = true;
+                SDL_Surface* sshot = SDL_CreateRGBSurfaceWithFormat(0, static_cast<int>(width_), static_cast<int>(height_), 32, SDL_PIXELFORMAT_RGBA32);
+                if (sshot) {
+                    SDL_RenderReadPixels(renderer_, nullptr, SDL_PIXELFORMAT_RGBA32, sshot->pixels, sshot->pitch);
+                    IMG_SavePNG(sshot, dump);
+                    SDL_FreeSurface(sshot);
+                }
             }
         }
-    }
 #endif
 
-    SDL_RenderPresent(renderer_);
+        SDL_RenderPresent(renderer_);
 
-    ui_ops_.clear();
+        ui_ops_.clear();
+    }
 
     stats_.frames_presented++;
 }
@@ -230,7 +236,11 @@ void Sdl2GpuBackend::SetRasterIndices(std::span<const u32> i) { if (raster_) ras
 bool Sdl2GpuBackend::DumpFramePPM(const char* p) { return raster_ ? raster_->DumpFramePPM(p) : false; }
 
 GpuStats Sdl2GpuBackend::GetStats() const noexcept {
-    if (raster_) return raster_->GetStats();
+    // Report the backend's own aggregate accounting (draw calls, vertices, and
+    // frames presented through this window). The internal software rasterizer
+    // forwards draws into stats_ via DrawArrays/DrawIndexed, and Present()
+    // increments frames_presented regardless of window availability, so this is
+    // the single honest picture of what the SDL2 backend actually produced.
     return stats_;
 }
 

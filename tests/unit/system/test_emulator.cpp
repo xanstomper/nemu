@@ -68,6 +68,13 @@ int main() {
     }
     NEMU_TEST_ASSERT(emu.GetFrameCount() == 5, "Frame count == 5");
     NEMU_TEST_ASSERT(emu.GetTotalInstructions() > 0, "CPU executed instructions across frames");
+
+    // Acceptance: stepping frames must drive the real GPU render path end to end.
+    // The emulator render loop calls BeginFrame/EndFrame/Present (or the NVN
+    // flinger compose path) each frame, so the backend must have presented at
+    // least once on the wired translation backend.
+    NEMU_TEST_ASSERT(emu.GetGpuBackend()->GetStats().frames_presented >= 1,
+                     "GPU backend presented at least one frame via emulator render loop");
     std::cout << "  - Interactive frame stepping & CPU/GPU synchronization: PASSED" << std::endl;
 
     // 4. Test Pause & Resume
