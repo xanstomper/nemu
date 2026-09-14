@@ -769,6 +769,54 @@ int main() {
         std::cout << "  - Differential Test 15 (MADD/MSUB): PASSED" << std::endl;
     }
 
+    // Test 16: Self-modifying code (SMC) cache-invalidation differential.
+    // The runtime CPU-backend toggle (config -> create/Clear the JIT compiler)
+    // must never leave stale compiled native blocks behind when guest code at a
+    // previously-cached address changes. This test patches code at a cached PC,
+    // invalidates the block (the same path as JitCompiler::Clear() for that
+    // range), then verifies the JIT recompiles and agrees with the interpreter.
+    {
+        const vaddr_t base = 0x4000'0000ULL;
+        NEMU_TEST_ASSERT(memory.Map(base, 0x2000, memory::MemoryPermission::All), "Map SMC page");
+
+        // Program #1: X0 = 0x11 (MOVZ X0, 0x11); RET via X30 halt marker.
+        std::vector<u32> prog1 = {
+            MovzX(0, 0x11),
+            RetXn(30),
+        };
+        memory.WriteBlock(base, prog1.data(), prog1.size() * 4);
+        const vaddr_t halt = base + prog1.size() * 4;
+
+        // Run once through the JIT to compile+cache the block at `base`.
+        {
+            cpu::CpuState s;
+            s.Reset(); s.pc = base; s.SetX(30, halt);
+            RunJitTo(jit, s, memory, halt, "Test 16 SMC pre-patch JIT");
+            NEMU_TEST_ASSERT(s.GetX(0) == 0x11, "Test 16 pre-patch X0 == 0x11");
+        }
+
+        // Now patch guest memory so `base` computes X0 = 0x22 instead.
+        const std::vector<u32> prog2 = { MovzX(0, 0x22), RetXn(30) };
+        memory.WriteBlock(base, prog2.data(), prog2.size() * 4);
+
+        // Invalidate the stale compiled block at `base`. Without this, the JIT
+        // would replay the pre-patch bytes and return 0x11.
+        jit.InvalidateBlock(base);
+
+        // Recompute the interpreter trace entirely (fresh CpuState).
+        cpu::CpuState si, sj;
+        si.Reset(); si.pc = base; si.SetX(30, halt);
+        sj = si;
+
+        cpu::Interpreter interp(si, memory);
+        RunInterpTo(interp, si, halt, "Test 16 SMC post-patch interpreter");
+        RunJitTo(jit, sj, memory, halt, "Test 16 SMC post-patch JIT");
+
+        AssertCpuStatesMatchFull(si, sj, "Test 16 SMC post-patch");
+        NEMU_TEST_ASSERT(sj.GetX(0) == 0x22, "Test 16 JIT recompiled SMC X0 == 0x22 (not stale 0x11)");
+        std::cout << "  - Differential Test 16 (SMC cache invalidation): PASSED" << std::endl;
+    }
+
     const auto stats = jit.GetStats();
     NEMU_TEST_ASSERT(stats.blocks_compiled > 0, "Blocks compiled must be > 0");
     NEMU_TEST_ASSERT(stats.blocks_executed > 0, "Blocks executed must be > 0");
