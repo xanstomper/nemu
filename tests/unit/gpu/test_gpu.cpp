@@ -657,6 +657,106 @@ int main() {
         std::cout << "  - Maxwell pushbuffer multi-mode & ASTC decompress tests: PASSED" << std::endl;
     }
 
+    // 14. Test Maxwell3D guest shader program plumbing (VS/PS -> backend)
+    {
+        // A recording backend that captures the bytecode Maxwell3D hands to the
+        // translation layer (verified via IGpuBackend::SetGuestShaders).
+        struct RecordingBackend final : public gpu::IGpuBackend {
+            std::vector<u8> captured_vs;
+            std::vector<u8> captured_ps;
+            int uploads{0};
+            gpu::NullGpuBackend raster;
+
+            bool Initialize(u32 w, u32 h) override { return raster.Initialize(w, h); }
+            void Shutdown() override { raster.Shutdown(); }
+            void BeginFrame() override { raster.BeginFrame(); }
+            void EndFrame() override { raster.EndFrame(); }
+            void Present() override { raster.Present(); }
+            void SetViewport(const gpu::Viewport& v) override { raster.SetViewport(v); }
+            void SetScissor(const gpu::ScissorRect& s) override { raster.SetScissor(s); }
+            void ClearRenderTarget(const gpu::ClearColor& c) override { raster.ClearRenderTarget(c); }
+            void ClearDepthStencil(float d, u8 s) override { raster.ClearDepthStencil(d, s); }
+            void DrawArrays(gpu::PrimitiveTopology t, u32 a, u32 n) override { raster.DrawArrays(t, a, n); }
+            void DrawIndexed(gpu::PrimitiveTopology t, u32 ic, u32 fi, u32 bv) override { raster.DrawIndexed(t, ic, fi, bv); }
+
+            void SetGuestShaders(std::span<const u8> vs, std::span<const u8> ps) override {
+                captured_vs.assign(vs.begin(), vs.end());
+                captured_ps.assign(ps.begin(), ps.end());
+                ++uploads;
+            }
+            [[nodiscard]] gpu::GpuStats GetStats() const noexcept override { return raster.GetStats(); }
+            [[nodiscard]] std::string_view GetBackendName() const noexcept override { return "RecordingBackend"; }
+        };
+
+        memory::VirtualMemory vmem;
+        NEMU_TEST_ASSERT(vmem.Map(0x3000'0000ULL, 0x10000, memory::MemoryPermission::All), "Map shader mem");
+
+        auto rec = std::make_shared<RecordingBackend>();
+        NEMU_TEST_ASSERT(rec->Initialize(320, 240), "recording backend init");
+
+        Maxwell3D maxwell(rec);
+        maxwell.SetMemory(&vmem);
+
+        // Synthesize a tiny Maxwell vertex program (MOV R0,R1; ST.ATTR a[0].x,R0; EXIT)
+        // and fragment program (MOV R0,R1; EXIT), write them to guest memory,
+        // then drive Maxwell3D to bind + draw.
+        auto encode = [](std::span<u8> dst, u32 opcode, u32 rd, u32 ra) {
+            const u64 val = (static_cast<u64>(opcode) << 52) |
+                            (static_cast<u64>(rd) & 0xFF) |
+                            ((static_cast<u64>(ra) & 0xFF) << 8) |
+                            (static_cast<u64>(7) << 16);
+            std::memcpy(dst.data(), &val, sizeof(u64));
+        };
+        std::vector<u8> vs(24, 0), ps(16, 0);
+        encode(std::span<u8>(vs.data() + 0, 8), 0x5C0, 0, 1);   // MOV R0,R1
+        encode(std::span<u8>(vs.data() + 8, 8), 0x5B1, 0, 0);   // ST.ATTR a[0].x,R0
+        encode(std::span<u8>(vs.data() + 16, 8), 0x5D1, 0, 0);  // EXIT
+        encode(std::span<u8>(ps.data() + 0, 8), 0x5C0, 0, 1);   // MOV R0,R1
+        encode(std::span<u8>(ps.data() + 8, 8), 0x5D1, 0, 0);   // EXIT
+
+        const u64 vs_gpu = 0x3000'0000ULL;
+        const u64 ps_gpu = 0x3000'0100ULL;
+        vmem.WriteBlock(vs_gpu, vs.data(), vs.size());
+        vmem.WriteBlock(ps_gpu, ps.data(), ps.size());
+
+        // Set VS/Frag program addresses, program size (end offset = last byte),
+        // then issue a DrawArrays.
+        maxwell.ProcessMethod(MaxwellMethod::VertexProgramAddressHigh, static_cast<u32>(vs_gpu >> 32));
+        maxwell.ProcessMethod(MaxwellMethod::VertexProgramAddressLow, static_cast<u32>(vs_gpu & 0xFFFFFFFF));
+        maxwell.ProcessMethod(MaxwellMethod::FragmentProgramAddressHigh, static_cast<u32>(ps_gpu >> 32));
+        maxwell.ProcessMethod(MaxwellMethod::FragmentProgramAddressLow, static_cast<u32>(ps_gpu & 0xFFFFFFFF));
+        maxwell.ProcessMethod(MaxwellMethod::VertexProgramEndOffset, static_cast<u32>(vs.size() - 1));
+        maxwell.ProcessMethod(MaxwellMethod::FragmentProgramEndOffset, static_cast<u32>(ps.size() - 1));
+
+        rec->BeginFrame();
+        maxwell.SubmitPushbuffer(std::span<const u32>(std::array<u32, 2>{ (1u << 16) | MaxwellMethod::DrawArrays, (3u << 8) | 3u }));
+        rec->EndFrame();
+
+        NEMU_TEST_ASSERT(rec->uploads == 1, "guest shaders uploaded to backend once");
+        NEMU_TEST_ASSERT(rec->captured_vs == vs, "backend received exact VS bytecode");
+        NEMU_TEST_ASSERT(rec->captured_ps == ps, "backend received exact PS bytecode");
+
+        // A second draw must not re-upload (programs_dirty_ cleared).
+        rec->BeginFrame();
+        maxwell.SubmitPushbuffer(std::span<const u32>(std::array<u32, 2>{ (1u << 16) | MaxwellMethod::DrawArrays, (3u << 8) | 3u }));
+        rec->EndFrame();
+        NEMU_TEST_ASSERT(rec->uploads == 1, "no redundant shader upload on repeat draw");
+
+        // Clearing the program (both addresses zero) unbinds guest shaders.
+        maxwell.ProcessMethod(MaxwellMethod::VertexProgramAddressHigh, 0);
+        maxwell.ProcessMethod(MaxwellMethod::VertexProgramAddressLow, 0);
+        maxwell.ProcessMethod(MaxwellMethod::FragmentProgramAddressHigh, 0);
+        maxwell.ProcessMethod(MaxwellMethod::FragmentProgramAddressLow, 0);
+        rec->BeginFrame();
+        maxwell.SubmitPushbuffer(std::span<const u32>(std::array<u32, 2>{ (1u << 16) | MaxwellMethod::DrawArrays, (3u << 8) | 3u }));
+        rec->EndFrame();
+        NEMU_TEST_ASSERT(rec->captured_vs.empty() && rec->captured_ps.empty(),
+                         "guest shaders cleared on program unbind");
+
+        rec->Shutdown();
+        std::cout << "  - Maxwell3D guest shader -> backend plumbing: PASSED" << std::endl;
+    }
+
     std::cout << "[Test: Tegra X1 Maxwell GPU & Texture Pipeline PASSED]" << std::endl;
     return 0;
 }

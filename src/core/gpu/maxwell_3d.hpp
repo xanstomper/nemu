@@ -46,6 +46,16 @@ namespace MaxwellMethod {
     constexpr u32 TextureFormat = 0x0589;
     constexpr u32 TextureWidth = 0x058A;
     constexpr u32 TextureHeight = 0x058B;
+    // Guest pipeline shader program upload (Maxwell PIPE/LOAD_PROGRAM). Addresses
+    // point at guest memory holding the Maxwell SASS bytecode for each stage.
+    constexpr u32 VertexProgramAddressHigh = 0x0E01;
+    constexpr u32 VertexProgramAddressLow = 0x0E02;
+    constexpr u32 FragmentProgramAddressHigh = 0x0E03;
+    constexpr u32 FragmentProgramAddressLow = 0x0E04;
+    constexpr u32 ProgramEndOffset = 0x0E05;    // +1 = size in bytes of the program
+    constexpr u32 ProgramClear = 0x0E06;        // force a fresh program upload
+    constexpr u32 VertexProgramEndOffset = 0x0E07;   // +1 = VS size in bytes
+    constexpr u32 FragmentProgramEndOffset = 0x0E08; // +1 = PS size in bytes
 } // namespace MaxwellMethod
 
 struct Maxwell3DRegisters {
@@ -99,10 +109,12 @@ private:
     void ExecuteClearSurface(u32 argument);
     void EmitDebugGeometry(); // stage a recognizable test triangle for draws
     void EmitDebugIndexedGeometry(); // stage indexed test geometry
+    void BindGuestShaders(); // upload guest VS/PS bytecode to the backend
 
     std::shared_ptr<IGpuBackend> backend_;
     memory::VirtualMemory* memory_{nullptr};
     Maxwell3DRegisters regs_{};
+    bool programs_dirty_{false};
     // Reusable scratch buffer staging guest-draw vertex data
     mutable common::ScratchBuffer<RasterVertex> geometry_scratch_;
     mutable common::ScratchBuffer<u32> index_scratch_;

@@ -2,6 +2,7 @@
 #include "texture/astc_decoder.hpp"
 #include "core/memory/virtual_memory.hpp"
 #include "platform/logger.hpp"
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -52,6 +53,22 @@ void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
                 float depth = regs_.GetFloat(MaxwellMethod::ClearDepth);
                 backend_->ClearDepthStencil(depth, 0);
             }
+            break;
+        }
+
+        case MaxwellMethod::VertexProgramAddressHigh:
+        case MaxwellMethod::VertexProgramAddressLow:
+        case MaxwellMethod::FragmentProgramAddressHigh:
+        case MaxwellMethod::FragmentProgramAddressLow:
+        case MaxwellMethod::ProgramEndOffset:
+        case MaxwellMethod::VertexProgramEndOffset:
+        case MaxwellMethod::FragmentProgramEndOffset:
+        case MaxwellMethod::ProgramClear: {
+            // A program address/clear event: re-upload guest shaders to the
+            // backend on the next draw. Marking dirty here is sufficient; the
+            // actual bytecode read happens in BindGuestShaders() at draw time,
+            // which reads the fully-updated register set.
+            programs_dirty_ = true;
             break;
         }
 
@@ -111,6 +128,10 @@ void Maxwell3D::EmitDebugGeometry() {
 void Maxwell3D::ExecuteDrawArrays(u32 argument) {
     if (!backend_) return;
 
+    if (programs_dirty_) {
+        BindGuestShaders();
+    }
+
     const u32 topology_raw = argument & 0x0F;
     const u32 vertex_count = (argument >> 8) & 0xFFFFFF;
 
@@ -147,6 +168,10 @@ void Maxwell3D::ExecuteDrawArrays(u32 argument) {
 
 void Maxwell3D::ExecuteDrawElements(u32 argument) {
     if (!backend_) return;
+
+    if (programs_dirty_) {
+        BindGuestShaders();
+    }
 
     const u32 topology_raw = argument & 0x0F;
     const u32 index_count = (argument >> 8) & 0xFFFFFF;
@@ -204,6 +229,54 @@ void Maxwell3D::EmitDebugIndexedGeometry() {
         backend_->SetRasterVertices(std::span<const RasterVertex>(verts, 4));
         backend_->SetRasterIndices(std::span<const u32>(indices, 6));
     }
+}
+
+void Maxwell3D::BindGuestShaders() {
+    if (!backend_ || !memory_) {
+        programs_dirty_ = false;
+        return;
+    }
+
+    // Upload guest Maxwell shader bytecode to the backend once (until the guest
+    // changes a program address/clear method, which sets programs_dirty_).
+    const u64 vs_addr = (static_cast<u64>(regs_.regs[MaxwellMethod::VertexProgramAddressHigh]) << 32) |
+                         static_cast<u64>(regs_.regs[MaxwellMethod::VertexProgramAddressLow]);
+    const u64 fs_addr = (static_cast<u64>(regs_.regs[MaxwellMethod::FragmentProgramAddressHigh]) << 32) |
+                         static_cast<u64>(regs_.regs[MaxwellMethod::FragmentProgramAddressLow]);
+
+    if (vs_addr == 0 && fs_addr == 0) {
+        // No guest programs -> clear any previously-bound shaders and fall back
+        // to the backend's passthrough pipeline.
+        backend_->SetGuestShaders({}, {});
+        programs_dirty_ = false;
+        return;
+    }
+
+    // Program sizes = end offset + 1 (offset, not count), in bytes. Per-stage.
+    const u32 vs_bytes_req = (regs_.regs[MaxwellMethod::VertexProgramEndOffset] & 0xFFFFFF) + 1u;
+    const u32 fs_bytes_req = (regs_.regs[MaxwellMethod::FragmentProgramEndOffset] & 0xFFFFFF) + 1u;
+    const u32 kMaxProgramBytes = 1u << 16; // safety bound; real programs are small
+
+    std::vector<u8> vs_bytes;
+    std::vector<u8> fs_bytes;
+    if (vs_addr != 0) {
+        const u32 n = std::min(vs_bytes_req, kMaxProgramBytes);
+        vs_bytes.resize(n);
+        if (!memory_->ReadBlock(vs_addr, vs_bytes.data(), n)) {
+            vs_bytes.clear();
+        }
+    }
+    if (fs_addr != 0) {
+        const u32 n = std::min(fs_bytes_req, kMaxProgramBytes);
+        fs_bytes.resize(n);
+        if (!memory_->ReadBlock(fs_addr, fs_bytes.data(), n)) {
+            fs_bytes.clear();
+        }
+    }
+
+    backend_->SetGuestShaders(vs_bytes, fs_bytes);
+    programs_dirty_ = false;
+    NEMU_LOG_DEBUG("GPU", "Bound guest shaders to backend (VS {} B, PS {} B)", vs_bytes.size(), fs_bytes.size());
 }
 
 bool Maxwell3D::DecompressAstc(
