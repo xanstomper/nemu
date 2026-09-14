@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <string>
 #include <vector>
+#include <array>
 #include <mutex>
 #include <memory>
 
@@ -56,6 +57,21 @@ enum class DepthFunc : u8 {
 /// Hardware Pipeline State Object (PSO) caching key. Uniquely identifies
 /// the complete raster, blend, depth, topology, and shader program configuration.
 struct PipelineStateKey {
+    /// One guest vertex attribute: rendered into a D3D12_INPUT_ELEMENT_DESC
+    /// (semantic = TEXCOORD{attr_index}, format id, byte offset, slot, stride).
+    /// `valid=false` entries are ignored. Positioning is always the first input
+    /// element (POSITION, R32G32_FLOAT) as the RasterVertex convention.
+    struct VertexAttribDesc {
+        u8 attr_index{0};      // TEXCOORD semantic index
+        u8 format{0};          // DXGI_FORMAT id (low byte)
+        u8 offset{0};          // byte offset within the vertex slot
+        u8 slot{0};            // vertex buffer slot
+        u16 stride{16};        // slot stride in bytes
+        bool valid{false};
+
+        bool operator==(const VertexAttribDesc& o) const noexcept = default;
+    };
+
     u64 vs_bytecode_hash{0};
     u64 ps_bytecode_hash{0};
     PrimitiveTopology topology{PrimitiveTopology::Triangles};
@@ -72,6 +88,9 @@ struct PipelineStateKey {
     BlendOp op_alpha{BlendOp::Add};
     u32 num_cbufs{0};
     u32 num_textures{0};
+    static constexpr size_t kMaxVertexAttribs = 8;
+    std::array<VertexAttribDesc, kMaxVertexAttribs> vertex_attribs{};
+    u8 vertex_attrib_count{0};   // number of valid entries in vertex_attribs
 
     bool operator==(const PipelineStateKey& other) const noexcept = default;
 };
@@ -85,6 +104,17 @@ struct PipelineStateKeyHash {
         h ^= static_cast<size_t>(k.blend_enable) << 8;
         h ^= static_cast<size_t>(k.num_cbufs) << 12;
         h ^= static_cast<size_t>(k.num_textures) << 16;
+        h ^= static_cast<size_t>(k.vertex_attrib_count) << 20;
+        for (u8 i = 0; i < k.vertex_attrib_count && i < PipelineStateKey::kMaxVertexAttribs; ++i) {
+            const auto& a = k.vertex_attribs[i];
+            h ^= (static_cast<size_t>(a.attr_index) << 20) ^
+                 (static_cast<size_t>(a.format) << 24) ^
+                 (static_cast<size_t>(a.offset) << 28) ^
+                 (static_cast<size_t>(a.slot) << 32) ^
+                 (static_cast<size_t>(a.stride) << 36) ^
+                 (static_cast<size_t>(a.valid) << 44);
+            h = (h * 0x9e3779b9ULL) + i;
+        }
         return h;
     }
 };

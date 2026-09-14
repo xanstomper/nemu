@@ -59,6 +59,9 @@ public:
     void SetGuestSamplerBinding(u32 binding, const texture::SamplerDescriptor& desc) override;
     void SetGuestTextureCount(u32 count) override { guest_texture_count_ = count & 0xFu; }
 
+    // Guest vertex-attribute layout -> the dynamic PSO input layout.
+    void SetGuestVertexAttributes(std::span<const GuestVertexAttrib> attrs) override;
+
     [[nodiscard]] GpuStats GetStats() const noexcept override { return stats_; }
     [[nodiscard]] std::string_view GetBackendName() const noexcept override { return "Direct3D 12 (Xbox Series S/X & Win32)"; }
 
@@ -171,6 +174,10 @@ private:
     std::unordered_map<u32, texture::SamplerDescriptor> guest_samplers_;
     std::unordered_map<u32, u32> guest_texture_srv_index_;
     u32 guest_texture_count_{0};
+
+    // Guest vertex-attribute layout for the dynamic PSO input layout.
+    GuestVertexAttrib guest_vertex_attribs_[pipeline::PipelineStateKey::kMaxVertexAttribs]{};
+    u8 guest_vertex_attrib_count_{0};
 };
 
 } // namespace nemu::core::gpu

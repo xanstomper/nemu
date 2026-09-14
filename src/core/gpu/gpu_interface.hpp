@@ -68,6 +68,18 @@ struct RasterVertex {
     float a{1.0f};
 };
 
+/// One guest vertex attribute for the D3D12 PSO input layout. Position is
+/// implicit (POSITION, R32G32_FLOAT at offset 0 of slot 0); each entry here maps
+/// to a TEXCOORD{n} input element with the given format/offset/slot/stride.
+struct GuestVertexAttrib {
+    u8 attr_index{0};   // TEXCOORD semantic index
+    u8 format_id{0};    // DXGI_FORMAT id (low byte)
+    u8 offset{0};       // byte offset within the vertex slot
+    u8 slot{0};         // vertex buffer slot
+    u16 stride{16};     // slot stride in bytes
+    bool valid{false};
+};
+
 class IGpuBackend {
 public:
     virtual ~IGpuBackend() = default;
@@ -104,6 +116,11 @@ public:
     virtual void SetGuestTextureBinding(u32 /*binding*/, const texture::TextureDescriptor& /*desc*/, memory::VirtualMemory* /*memory*/) {}
     virtual void SetGuestSamplerBinding(u32 /*binding*/, const texture::SamplerDescriptor& /*desc*/) {}
     virtual void SetGuestTextureCount(u32 /*count*/) {}
+
+    /// Guest vertex-attribute layout (position implicit at offset 0). The D3D12
+    /// backend renders this into the PSO input layout; Null/SDL2 ignore it.
+    /// `attrs` are {semantic_index, DXGI_FORMAT id, byte offset, slot, stride}.
+    virtual void SetGuestVertexAttributes(std::span<const GuestVertexAttrib> /*attrs*/) {}
 
     // --- Vertex / material binding and host-observable frame capture ---
     // These are the software-rasterizable entry points. Backends that only

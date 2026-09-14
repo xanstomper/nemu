@@ -2,6 +2,8 @@
 #include "platform/logger.hpp"
 #include <cstring>
 #include <vector>
+#include <array>
+#include <algorithm>
 
 #ifdef _WIN32
 #include <d3dcompiler.h>
@@ -222,18 +224,44 @@ bool PipelineCache::GetOrCreatePipeline(
     }
 
     // 3. Build Graphics Pipeline State
-    // The input layout must agree with the MaxwellShaderDecoder HLSL emitter:
-    // `POSITION` (x,y) + `TEXCOORD0` (RGBA), i.e. exactly one RasterVertex.
-    D3D12_INPUT_ELEMENT_DESC layout[] = {
-        {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        {"TEXCOORD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 8, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-    };
+    // The input layout must agree with the MaxwellShaderDecoder HLSL emitter.
+    // When the guest supplies a vertex-attribute layout (P2-4 generalization)
+    // we render it into D3D12_INPUT_ELEMENT_DESC dynamically; otherwise we fall
+    // back to the default `POSITION` + `TEXCOORD0` (one RasterVertex).
+    std::array<D3D12_INPUT_ELEMENT_DESC, PipelineStateKey::kMaxVertexAttribs + 1> layout{};
+    size_t layout_count = 0;
+    layout[layout_count++] = {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0,
+                              D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0};
+    if (key.vertex_attrib_count > 0) {
+        const u8 count = std::min<u8>(key.vertex_attrib_count, PipelineStateKey::kMaxVertexAttribs);
+        for (u8 i = 0; i < count; ++i) {
+            const auto& a = key.vertex_attribs[i];
+            if (!a.valid) {
+                continue;
+            }
+            if (layout_count >= layout.size()) {
+                break;
+            }
+            layout[layout_count].SemanticName = "TEXCOORD";
+            layout[layout_count].SemanticIndex = a.attr_index;
+            layout[layout_count].Format = static_cast<DXGI_FORMAT>(a.format);
+            layout[layout_count].InputSlot = a.slot;
+            layout[layout_count].AlignedByteOffset = a.offset;
+            layout[layout_count].InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+            layout[layout_count].InstanceDataStepRate = 0;
+            ++layout_count;
+        }
+    } else {
+        // Default one-RasterVertex layout: POSITION(xy) + TEXCOORD0(RGBA color).
+        layout[layout_count++] = {"TEXCOORD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 8,
+                                  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0};
+    }
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc{};
     pso_desc.pRootSignature = root_sig.Get();
     pso_desc.VS = {vs_blob->GetBufferPointer(), vs_blob->GetBufferSize()};
     pso_desc.PS = {ps_blob->GetBufferPointer(), ps_blob->GetBufferSize()};
-    pso_desc.InputLayout = {layout, 2};
+    pso_desc.InputLayout = {layout.data(), static_cast<UINT>(layout_count)};
 
     // Topology
     switch (key.topology) {

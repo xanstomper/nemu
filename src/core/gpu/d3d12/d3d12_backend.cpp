@@ -296,6 +296,7 @@ void D3D12GpuBackend::Shutdown() {
         guest_samplers_.clear();
         guest_texture_srv_index_.clear();
         guest_texture_count_ = 0;
+        guest_vertex_attrib_count_ = 0;
         texture_cache_.Shutdown();
         index_buffer_.Reset();
         vertex_buffer_.Reset();
@@ -534,6 +535,15 @@ void D3D12GpuBackend::SetGuestSamplerBinding(u32 binding, const texture::Sampler
     // cached here for future descriptor-table/gpu-sampler use.
 }
 
+void D3D12GpuBackend::SetGuestVertexAttributes(std::span<const GuestVertexAttrib> attrs) {
+    guest_vertex_attrib_count_ = 0;
+    const u8 n = static_cast<u8>(std::min<size_t>(attrs.size(), pipeline::PipelineStateKey::kMaxVertexAttribs));
+    for (u8 i = 0; i < n; ++i) {
+        guest_vertex_attribs_[i] = attrs[i];
+    }
+    guest_vertex_attrib_count_ = n;
+}
+
 void D3D12GpuBackend::BindGuestTextures() {
     if (!command_list_ || guest_textures_.empty() || guest_texture_count_ == 0) {
         return;
@@ -667,6 +677,17 @@ bool D3D12GpuBackend::BindTranslatedPipeline(PrimitiveTopology topology) {
     key.blend_enable = false;
     key.num_cbufs = guest_num_cbufs_;
     key.num_textures = guest_texture_count_;
+    key.vertex_attrib_count = guest_vertex_attrib_count_;
+    for (u8 i = 0; i < guest_vertex_attrib_count_ && i < pipeline::PipelineStateKey::kMaxVertexAttribs; ++i) {
+        auto& va = key.vertex_attribs[i];
+        const auto& ga = guest_vertex_attribs_[i];
+        va.attr_index = ga.attr_index;
+        va.format = ga.format_id;
+        va.offset = ga.offset;
+        va.slot = ga.slot;
+        va.stride = ga.stride;
+        va.valid = ga.valid;
+    }
 
     // Build/retrieve the translated PSO through the full chain (decode ->
     // HLSL -> validate -> D3DCompile -> PSO). This is the heart of the
