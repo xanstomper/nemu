@@ -2,9 +2,13 @@
 
 #include "core/gpu/gpu_interface.hpp"
 #include "core/gpu/pipeline/pipeline_cache.hpp"
+#include "core/gpu/texture/texture_cache.hpp"
+#include "core/gpu/texture/texture_types.hpp"
+#include "core/memory/virtual_memory.hpp"
 #include <vector>
 #include <array>
 #include <cstdint>
+#include <unordered_map>
 
 #ifdef _WIN32
 #include <d3d12.h>
@@ -48,6 +52,12 @@ public:
     // private upload resource aligned to D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT
     // and bound via SetGraphicsRootConstantBufferView at draw time.
     void SetGuestConstantBuffer(u32 slot, const void* data, u32 bytes) override;
+
+    // Guest texture bindings: cache the descriptor and create/bind an SRV
+    // descriptor table into the translated root signature at draw time.
+    void SetGuestTextureBinding(u32 binding, const texture::TextureDescriptor& desc, memory::VirtualMemory* memory) override;
+    void SetGuestSamplerBinding(u32 binding, const texture::SamplerDescriptor& desc) override;
+    void SetGuestTextureCount(u32 count) override { guest_texture_count_ = count & 0xFu; }
 
     [[nodiscard]] GpuStats GetStats() const noexcept override { return stats_; }
     [[nodiscard]] std::string_view GetBackendName() const noexcept override { return "Direct3D 12 (Xbox Series S/X & Win32)"; }
@@ -93,6 +103,7 @@ private:
     void BindPipelineAndTopology(PrimitiveTopology topology);
     bool BindTranslatedPipeline(PrimitiveTopology topology);
     void BindGuestConstantBuffers(UINT cbv_first_slot);
+    void BindGuestTextures();
     void ReleaseGuestCbuffers();
     DXGI_FORMAT index_format() const noexcept { return DXGI_FORMAT_R32_UINT; }
 
@@ -151,6 +162,15 @@ private:
     static constexpr u32 kMaxGuestCbufSlots = 16;
     std::array<GuestCbuf, kMaxGuestCbufSlots> guest_cbufs_{};
     u32 guest_num_cbufs_{0};
+
+    // Guest texture bindings: deswizzle/upload via TextureCache and bind an SRV
+    // descriptor table (slot = shader register). Slots are sparse; binding is
+    // contiguous as long as the guest binds consecutive registers starting at 0.
+    texture::TextureCache texture_cache_;
+    std::unordered_map<u32, texture::TextureDescriptor> guest_textures_;
+    std::unordered_map<u32, texture::SamplerDescriptor> guest_samplers_;
+    std::unordered_map<u32, u32> guest_texture_srv_index_;
+    u32 guest_texture_count_{0};
 };
 
 } // namespace nemu::core::gpu

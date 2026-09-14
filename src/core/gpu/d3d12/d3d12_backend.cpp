@@ -125,6 +125,10 @@ bool D3D12GpuBackend::Initialize(u32 render_width, u32 render_height) {
     // guest Maxwell shaders compile to native PSOs at draw time.
     pipeline_cache_.SetDevice(device_.Get());
 
+    // Bring up the texture cache (descriptor heaps for guest SRVs/samplers).
+    texture_cache_.SetDevice(device_.Get());
+    texture_cache_.Initialize();
+
     // Bring up the real render path (swap chain, RTV heap, PSO, geometry).
     // Failure is non-fatal: the backend stays usable for clears/commands and
     // reports pipeline state via IsRenderPipelineReady().
@@ -288,6 +292,11 @@ void D3D12GpuBackend::Shutdown() {
         }
         pipeline_cache_.Clear();
         ReleaseGuestCbuffers();
+        guest_textures_.clear();
+        guest_samplers_.clear();
+        guest_texture_srv_index_.clear();
+        guest_texture_count_ = 0;
+        texture_cache_.Shutdown();
         index_buffer_.Reset();
         vertex_buffer_.Reset();
         pso_.Reset();
@@ -500,6 +509,47 @@ void D3D12GpuBackend::ReleaseGuestCbuffers() {
     guest_num_cbufs_ = 0;
 }
 
+void D3D12GpuBackend::SetGuestTextureBinding(u32 binding, const texture::TextureDescriptor& desc, memory::VirtualMemory* memory) {
+    if (binding >= kMaxGuestCbufSlots) {
+        NEMU_LOG_WARN("D3D12", "SetGuestTextureBinding: slot {} out of range", binding);
+        return;
+    }
+    guest_textures_.insert_or_assign(binding, desc);
+
+    // Deswizzle/upload the texture now and remember its SRV index so the draw
+    // path can bind a contiguous descriptor table (slot 0..count-1 maps to
+    // consecutive srv_index values; real games bind registers densely).
+    auto cached = texture_cache_.GetOrCreateTexture(desc, memory);
+    if (cached) {
+        guest_texture_srv_index_[binding] = cached->srv_index;
+    }
+}
+
+void D3D12GpuBackend::SetGuestSamplerBinding(u32 binding, const texture::SamplerDescriptor& desc) {
+    if (binding >= kMaxGuestCbufSlots) {
+        return;
+    }
+    guest_samplers_.insert_or_assign(binding, desc);
+    // Static sampler path is wired in the root signature; the guest sampler is
+    // cached here for future descriptor-table/gpu-sampler use.
+}
+
+void D3D12GpuBackend::BindGuestTextures() {
+    if (!command_list_ || guest_textures_.empty() || guest_texture_count_ == 0) {
+        return;
+    }
+    // Bind the texture cache descriptor heaps so the SRV handles are visible.
+    texture_cache_.BindDescriptorHeaps(command_list_.Get());
+    // The translated root signature places the SRV descriptor table at root
+    // parameter index `num_cbufs` (after the per-slot CBVs).
+    const u32 srv_root_idx = guest_num_cbufs_;
+    // Bind a contiguous table starting at the first (slot 0) texture's SRV.
+    const auto it = guest_texture_srv_index_.find(0);
+    if (it != guest_texture_srv_index_.end()) {
+        texture_cache_.SetGraphicsRootTexture(command_list_.Get(), srv_root_idx, it->second);
+    }
+}
+
 void D3D12GpuBackend::DrawArrays(PrimitiveTopology topology, u32 first_vertex, u32 vertex_count) {
     stats_.draw_calls++;
     stats_.vertices_submitted += vertex_count;
@@ -616,6 +666,7 @@ bool D3D12GpuBackend::BindTranslatedPipeline(PrimitiveTopology topology) {
     key.topology = topology;
     key.blend_enable = false;
     key.num_cbufs = guest_num_cbufs_;
+    key.num_textures = guest_texture_count_;
 
     // Build/retrieve the translated PSO through the full chain (decode ->
     // HLSL -> validate -> D3DCompile -> PSO). This is the heart of the
@@ -639,6 +690,9 @@ bool D3D12GpuBackend::BindTranslatedPipeline(PrimitiveTopology topology) {
     }
     if (guest_num_cbufs_ > 0) {
         BindGuestConstantBuffers(0);
+    }
+    if (guest_texture_count_ > 0) {
+        BindGuestTextures();
     }
 
     D3D12_PRIMITIVE_TOPOLOGY d3d_topo = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;

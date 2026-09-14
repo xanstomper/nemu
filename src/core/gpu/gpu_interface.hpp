@@ -5,6 +5,9 @@
 #include <string_view>
 #include <memory>
 
+namespace nemu::core::memory { class VirtualMemory; }
+namespace nemu::core::gpu::texture { struct TextureDescriptor; struct SamplerDescriptor; }
+
 namespace nemu::core::gpu {
 
 enum class PrimitiveTopology : u32 {
@@ -92,6 +95,15 @@ public:
     // fallback mode) are unaffected.
     virtual void SetGuestShaders(std::span<const u8> /*vs_bytecode*/, std::span<const u8> /*ps_bytecode*/) {}
     virtual void SetGuestConstantBuffer(u32 /*slot*/, const void* /*data*/, u32 /*bytes*/) {}
+
+    // --- Guest texture state (translation-layer input) ---------------------
+    // Carry the real guest texture/sampler bindings so the D3D12 backend can
+    // build and bind SRV descriptor tables into the translated root signature.
+    // `binding` is the shader-visible register/slot index. Defaults are no-ops
+    // so backends without texture support (Null, SDL2) are unaffected.
+    virtual void SetGuestTextureBinding(u32 /*binding*/, const texture::TextureDescriptor& /*desc*/, memory::VirtualMemory* /*memory*/) {}
+    virtual void SetGuestSamplerBinding(u32 /*binding*/, const texture::SamplerDescriptor& /*desc*/) {}
+    virtual void SetGuestTextureCount(u32 /*count*/) {}
 
     // --- Vertex / material binding and host-observable frame capture ---
     // These are the software-rasterizable entry points. Backends that only

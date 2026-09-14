@@ -56,6 +56,10 @@ public:
     /// Initialize GPU descriptor heaps (CBV/SRV and Sampler)
     bool Initialize();
 
+#ifdef _WIN32
+    void SetDevice(ID3D12Device* device) noexcept { device_ = device; }
+#endif
+
     /// Release resources
     void Shutdown();
 
