@@ -123,6 +123,7 @@ struct DecompiledProgram {
     std::string glsl_source{};
     std::vector<u32> used_cbuf_banks{};
     std::vector<u32> used_textures{};
+    std::vector<u32> used_attrs{};  // attribute slot indices actually referenced
     u32 max_register_used{0};
     bool has_discard{false};
 };

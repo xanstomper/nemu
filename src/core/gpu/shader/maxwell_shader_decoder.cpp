@@ -162,6 +162,15 @@ std::string MaxwellShaderDecoder::DisassembleInstruction(const DecodedInstructio
     return ss.str();
 }
 
+// GCC 13 -Wstringop-overflow misfires on the vector<ShaderOperand> realloc path
+// in DecodeInstruction64 (reports "writing 2 bytes into a region of size 0" on a
+// correct 80-byte ShaderOperand move; the "2 bytes" are the bool trailer padding).
+// It is a false positive: the writes are fully in-bounds within the allocated
+// vector storage. Scope the suppression narrowly to this decoder.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
 DecodedInstruction MaxwellShaderDecoder::DecodeInstruction64(u64 raw, u64 offset) {
     DecodedInstruction inst{};
     inst.offset_bytes = offset;
@@ -303,6 +312,9 @@ DecodedInstruction MaxwellShaderDecoder::DecodeInstruction64(u64 raw, u64 offset
     inst.disassembly = DisassembleInstruction(inst);
     return inst;
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 DecompiledProgram MaxwellShaderDecoder::DecodeAndDecompile(
     std::span<const u8> code,
@@ -314,6 +326,7 @@ DecompiledProgram MaxwellShaderDecoder::DecodeAndDecompile(
 
     std::set<u32> used_cbufs;
     std::set<u32> used_texs;
+    std::set<u32> used_attrs;
 
     const size_t inst_size = 8;
     size_t offset = 0;
@@ -346,6 +359,15 @@ DecompiledProgram MaxwellShaderDecoder::DecodeAndDecompile(
             }
         }
 
+        if (inst.dest.type == OperandType::Attribute) {
+            used_attrs.insert(inst.dest.attr.offset / 16);
+        }
+        for (const auto& src : inst.sources) {
+            if (src.type == OperandType::Attribute) {
+                used_attrs.insert(src.attr.offset / 16);
+            }
+        }
+
         if (inst.opcode == MaxwellOpcode::KIL) {
             program.has_discard = true;
         }
@@ -360,6 +382,7 @@ DecompiledProgram MaxwellShaderDecoder::DecodeAndDecompile(
 
     program.used_cbuf_banks.assign(used_cbufs.begin(), used_cbufs.end());
     program.used_textures.assign(used_texs.begin(), used_texs.end());
+    program.used_attrs.assign(used_attrs.begin(), used_attrs.end());
 
     program.hlsl_source = EmitHLSL(program);
     program.glsl_source = EmitGLSL(program);
@@ -389,14 +412,14 @@ std::string MaxwellShaderDecoder::EmitHLSL(const DecompiledProgram& program) {
     if (program.stage == ShaderStage::Vertex) {
         ss << "struct VSInput {\n";
         ss << "    float4 in_pos : POSITION;\n";
-        for (u32 i = 0; i < 8; ++i) {
+        for (u32 i : program.used_attrs) {
             ss << "    float4 in_attr" << i << " : TEXCOORD" << i << ";\n";
         }
         ss << "};\n\n";
 
         ss << "struct VSOutput {\n";
         ss << "    float4 out_pos : SV_Position;\n";
-        for (u32 i = 0; i < 8; ++i) {
+        for (u32 i : program.used_attrs) {
             ss << "    float4 out_attr" << i << " : TEXCOORD" << i << ";\n";
         }
         ss << "};\n\n";
@@ -406,7 +429,7 @@ std::string MaxwellShaderDecoder::EmitHLSL(const DecompiledProgram& program) {
     } else { // Fragment / Pixel Shader
         ss << "struct PSInput {\n";
         ss << "    float4 in_pos : SV_Position;\n";
-        for (u32 i = 0; i < 8; ++i) {
+        for (u32 i : program.used_attrs) {
             ss << "    float4 in_attr" << i << " : TEXCOORD" << i << ";\n";
         }
         ss << "};\n\n";
@@ -546,14 +569,14 @@ std::string MaxwellShaderDecoder::EmitGLSL(const DecompiledProgram& program) {
 
     if (program.stage == ShaderStage::Vertex) {
         ss << "layout(location = 0) in vec4 in_pos;\n";
-        for (u32 i = 0; i < 8; ++i) {
+        for (u32 i : program.used_attrs) {
             ss << "layout(location = " << (i + 1) << ") in vec4 in_attr" << i << ";\n";
             ss << "layout(location = " << i << ") out vec4 out_attr" << i << ";\n";
         }
         ss << "\nvoid main() {\n";
         ss << "    gl_Position = in_pos;\n";
     } else {
-        for (u32 i = 0; i < 8; ++i) {
+        for (u32 i : program.used_attrs) {
             ss << "layout(location = " << i << ") in vec4 in_attr" << i << ";\n";
         }
         ss << "layout(location = 0) out vec4 out_color0;\n";
