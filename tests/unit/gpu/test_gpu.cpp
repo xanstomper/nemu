@@ -188,6 +188,63 @@ int main() {
         std::cout << "  - Software rasterizer rendered a first frame + PPM dump: PASSED" << std::endl;
     }
 
+    // 3c. Software rasterizer triangle-family topology parity (strip/fan).
+    // The D3D12 backend supports all triangle topologies; the software backend
+    // must produce equivalent coverage for TriangleStrip and TriangleFan so the
+    // two drivers agree on the same guest draw.
+    {
+        NullGpuBackend sw;
+        NEMU_TEST_ASSERT(sw.Initialize(64, 64), "topology parity backend init");
+
+        // A 4-vertex strip forming 2 triangles: (0,1,2) then (1,2,3).
+        const RasterVertex quad[4] = {
+            { -0.5f, -0.5f, 1.0f, 0.0f, 0.0f, 1.0f}, // 0 TL
+            {  0.5f, -0.5f, 1.0f, 0.0f, 0.0f, 1.0f}, // 1 TR
+            { -0.5f,  0.5f, 1.0f, 0.0f, 0.0f, 1.0f}, // 2 BL
+            {  0.5f,  0.5f, 1.0f, 0.0f, 0.0f, 1.0f}, // 3 BR
+        };
+        sw.BeginFrame();
+        sw.ClearRenderTarget({0.0f, 0.0f, 0.0f, 1.0f});
+        sw.SetRasterVertices(std::span<const RasterVertex>(quad, 4));
+        // TriangleStrip covers the whole quad (both halves) in red.
+        sw.DrawArrays(PrimitiveTopology::TriangleStrip, 0, 4);
+        sw.EndFrame();
+
+        const u8* fb = sw.Framebuffer();
+        // Top-left quadrant (16,16) and bottom-right (48,48) should both be red.
+        auto px_rgb = [&](size_t x, size_t y) -> const u8* {
+            return fb + ((y * 64u + x) * 4u);
+        };
+        NEMU_TEST_ASSERT(px_rgb(16,16)[0] > 200, "strip: top-left covered");
+        NEMU_TEST_ASSERT(px_rgb(48,48)[0] > 200, "strip: bottom-right covered");
+
+        // Same geometry as a TriangleFan around vertex 0 also fills the quad.
+        sw.BeginFrame();
+        sw.ClearRenderTarget({0.0f, 0.0f, 0.0f, 1.0f});
+        sw.DrawArrays(PrimitiveTopology::TriangleFan, 0, 4);
+        sw.EndFrame();
+        NEMU_TEST_ASSERT(px_rgb(16,16)[0] > 200, "fan: top-left covered");
+        NEMU_TEST_ASSERT(px_rgb(48,48)[0] > 200, "fan: bottom-right covered");
+
+        // Indexed strip resolves base_vertex correctly: the quad lives at vertex
+        // slots 2..5 of a 6-slot pool, and the index list addresses them with a
+        // base_vertex of 2 (i.e. {0,1,2,3} -> pool slots {2,3,4,5}).
+        RasterVertex pool[6] = {};
+        std::memcpy(pool + 2, quad, sizeof(quad));
+        const u32 indices_raw[4] = { 0, 1, 2, 3 };
+        sw.BeginFrame();
+        sw.ClearRenderTarget({0.0f, 0.0f, 0.0f, 1.0f});
+        sw.SetRasterVertices(std::span<const RasterVertex>(pool, 6));
+        sw.SetRasterIndices(std::span<const u32>(indices_raw, 4));
+        sw.DrawIndexed(PrimitiveTopology::TriangleStrip, 4, 0, 2);
+        sw.EndFrame();
+        NEMU_TEST_ASSERT(px_rgb(16,16)[0] > 200, "indexed strip: top-left covered");
+        NEMU_TEST_ASSERT(px_rgb(48,48)[0] > 200, "indexed strip: bottom-right covered");
+
+        sw.Shutdown();
+        std::cout << "  - Software rasterizer triangle-family topology parity: PASSED" << std::endl;
+    }
+
     // 4. Test NvMap
     {
         nvhost::NvMap nvmap;

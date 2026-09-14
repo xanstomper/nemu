@@ -184,42 +184,89 @@ void NullGpuBackend::RasterizeTriangle(const RasterVertex& va, const RasterVerte
 void NullGpuBackend::DrawArrays(PrimitiveTopology topology, u32 first_vertex, u32 vertex_count) {
     stats_.draw_calls++;
     stats_.vertices_submitted += vertex_count;
-    if (topology != PrimitiveTopology::Triangles || vertices_.empty()) {
-        NEMU_LOG_DEBUG("GPU", "DrawArrays: {} vertices (topology {}) ignored by software rasterizer",
+    if (vertices_.empty() || vertex_count < 3) {
+        NEMU_LOG_DEBUG("GPU", "DrawArrays: {} vertices (topology {}) skipped (empty or degenerate)",
                        vertex_count, static_cast<u32>(topology));
         return;
     }
-    for (u32 i = 0; i + 2 < vertex_count; i += 3) {
-        const size_t a = first_vertex + i;
-        const size_t b = first_vertex + i + 1;
-        const size_t c = first_vertex + i + 2;
+
+    // Software-triangle-family helpers shared with DrawIndexed.
+    const auto tri = [&](size_t a, size_t b, size_t c) {
         if (a < vertices_.size() && b < vertices_.size() && c < vertices_.size()) {
             RasterizeTriangle(vertices_[a], vertices_[b], vertices_[c]);
         }
+    };
+
+    switch (topology) {
+        case PrimitiveTopology::Triangles:
+            for (u32 i = 0; i + 2 < vertex_count; i += 3) {
+                tri(first_vertex + i, first_vertex + i + 1, first_vertex + i + 2);
+            }
+            break;
+        case PrimitiveTopology::TriangleStrip:
+            // Alternate winding per triangle to match D3D12/Maxwell strips.
+            for (u32 i = 0; i + 2 < vertex_count; ++i) {
+                if ((i & 1) == 0) tri(first_vertex + i, first_vertex + i + 1, first_vertex + i + 2);
+                else              tri(first_vertex + i + 1, first_vertex + i, first_vertex + i + 2);
+            }
+            break;
+        case PrimitiveTopology::TriangleFan:
+            for (u32 i = 1; i + 1 < vertex_count; ++i) {
+                tri(first_vertex, first_vertex + i, first_vertex + i + 1);
+            }
+            break;
+        default:
+            // Points/Lines/LineStrip: not rasterizable into the current 2D
+            // RasterVertex framebuffer path; keep D3D12 parity for the triangle
+            // family (the ones the geometry model can produce).
+            NEMU_LOG_DEBUG("GPU", "DrawArrays: topology {} not rasterizable by software backend",
+                           static_cast<u32>(topology));
+            break;
     }
 }
 
 void NullGpuBackend::DrawIndexed(PrimitiveTopology topology, u32 index_count, u32 first_index, u32 base_vertex) {
     stats_.draw_calls++;
     stats_.vertices_submitted += index_count;
-    if (topology != PrimitiveTopology::Triangles || indices_.empty() || vertices_.empty()) {
-        NEMU_LOG_DEBUG("GPU", "DrawIndexed: {} indices (topology {}) ignored by software rasterizer",
+    if (indices_.empty() || vertices_.empty() || index_count < 3) {
+        NEMU_LOG_DEBUG("GPU", "DrawIndexed: {} indices (topology {}) skipped (empty or degenerate)",
                        index_count, static_cast<u32>(topology));
         return;
     }
-    for (u32 i = 0; i + 2 < index_count; i += 3) {
-        const size_t ia = first_index + i;
-        const size_t ib = first_index + i + 1;
-        const size_t ic = first_index + i + 2;
-        if (ia >= indices_.size() || ib >= indices_.size() || ic >= indices_.size()) {
-            continue;
-        }
-        const size_t a = base_vertex + indices_[ia];
-        const size_t b = base_vertex + indices_[ib];
-        const size_t c = base_vertex + indices_[ic];
+
+    // Resolve an index (relative to first_index, applying base_vertex) to a
+    // host vertex index, then rasterize the triangle if all three are in range.
+    const auto idx = [&](u32 slot) -> size_t {
+        if (first_index + slot >= indices_.size()) return SIZE_MAX;
+        return base_vertex + static_cast<size_t>(indices_[first_index + slot]);
+    };
+    const auto tri3 = [&](size_t a, size_t b, size_t c) {
         if (a < vertices_.size() && b < vertices_.size() && c < vertices_.size()) {
             RasterizeTriangle(vertices_[a], vertices_[b], vertices_[c]);
         }
+    };
+
+    switch (topology) {
+        case PrimitiveTopology::Triangles:
+            for (u32 i = 0; i + 2 < index_count; i += 3) {
+                tri3(idx(i), idx(i + 1), idx(i + 2));
+            }
+            break;
+        case PrimitiveTopology::TriangleStrip:
+            for (u32 i = 0; i + 2 < index_count; ++i) {
+                if ((i & 1) == 0) tri3(idx(i), idx(i + 1), idx(i + 2));
+                else              tri3(idx(i + 1), idx(i), idx(i + 2));
+            }
+            break;
+        case PrimitiveTopology::TriangleFan:
+            for (u32 i = 1; i + 1 < index_count; ++i) {
+                tri3(idx(0), idx(i), idx(i + 1));
+            }
+            break;
+        default:
+            NEMU_LOG_DEBUG("GPU", "DrawIndexed: topology {} not rasterizable by software backend",
+                           static_cast<u32>(topology));
+            break;
     }
 }
 
