@@ -122,6 +122,11 @@ public:
     /// `attrs` are {semantic_index, DXGI_FORMAT id, byte offset, slot, stride}.
     virtual void SetGuestVertexAttributes(std::span<const GuestVertexAttrib> /*attrs*/) {}
 
+    /// Raw guest vertex-buffer bytes + per-vertex stride (matching the layout
+    /// passed to SetGuestVertexAttributes). The D3D12 backend uploads and binds
+    /// this instead of the fixed RasterVertex buffer. Null/SDL2 ignore it.
+    virtual void SetGuestVertexBuffer(std::span<const u8> /*data*/, u32 /*stride*/) {}
+
     // --- Vertex / material binding and host-observable frame capture ---
     // These are the software-rasterizable entry points. Backends that only
     // forward to a hardware API (e.g. D3D12) may leave them as no-ops; the

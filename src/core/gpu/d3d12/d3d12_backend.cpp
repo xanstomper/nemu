@@ -297,6 +297,11 @@ void D3D12GpuBackend::Shutdown() {
         guest_texture_srv_index_.clear();
         guest_texture_count_ = 0;
         guest_vertex_attrib_count_ = 0;
+        guest_vertex_data_.clear();
+        guest_vertex_buffer_.Reset();
+        guest_vertex_buffer_size_ = 0;
+        guest_vertex_stride_ = 0;
+        guest_vertex_buffer_valid_ = false;
         texture_cache_.Shutdown();
         index_buffer_.Reset();
         vertex_buffer_.Reset();
@@ -544,6 +549,47 @@ void D3D12GpuBackend::SetGuestVertexAttributes(std::span<const GuestVertexAttrib
     guest_vertex_attrib_count_ = n;
 }
 
+void D3D12GpuBackend::SetGuestVertexBuffer(std::span<const u8> data, u32 stride) {
+    guest_vertex_data_.assign(data.begin(), data.end());
+    guest_vertex_stride_ = stride;
+    guest_vertex_buffer_valid_ = !guest_vertex_data_.empty() && stride > 0;
+
+    if (!guest_vertex_buffer_valid_ || !device_) {
+        guest_vertex_buffer_.Reset();
+        guest_vertex_buffer_size_ = 0;
+        return;
+    }
+
+    const UINT size = static_cast<UINT>(guest_vertex_data_.size());
+    D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_UPLOAD, D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+                               D3D12_MEMORY_POOL_UNKNOWN, 1, 1};
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    desc.Width = size;
+    desc.Height = 1;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = DXGI_FORMAT_UNKNOWN;
+    desc.SampleDesc = {1, 0};
+    desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    guest_vertex_buffer_.Reset();
+    if (FAILED(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                IID_PPV_ARGS(&guest_vertex_buffer_)))) {
+        guest_vertex_buffer_valid_ = false;
+        guest_vertex_buffer_size_ = 0;
+        return;
+    }
+    guest_vertex_buffer_size_ = size;
+
+    void* mapped = nullptr;
+    if (SUCCEEDED(guest_vertex_buffer_->Map(0, nullptr, &mapped))) {
+        std::memcpy(mapped, guest_vertex_data_.data(), guest_vertex_data_.size());
+        guest_vertex_buffer_->Unmap(0, nullptr);
+    }
+}
+
 void D3D12GpuBackend::BindGuestTextures() {
     if (!command_list_ || guest_textures_.empty() || guest_texture_count_ == 0) {
         return;
@@ -727,10 +773,16 @@ bool D3D12GpuBackend::BindTranslatedPipeline(PrimitiveTopology topology) {
     }
     command_list_->IASetPrimitiveTopology(d3d_topo);
 
-    // Bind the same RasterVertex geometry (x,y + rgba) for the translated PSO.
-    const UINT stride = sizeof(D3D12Vertex);
+    // Bind geometry. When a guest vertex buffer is present (P2-4 guest path),
+    // bind it with the guest stride; otherwise bind the RasterVertex geometry.
     D3D12_VERTEX_BUFFER_VIEW view{};
-    if (vertex_buffer_) {
+    if (guest_vertex_buffer_valid_ && guest_vertex_buffer_) {
+        view.BufferLocation = guest_vertex_buffer_->GetGPUVirtualAddress();
+        view.StrideInBytes = guest_vertex_stride_;
+        view.SizeInBytes = guest_vertex_buffer_size_;
+        command_list_->IASetVertexBuffers(0, 1, &view);
+    } else if (vertex_buffer_) {
+        const UINT stride = sizeof(D3D12Vertex);
         view.BufferLocation = vertex_buffer_->GetGPUVirtualAddress();
         view.StrideInBytes = stride;
         view.SizeInBytes = vertex_buffer_size_;

@@ -62,6 +62,9 @@ public:
     // Guest vertex-attribute layout -> the dynamic PSO input layout.
     void SetGuestVertexAttributes(std::span<const GuestVertexAttrib> attrs) override;
 
+    // Raw guest vertex-buffer bytes -> upload + bind for the translated PSO.
+    void SetGuestVertexBuffer(std::span<const u8> data, u32 stride) override;
+
     [[nodiscard]] GpuStats GetStats() const noexcept override { return stats_; }
     [[nodiscard]] std::string_view GetBackendName() const noexcept override { return "Direct3D 12 (Xbox Series S/X & Win32)"; }
 
@@ -178,6 +181,13 @@ private:
     // Guest vertex-attribute layout for the dynamic PSO input layout.
     GuestVertexAttrib guest_vertex_attribs_[pipeline::PipelineStateKey::kMaxVertexAttribs]{};
     u8 guest_vertex_attrib_count_{0};
+
+    // Guest vertex-buffer data uploaded for the translated PSO.
+    std::vector<u8> guest_vertex_data_;
+    Microsoft::WRL::ComPtr<ID3D12Resource> guest_vertex_buffer_;
+    UINT guest_vertex_buffer_size_{0};
+    UINT guest_vertex_stride_{0};
+    bool guest_vertex_buffer_valid_{false};
 };
 
 } // namespace nemu::core::gpu
