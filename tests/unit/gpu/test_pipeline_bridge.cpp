@@ -134,6 +134,25 @@ int main() {
         // into the PSO input layout (POSITION + TEXCOORD0), so the translated
         // and fallback paths share identical vertex semantics.
         std::cout << "  - Emitter/PSO input-layout semantic coherence: PASSED" << std::endl;
+
+        // Edge case: a shader that only writes out_pos (attribute slot 0) must
+        // emit exactly ONE TEXCOORD input (slot 0), not the old unconditional
+        // TEXCOORD0..7. Any attribute slot the PSO layout does not back would
+        // make CreateGraphicsPipelineState fail on real D3D12/Xbox, so gating on
+        // actual usage is required for simple producible shaders to link.
+        std::size_t in_attr_decls = 0;
+        std::size_t pos = 0;
+        while ((pos = tl.hlsl_source.find("in_attr", pos)) != std::string::npos) {
+            ++in_attr_decls;
+            ++pos;
+        }
+        // Both structs (VSInput + VSOutput) declare in_attr/out_attr once per
+        // used slot. For a slot-0-only program that is 2 declarations total
+        // (input + output), and never TEXCOORD1+.
+        PB_ASSERT(in_attr_decls <= 2, "emitted VS declares at most the slot-0 attribute input+output");
+        PB_ASSERT(tl.hlsl_source.find("in_attr1") == std::string::npos,
+                  "no unbacked attribute slot 1+ emitted");
+        std::cout << "  - Minimal PSO input-layout (slot-0 only): PASSED" << std::endl;
     }
 
     std::cout << "[Test: Shader -> HLSL -> PipelineCache Bridge PASSED]" << std::endl;
