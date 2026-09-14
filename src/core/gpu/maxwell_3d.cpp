@@ -145,6 +145,7 @@ void Maxwell3D::ExecuteDrawArrays(u32 argument) {
     if (textures_dirty_) {
         BindGuestTextures();
     }
+    BindGuestVertexAttributes();
 
     const u32 topology_raw = argument & 0x0F;
     const u32 vertex_count = (argument >> 8) & 0xFFFFFF;
@@ -189,6 +190,7 @@ void Maxwell3D::ExecuteDrawElements(u32 argument) {
     if (textures_dirty_) {
         BindGuestTextures();
     }
+    BindGuestVertexAttributes();
 
     const u32 topology_raw = argument & 0x0F;
     const u32 index_count = (argument >> 8) & 0xFFFFFF;
@@ -327,6 +329,43 @@ void Maxwell3D::BindGuestTextures() {
     backend_->SetGuestTextureCount(1);
     textures_dirty_ = false;
     NEMU_LOG_DEBUG("GPU", "Bound guest texture to backend ({}x{} @ 0x{:X})", desc.width, desc.height, desc.gpu_address);
+}
+
+void Maxwell3D::BindGuestVertexAttributes() {
+    if (!backend_) {
+        return;
+    }
+    // Build the guest vertex-attribute layout (POSITION implicit at offset 0).
+    // Conventions mirror the D3D12 default one-RasterVertex layout:
+    //   POSITION  -> offset 0, R32G32_FLOAT
+    //   TEXCOORD0 -> offset 8, R32G32B32A32_FLOAT (rgba)  [DXGI_FORMAT 28]
+    const u32 stride = std::max<u32>(24u, regs_.regs[MaxwellMethod::VertexArrayStride] & 0xFF);
+    GuestVertexAttrib attrs[2]{};
+    attrs[1].attr_index = 0;
+    attrs[1].format_id = 28; // DXGI_FORMAT_R32G32B32A32_FLOAT
+    attrs[1].offset = 8;
+    attrs[1].slot = 0;
+    attrs[1].stride = static_cast<u16>(stride);
+    attrs[1].valid = true;
+    backend_->SetGuestVertexAttributes(std::span<const GuestVertexAttrib>(attrs, 2));
+
+    // Read the guest vertex buffer from memory (bounded) and upload it.
+    const u64 va = (static_cast<u64>(regs_.regs[MaxwellMethod::VertexArrayAddressHigh]) << 32) |
+                   static_cast<u64>(regs_.regs[MaxwellMethod::VertexArrayAddressLow]);
+    if (va == 0 || !memory_) {
+        backend_->SetGuestVertexBuffer({}, stride);
+        return;
+    }
+    constexpr u32 kMaxVbBytes = 1u << 16; // safety bound
+    std::vector<u8> vb(static_cast<size_t>(stride) * 3);
+    const size_t n = std::min<size_t>(vb.size(), kMaxVbBytes);
+    vb.resize(n);
+    if (!memory_->ReadBlock(va, vb.data(), n)) {
+        backend_->SetGuestVertexBuffer({}, stride);
+        return;
+    }
+    backend_->SetGuestVertexBuffer(std::span<const u8>(vb), stride);
+    NEMU_LOG_DEBUG("GPU", "Bound guest vertex buffer to backend ({} B, stride {})", n, stride);
 }
 
 bool Maxwell3D::DecompressAstc(

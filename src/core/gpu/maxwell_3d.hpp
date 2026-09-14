@@ -35,6 +35,7 @@ namespace MaxwellMethod {
     constexpr u32 ScissorHeight = 0x0384;
     constexpr u32 VertexArrayAddressHigh = 0x0587;
     constexpr u32 VertexArrayAddressLow = 0x0588;
+    constexpr u32 VertexArrayStride = 0x0589;
     constexpr u32 IndexAddressHigh = 0x05F2;
     constexpr u32 IndexAddressLow = 0x05F3;
     constexpr u32 IndexFormat = 0x05F4;
@@ -111,6 +112,7 @@ private:
     void EmitDebugIndexedGeometry(); // stage indexed test geometry
     void BindGuestShaders(); // upload guest VS/PS bytecode to the backend
     void BindGuestTextures(); // upload guest texture binding to the backend
+    void BindGuestVertexAttributes(); // upload guest vertex layout + buffer
 
     std::shared_ptr<IGpuBackend> backend_;
     memory::VirtualMemory* memory_{nullptr};

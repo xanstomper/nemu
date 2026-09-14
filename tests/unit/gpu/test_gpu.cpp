@@ -838,6 +838,72 @@ int main() {
         std::cout << "  - Maxwell3D guest texture -> backend plumbing: PASSED" << std::endl;
     }
 
+    // 16. Test Maxwell3D guest vertex attribute + buffer -> backend (P2-4 guest)
+    {
+        struct VertexRecordingBackend final : public gpu::IGpuBackend {
+            std::shared_ptr<gpu::NullGpuBackend> raster = std::make_shared<gpu::NullGpuBackend>();
+            int attr_calls{0};
+            int vb_calls{0};
+            u32 vb_stride{0};
+            std::vector<u8> vb_data;
+
+            bool Initialize(u32 w, u32 h) override { return raster->Initialize(w, h); }
+            void Shutdown() override { raster->Shutdown(); }
+            void BeginFrame() override { raster->BeginFrame(); }
+            void EndFrame() override { raster->EndFrame(); }
+            void Present() override { raster->Present(); }
+            void SetViewport(const gpu::Viewport& v) override { raster->SetViewport(v); }
+            void SetScissor(const gpu::ScissorRect& s) override { raster->SetScissor(s); }
+            void ClearRenderTarget(const gpu::ClearColor& c) override { raster->ClearRenderTarget(c); }
+            void ClearDepthStencil(float d, u8 st) override { raster->ClearDepthStencil(d, st); }
+            void DrawArrays(gpu::PrimitiveTopology t, u32 a, u32 n) override { raster->DrawArrays(t, a, n); }
+            void DrawIndexed(gpu::PrimitiveTopology t, u32 ic, u32 fi, u32 bv) override { raster->DrawIndexed(t, ic, fi, bv); }
+            [[nodiscard]] gpu::GpuStats GetStats() const noexcept override { return raster->GetStats(); }
+            [[nodiscard]] std::string_view GetBackendName() const noexcept override { return "VertexRecordingBackend"; }
+
+            void SetGuestVertexAttributes(std::span<const gpu::GuestVertexAttrib> attrs) override {
+                ++attr_calls;
+                NEMU_TEST_ASSERT(attrs.size() >= 2 && attrs[1].valid, "TEXCOORD0 attr present");
+                NEMU_TEST_ASSERT(attrs[1].format_id == 28 && attrs[1].offset == 8, "rgba attr layout");
+            }
+            void SetGuestVertexBuffer(std::span<const u8> data, u32 stride) override {
+                ++vb_calls;
+                vb_stride = stride;
+                vb_data.assign(data.begin(), data.end());
+            }
+        };
+
+        memory::VirtualMemory vmem;
+        NEMU_TEST_ASSERT(vmem.Map(0x3000'0000ULL, 0x10000, memory::MemoryPermission::All), "Map vb mem");
+
+        auto rec = std::make_shared<VertexRecordingBackend>();
+        NEMU_TEST_ASSERT(rec->Initialize(320, 240), "vertex recording backend init");
+
+        Maxwell3D maxwell(rec);
+        maxwell.SetMemory(&vmem);
+
+        // Scratch vertex data at guest memory + a VertexArrayStride, then a draw.
+        const u64 vb_gpu = 0x3000'2000ULL;
+        const std::array<float, 9> verts{ -0.85f, -0.85f, 0.0f, 0.85f, -0.85f, 0.0f, 0.0f, 0.85f, 0.0f };
+        vmem.WriteBlock(vb_gpu, verts.data(), verts.size() * sizeof(float));
+
+        maxwell.ProcessMethod(MaxwellMethod::VertexArrayAddressHigh, static_cast<u32>(vb_gpu >> 32));
+        maxwell.ProcessMethod(MaxwellMethod::VertexArrayAddressLow, static_cast<u32>(vb_gpu & 0xFFFFFFFF));
+        maxwell.ProcessMethod(MaxwellMethod::VertexArrayStride, 24u);
+
+        rec->BeginFrame();
+        maxwell.SubmitPushbuffer(std::span<const u32>(std::array<u32, 2>{ (1u << 16) | MaxwellMethod::DrawArrays, (3u << 8) | 3u }));
+        rec->EndFrame();
+
+        NEMU_TEST_ASSERT(rec->attr_calls >= 1, "guest vertex attributes forwarded to backend");
+        NEMU_TEST_ASSERT(rec->vb_calls >= 1, "guest vertex buffer forwarded to backend");
+        NEMU_TEST_ASSERT(rec->vb_stride == 24, "guest vertex stride forwarded");
+        NEMU_TEST_ASSERT(rec->vb_data.size() >= sizeof(float) * 9, "guest vertex bytes uploaded");
+
+        rec->Shutdown();
+        std::cout << "  - Maxwell3D guest vertex attr+buffer -> backend plumbing: PASSED" << std::endl;
+    }
+
     std::cout << "[Test: Tegra X1 Maxwell GPU & Texture Pipeline PASSED]" << std::endl;
     return 0;
 }
