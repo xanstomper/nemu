@@ -2,8 +2,16 @@
 
 Goal: take Nemu from "synthetic unit tests pass" to **real Switch games are
 confirmed to work on Xbox Series S/X Developer Mode**, using engineering
-patterns proven by mature Switch emulators (Yuzu, Ryujinx), porting the *design
-techniques* (never code — both are GPL/clean-room restricted).
+patterns proven by mature Switch emulators (Yuzu, Ryujinx) and porting whatever
+the license permits.
+
+> **Licensing (see `docs/PORT_AUDIT.md`):** Nemu is GPL-3.0-or-later. That means
+> inbound **MIT/Apache/BSD** (e.g. **Ryujinx is MIT**) and **GPL-3.0** (e.g.
+> **Strato/hikari**) code may be **legally ported into Nemu** with attribution.
+> This drastically lowers the cost of closing the Tier-A gaps below — the full
+> GPU shader compiler, kernel/IPC service fidelity, and JIT backend do not have
+> to be built from scratch. Only Nintendo-proprietary material (keys/firmware/
+> assets) is off-limits; keys are user-provided at runtime (gitignored).
 
 ## 1. Reality check: what "works" means vs. what Nemu is today
 
@@ -42,10 +50,21 @@ difference.
 
 ## 3. Ranked gaps to close for a guaranteed real-game boot (and how proven code does it)
 
+> **Porting strategy (per `PORT_AUDIT.md`):** These Tier-A/B gaps map to code
+> Nemu can legally *inbound-port* rather than rewrite:
+> - **Ryujinx (MIT):** GPU shader decompiler + "theendianjon"/shader IR,
+>   `Graphics/Common` maxwell decode, **ARMeilleure** JIT (far beyond Nemu's
+>   dynarec), `HLE` service implementations, file-format/NRO-NSO-NCA parsing.
+> - **Strato/hikari (GPLv3):** kernel/IPC/FS/audio, ARM64 JIT.
+> - **MIT ASTC decoders, etc.:** texture codecs.
+> Port smallest high-value units behind Nemu's existing interfaces, add
+> `third_party/` with LICENSE/NOTICE, and rerun the per-subsystem tests — the
+> same pipeline that already keeps 27/27 green.
+
 ### Tier A — Boot-blocking (a retail title will not even reach its first frame)
-| # | Gap | Nemu today | Proven approach to port (design) |
+| # | Gap | Nemu today | Proven approach to port |
 | :--- | :--- | :--- | :--- |
-| A1 | **GPU shader compiler** | ~25 opcodes, 2D output | Full SM 5.3 (Maxwell 2G) decode → HLSL/SPIR-V, incl. control flow (BRA/predicated blocks), texture swizzles, indirect/UBO addressing, integer/bit ops. This is the largest single work item. |
+| A1 | **GPU shader compiler** | 25/41 opcodes, 2D output | Port Ryujinx Maxwell decoder + shader IR → HLSL/DXIL (MIT). Largest single item, and now a port, not a rewrite. |
 | A2 | **Maxwell3D method surface** | ~10 methods, 2D hand-fed draws | Complete method table (0x000-0xE00): blend, depth/stencil, alpha test, MSAA, scissor multi, viewport transforms, vertex formats, rasterizer config, stream-out, compute (launch grid), indirect params. |
 | A3 | **Compute / dispatch path** | absent | `DispatchCompute` + host compute PSO; games use compute for postFX, shadows, GPU particle, denoise. Without it most retail titles render black/incorrectly. |
 | A4 | **Buffer cache** (UBO/SSBO/vertex/index, CPU<->GPU sync) | vertex+index only | Full buffer-cache with dirty-range tracking + streaming, as in yuzu's BufferCache. Games use uniform buffers constantly. |
