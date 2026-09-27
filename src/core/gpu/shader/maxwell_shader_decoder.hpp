@@ -69,6 +69,30 @@ enum class MaxwellOpcode : u32 {
     AL2P,
     LD_ATTR,
     ST_ATTR,
+    // --- Extended SASS families (Tier-A1 IR layer; ported from yuzu
+    //     maxwell.inc families with HLSL emission in sass_emit_extended.inc)
+    // Integer multiply-add / immediate ALU
+    IMAD, IMAD32I, IMADSP, XMAD, IADD32I, FMUL32I, FADD32I, FFMA32I,
+    ISCADD32I, IMUL32I, LOP32I, MOV32I,
+    // Float/int compare + select
+    ICMP, FSET, FSETP, ISET, ISETP, PSET, PSETP, CSET, CSETP,
+    // Float min/max + double family (fp32-mapped)
+    DMNMX, IMNMX, DFMA, DMUL, DADD,
+    // Memory: generic + local
+    LD, LDL, STL, ST, STP, LDP,
+    // Special function + bit ops
+    MUFU, FLO, POPC, PRMT, FCHK, I2I,
+    // Interpolation + predicate plumbing
+    IPA, P2R, R2P, R2B, B2R, CS2R,
+    // Half-float family (fp32-computed)
+    HFMA2, HFMA2_32I, HADD2, HADD2_32I, HMUL2, HMUL2_32I, HSET2, HSETP2,
+    // Texture variants
+    TLDS, TLD4, TLD4S, TEX_b, TLD_b, TXD, TXD_b, TMML, TMML_b, TXA,
+    // Flow control extended
+    JMP, JMX, BRX, PBK, PCNT, PEXIT, LONGJMP, PLONGJMP, JCAL, CAL, RET,
+    PRET, RTT, BRK, CONT, SSY,
+    // Warp/consensus + barriers
+    VOTE, VOTE_vtg, BAR, DEPBAR, MEMBAR, SHFL, FSWZADD, LEA_hi, LEA_lo,
     UNKNOWN,
 };
 

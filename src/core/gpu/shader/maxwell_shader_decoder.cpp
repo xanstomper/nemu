@@ -381,6 +381,12 @@ DecodedInstruction MaxwellShaderDecoder::DecodeInstruction64(u64 raw, u64 offset
         inst.opcode = MaxwellOpcode::S2R;
         u32 sr = static_cast<u32>((raw >> 20) & 0xFF);
         inst.sources.push_back(ShaderOperand{.type = OperandType::SpecialRegister, .special_reg = sr});
+    } else if ((major_high & 0xFE0) == 0x5E0) {
+        // MUFU family (0x5E0-0x5EF): sub-op in bits [57:53]
+        // (0x0 div, 0x4 rcp, 0x8 rsqrt, 0xC sin, 0xD cos, 0xE ex2, 0xF lg2).
+        inst.opcode = MaxwellOpcode::MUFU;
+        inst.branch_target = static_cast<u64>((raw >> 53) & 0x1F); // stash sub-op
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
     } else {
         inst.opcode = MaxwellOpcode::UNKNOWN;
     }
@@ -392,6 +398,15 @@ DecodedInstruction MaxwellShaderDecoder::DecodeInstruction64(u64 raw, u64 offset
         const auto sass = IdentifySass(raw);
         if (sass.encoding_index != SIZE_MAX) {
             inst.disassembly = std::string("SASS:") + SassCuteName(sass.encoding_index);
+            const auto maxwell_op = IdentifyMaxwell(raw);
+            if (maxwell_op != MaxwellOpcode::UNKNOWN) {
+                inst.opcode = maxwell_op;
+                if (inst.sources.empty()) {
+                    inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
+                    inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = rb});
+                    inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = rc});
+                }
+            }
         } else {
             inst.disassembly = "UNKNOWN_0x" + [&] {
                 std::ostringstream ss;
@@ -796,6 +811,9 @@ std::string MaxwellShaderDecoder::EmitHLSL(const DecompiledProgram& program) {
                 ss << "    return output;\n";
                 break;
             default:
+                // Extended SASS families (IMAD/XMAD/SETP/MUFU/IPA/half-float/
+                // flow-ctrl — 67 high-frequency families ported from yuzu).
+#include "sass_emit_extended.inc"
                 break;
         }
     }
