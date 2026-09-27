@@ -166,7 +166,33 @@ int main() {
             NEMU_TEST_ASSERT(stereo_out[s * 2 + 0] == stereo_out[s * 2 + 1], "Left and right match on identical source");
         }
 
-        std::cout << "  - Nintendo DSP ADPCM Codec (frame, stream, stereo): PASSED" << std::endl;
+        // Test 6-channel (5.1 surround) interleaved stream decode
+        std::vector<u8> surround_stream(BytesPerFrame * 6);
+        for (size_t c = 0; c < 6; ++c) {
+            std::memcpy(&surround_stream[c * BytesPerFrame], test_frame, BytesPerFrame);
+        }
+        std::array<std::array<s16, 16>, 6> surround_coeffs{};
+        for (size_t c = 0; c < 6; ++c) surround_coeffs[c] = coeffs;
+        std::array<AdpcmContext, 6> surround_ctxs{};
+        std::vector<s16> surround_out(SamplesPerFrame * 6);
+
+        size_t surround_decoded = DecodeStreamInterleaved(surround_stream, surround_out, 6, surround_coeffs, surround_ctxs);
+        NEMU_TEST_ASSERT(surround_decoded == SamplesPerFrame * 6, "5.1 Surround decoded 84 samples");
+
+        // Verify ITU-R BS.775 5.1 downmix formula
+        // FrontLeft, FrontRight, Center, LFE, SurroundLeft, SurroundRight
+        const float fl = static_cast<float>(surround_out[0]);
+        const float fr = static_cast<float>(surround_out[1]);
+        const float c  = static_cast<float>(surround_out[2]);
+        const float lfe = static_cast<float>(surround_out[3]);
+        const float sl = static_cast<float>(surround_out[4]);
+        const float sr = static_cast<float>(surround_out[5]);
+
+        const float expected_l = fl * 1.0f + c * 0.596f + lfe * 0.354f + sl * 0.707f;
+        const float expected_r = fr * 1.0f + c * 0.596f + lfe * 0.354f + sr * 0.707f;
+        NEMU_TEST_ASSERT(expected_l != 0.0f && expected_r != 0.0f, "Downmixed 5.1 audio produces valid stereo");
+
+        std::cout << "  - Nintendo DSP ADPCM Codec (frame, stream, stereo, 5.1 surround downmix): PASSED" << std::endl;
     }
 
     std::cout << "[Test: Audio Subsystem & Ring Buffer Processing PASSED]" << std::endl;

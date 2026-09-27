@@ -58,13 +58,13 @@ public:
         u32 sample_rate{48000};
         u32 channels{2};
         float volume{1.0f};
-        float mix_volume[2]{1.0f, 1.0f};
+        float mix_volume[6]{1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
         vaddr_t wave_buffer_addr{0};
         size_t wave_buffer_size{0};
         size_t play_offset{0};
         audio::AudioFormat format{audio::AudioFormat::Pcm16};
-        std::array<s16, 16> adpcm_coefficients{};
-        audio::adpcm::AdpcmContext adpcm_context[2]{};
+        std::array<s16, 96> adpcm_coefficients{};
+        audio::adpcm::AdpcmContext adpcm_context[6]{};
     };
 
     static constexpr size_t kMaxVoices = 32;

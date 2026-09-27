@@ -27,6 +27,11 @@
 #include "core/kernel/ipc/nifm_service.hpp"
 #include "core/kernel/ipc/caps_service.hpp"
 #include "core/kernel/ipc/bpc_service.hpp"
+#include "core/kernel/ipc/aoc_service.hpp"
+#include "core/kernel/ipc/apm_service.hpp"
+#include "core/kernel/ipc/pctl_service.hpp"
+#include "core/kernel/ipc/prepo_service.hpp"
+#include "core/kernel/ipc/friend_service.hpp"
 #include "core/filesystem/vfs.hpp"
 #include "core/audio/null_audio_backend.hpp"
 #include "core/gpu/null_backend.hpp"
@@ -1258,6 +1263,148 @@ static void TestCapsAndBpcServices() {
     std::cout << "  PASSED.\n";
 }
 
+static void TestAocApmPctlPrepoFriendServices() {
+    std::cout << "[Test: AOC, APM, PCTL, PREPO, FRIEND HLE Services]\n";
+
+    KHandleTable handle_table;
+    IpcContext ctx{
+        .handle_table = &handle_table,
+        .memory = nullptr,
+        .registry = nullptr,
+    };
+
+    // 1. Test aoc:u
+    {
+        AocService aoc("aoc:u");
+        aoc.SetDlcCount(5);
+
+        u8 req_buf[ipc::IpcBufferSize]{};
+        IpcRequestReader req(req_buf);
+        u8 reply_buf[ipc::IpcBufferSize]{};
+        IpcReplyWriter reply(reply_buf);
+
+        u32 res = aoc.HandleRequest(ctx, req, reply, AocService::CountAddOnContent);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        u32 count = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(count == 5);
+
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = aoc.HandleRequest(ctx, req, reply, AocService::GetAddOnContentBaseId);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        u64 base_id = *reinterpret_cast<const u64*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 8);
+        NEMU_IPC_ASSERT(base_id == 0x0100000000010000ULL);
+
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = aoc.HandleRequest(ctx, req, reply, AocService::GetAddOnContentListChangedEvent);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        Handle evt = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(evt != 0);
+    }
+
+    // 2. Test apm
+    {
+        ApmService apm("apm");
+        u8 req_buf[ipc::IpcBufferSize]{};
+        IpcRequestReader req(req_buf);
+        u8 reply_buf[ipc::IpcBufferSize]{};
+        IpcReplyWriter reply(reply_buf);
+
+        u32 res = apm.HandleRequest(ctx, req, reply, AocService::CountAddOnContentByApplicationId /* OpenSession is 0 */);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        Handle sess_handle = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(sess_handle != 0);
+
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = apm.HandleRequest(ctx, req, reply, ApmService::GetPerformanceMode);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        u32 mode = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(mode == static_cast<u32>(PerformanceMode::Docked));
+    }
+
+    // 3. Test pctl
+    {
+        PctlService pctl("pctl");
+        u8 req_buf[ipc::IpcBufferSize]{};
+        IpcRequestReader req(req_buf);
+        u8 reply_buf[ipc::IpcBufferSize]{};
+        IpcReplyWriter reply(reply_buf);
+
+        u32 res = pctl.HandleRequest(ctx, req, reply, PctlService::CreateService);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        Handle pctl_handle = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(pctl_handle != 0);
+
+        auto pctl_session = handle_table.GetObject<KClientSession>(pctl_handle);
+        NEMU_IPC_ASSERT(pctl_session != nullptr);
+
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = pctl_session->GetService()->HandleRequest(ctx, req, reply, ParentalControlSubService::IsRestrictionEnabled);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        u8 enabled = reply_buf[static_cast<size_t>(IpcField::Payload) + 4];
+        NEMU_IPC_ASSERT(enabled == 0);
+    }
+
+    // 4. Test prepo
+    {
+        PrepoService prepo("prepo:u");
+        u8 req_buf[ipc::IpcBufferSize]{};
+        IpcRequestReader req(req_buf);
+        u8 reply_buf[ipc::IpcBufferSize]{};
+        IpcReplyWriter reply(reply_buf);
+
+        u32 res = prepo.HandleRequest(ctx, req, reply, PrepoService::SaveReport);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        NEMU_IPC_ASSERT(prepo.GetReportCount() == 1);
+
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = prepo.HandleRequest(ctx, req, reply, PrepoService::GetSystemSessionId);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        u64 sess_id = *reinterpret_cast<const u64*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 8);
+        NEMU_IPC_ASSERT(sess_id != 0);
+    }
+
+    // 5. Test friend
+    {
+        FriendService friend_svc("friend:u");
+        u8 req_buf[ipc::IpcBufferSize]{};
+        IpcRequestReader req(req_buf);
+        u8 reply_buf[ipc::IpcBufferSize]{};
+        IpcReplyWriter reply(reply_buf);
+
+        u32 res = friend_svc.HandleRequest(ctx, req, reply, FriendService::CreateFriendService);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        Handle friend_handle = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(friend_handle != 0);
+
+        auto friend_session = handle_table.GetObject<KClientSession>(friend_handle);
+        NEMU_IPC_ASSERT(friend_session != nullptr);
+
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = friend_session->GetService()->HandleRequest(ctx, req, reply, FriendSubService::CheckFriendListAvailability);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        u8 avail = reply_buf[static_cast<size_t>(IpcField::Payload) + 4];
+        NEMU_IPC_ASSERT(avail == 1);
+    }
+
+    // 6. Test Default Registry has all services
+    {
+        auto reg = CreateDefaultServiceRegistry(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+        NEMU_IPC_ASSERT(reg->CreatePort("aoc:u") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("aoc:s") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("apm") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("apm:p") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("apm:sys") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("pctl") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("pctl:a") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("prepo:u") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("prepo:a") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("friend:u") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("friend:v") != std::nullopt);
+    }
+
+    std::cout << "  PASSED.\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "   NEMU HORIZON OS IPC ENGINE TESTS     \n";
@@ -1280,6 +1427,7 @@ int main() {
     TestPlService();
     TestNifmService();
     TestCapsAndBpcServices();
+    TestAocApmPctlPrepoFriendServices();
     TestServiceBootstrap();
     TestDomainsAndBufferDescriptors();
 

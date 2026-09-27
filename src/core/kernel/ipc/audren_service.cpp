@@ -190,38 +190,77 @@ u32 AudioRendererService::HandleRequest(
 
                             s16 pcm_l = 0;
                             s16 pcm_r = 0;
+                            float vol_l = voice.volume;
+                            float vol_r = voice.volume;
+
                             if (ctx.memory) {
-                                u8 frame_l[audio::adpcm::BytesPerFrame]{};
-                                (void)ctx.memory->ReadBlock(voice.wave_buffer_addr + frame_byte_offset, frame_l, sizeof(frame_l));
-                                const u8 scale_l = frame_l[0] & 0x0F;
-                                const size_t coeff_idx_l = static_cast<size_t>((frame_l[0] >> 4) & 0x07);
-                                const s32 c0_l = voice.adpcm_coefficients[coeff_idx_l * 2 + 0];
-                                const s32 c1_l = voice.adpcm_coefficients[coeff_idx_l * 2 + 1];
-
                                 const size_t byte_pos = 1 + (sample_in_frame / 2);
-                                const u8 byte_val_l = frame_l[byte_pos];
-                                const u8 nibble_l = (sample_in_frame % 2 == 0) ? static_cast<u8>((byte_val_l >> 4) & 0x0F) : static_cast<u8>(byte_val_l & 0x0F);
-                                pcm_l = audio::adpcm::DecodeSample(audio::adpcm::SignExtendNibble(nibble_l), scale_l, c0_l, c1_l, voice.adpcm_context[0]);
 
-                                if (voice.channels > 1) {
-                                    u8 frame_r[audio::adpcm::BytesPerFrame]{};
-                                    (void)ctx.memory->ReadBlock(voice.wave_buffer_addr + frame_byte_offset + audio::adpcm::BytesPerFrame, frame_r, sizeof(frame_r));
-                                    const u8 scale_r = frame_r[0] & 0x0F;
-                                    const size_t coeff_idx_r = static_cast<size_t>((frame_r[0] >> 4) & 0x07);
-                                    const s32 c0_r = voice.adpcm_coefficients[coeff_idx_r * 2 + 0];
-                                    const s32 c1_r = voice.adpcm_coefficients[coeff_idx_r * 2 + 1];
+                                if (voice.channels >= 6) {
+                                    // 6-channel 5.1 downmixing (SMPTE: FL, FR, Center, LFE, SurroundL, SurroundR)
+                                    s16 ch_samples[6]{};
+                                    for (size_t c = 0; c < 6; ++c) {
+                                        u8 frame[audio::adpcm::BytesPerFrame]{};
+                                        (void)ctx.memory->ReadBlock(voice.wave_buffer_addr + frame_byte_offset + c * audio::adpcm::BytesPerFrame, frame, sizeof(frame));
+                                        const u8 scale = frame[0] & 0x0F;
+                                        const size_t coeff_idx = static_cast<size_t>((frame[0] >> 4) & 0x07);
+                                        const s32 c0 = voice.adpcm_coefficients[c * 16 + coeff_idx * 2 + 0];
+                                        const s32 c1 = voice.adpcm_coefficients[c * 16 + coeff_idx * 2 + 1];
 
-                                    const u8 byte_val_r = frame_r[byte_pos];
-                                    const u8 nibble_r = (sample_in_frame % 2 == 0) ? static_cast<u8>((byte_val_r >> 4) & 0x0F) : static_cast<u8>(byte_val_r & 0x0F);
-                                    pcm_r = audio::adpcm::DecodeSample(audio::adpcm::SignExtendNibble(nibble_r), scale_r, c0_r, c1_r, voice.adpcm_context[1]);
+                                        const u8 byte_val = frame[byte_pos];
+                                        const u8 nibble = (sample_in_frame % 2 == 0) ? static_cast<u8>((byte_val >> 4) & 0x0F) : static_cast<u8>(byte_val & 0x0F);
+                                        ch_samples[c] = audio::adpcm::DecodeSample(audio::adpcm::SignExtendNibble(nibble), scale, c0, c1, voice.adpcm_context[c]);
+                                    }
+
+                                    constexpr float kCoeffFL_FR = 1.0f;
+                                    constexpr float kCoeffCenter = 0.596f;
+                                    constexpr float kCoeffLFE = 0.354f;
+                                    constexpr float kCoeffSurround = 0.707f;
+
+                                    const float left_mix = (ch_samples[0] * kCoeffFL_FR * voice.mix_volume[0]) +
+                                                           (ch_samples[2] * kCoeffCenter * voice.mix_volume[2]) +
+                                                           (ch_samples[3] * kCoeffLFE * voice.mix_volume[3]) +
+                                                           (ch_samples[4] * kCoeffSurround * voice.mix_volume[4]);
+
+                                    const float right_mix = (ch_samples[1] * kCoeffFL_FR * voice.mix_volume[1]) +
+                                                            (ch_samples[2] * kCoeffCenter * voice.mix_volume[2]) +
+                                                            (ch_samples[3] * kCoeffLFE * voice.mix_volume[3]) +
+                                                            (ch_samples[5] * kCoeffSurround * voice.mix_volume[5]);
+
+                                    pcm_l = static_cast<s16>(std::clamp(static_cast<s32>(left_mix), -32768, 32767));
+                                    pcm_r = static_cast<s16>(std::clamp(static_cast<s32>(right_mix), -32768, 32767));
                                 } else {
-                                    pcm_r = pcm_l;
+                                    u8 frame_l[audio::adpcm::BytesPerFrame]{};
+                                    (void)ctx.memory->ReadBlock(voice.wave_buffer_addr + frame_byte_offset, frame_l, sizeof(frame_l));
+                                    const u8 scale_l = frame_l[0] & 0x0F;
+                                    const size_t coeff_idx_l = static_cast<size_t>((frame_l[0] >> 4) & 0x07);
+                                    const s32 c0_l = voice.adpcm_coefficients[coeff_idx_l * 2 + 0];
+                                    const s32 c1_l = voice.adpcm_coefficients[coeff_idx_l * 2 + 1];
+
+                                    const u8 byte_val_l = frame_l[byte_pos];
+                                    const u8 nibble_l = (sample_in_frame % 2 == 0) ? static_cast<u8>((byte_val_l >> 4) & 0x0F) : static_cast<u8>(byte_val_l & 0x0F);
+                                    pcm_l = audio::adpcm::DecodeSample(audio::adpcm::SignExtendNibble(nibble_l), scale_l, c0_l, c1_l, voice.adpcm_context[0]);
+
+                                    if (voice.channels > 1) {
+                                        u8 frame_r[audio::adpcm::BytesPerFrame]{};
+                                        (void)ctx.memory->ReadBlock(voice.wave_buffer_addr + frame_byte_offset + audio::adpcm::BytesPerFrame, frame_r, sizeof(frame_r));
+                                        const u8 scale_r = frame_r[0] & 0x0F;
+                                        const size_t coeff_idx_r = static_cast<size_t>((frame_r[0] >> 4) & 0x07);
+                                        const s32 c0_r = voice.adpcm_coefficients[coeff_idx_r * 2 + 0];
+                                        const s32 c1_r = voice.adpcm_coefficients[coeff_idx_r * 2 + 1];
+
+                                        const u8 byte_val_r = frame_r[byte_pos];
+                                        const u8 nibble_r = (sample_in_frame % 2 == 0) ? static_cast<u8>((byte_val_r >> 4) & 0x0F) : static_cast<u8>(byte_val_r & 0x0F);
+                                        pcm_r = audio::adpcm::DecodeSample(audio::adpcm::SignExtendNibble(nibble_r), scale_r, c0_r, c1_r, voice.adpcm_context[1]);
+                                    } else {
+                                        pcm_r = pcm_l;
+                                    }
+                                    vol_l *= voice.mix_volume[0];
+                                    vol_r *= voice.mix_volume[1];
                                 }
                             }
                             voice.play_offset++;
 
-                            const float vol_l = voice.volume * voice.mix_volume[0];
-                            const float vol_r = voice.volume * voice.mix_volume[1];
                             const s32 mixed_l = frames[i].left + static_cast<s32>(pcm_l * vol_l);
                             const s32 mixed_r = frames[i].right + static_cast<s32>(pcm_r * vol_r);
                             frames[i].left = static_cast<s16>(std::clamp(mixed_l, -32768, 32767));
@@ -237,18 +276,51 @@ u32 AudioRendererService::HandleRequest(
 
                             s16 pcm_l = 0;
                             s16 pcm_r = 0;
+                            float vol_l = voice.volume;
+                            float vol_r = voice.volume;
+
                             if (ctx.memory) {
-                                (void)ctx.memory->ReadBlock(voice.wave_buffer_addr + voice.play_offset, &pcm_l, sizeof(s16));
-                                if (voice.channels > 1) {
-                                    (void)ctx.memory->ReadBlock(voice.wave_buffer_addr + voice.play_offset + sizeof(s16), &pcm_r, sizeof(s16));
+                                if (voice.channels >= 6) {
+                                    // 6-channel 5.1 downmixing (SMPTE: FL, FR, Center, LFE, SurroundL, SurroundR)
+                                    s16 ch[6]{};
+                                    (void)ctx.memory->ReadBlock(voice.wave_buffer_addr + voice.play_offset, ch, sizeof(ch));
+                                    const float fl  = static_cast<float>(ch[0]);
+                                    const float fr  = static_cast<float>(ch[1]);
+                                    const float c   = static_cast<float>(ch[2]);
+                                    const float lfe = static_cast<float>(ch[3]);
+                                    const float sl  = static_cast<float>(ch[4]);
+                                    const float sr  = static_cast<float>(ch[5]);
+
+                                    constexpr float kCoeffFL_FR = 1.0f;
+                                    constexpr float kCoeffCenter = 0.596f;
+                                    constexpr float kCoeffLFE = 0.354f;
+                                    constexpr float kCoeffSurround = 0.707f;
+
+                                    const float left_mix = (fl * kCoeffFL_FR * voice.mix_volume[0]) +
+                                                           (c  * kCoeffCenter * voice.mix_volume[2]) +
+                                                           (lfe * kCoeffLFE * voice.mix_volume[3]) +
+                                                           (sl * kCoeffSurround * voice.mix_volume[4]);
+
+                                    const float right_mix = (fr * kCoeffFL_FR * voice.mix_volume[1]) +
+                                                            (c  * kCoeffCenter * voice.mix_volume[2]) +
+                                                            (lfe * kCoeffLFE * voice.mix_volume[3]) +
+                                                            (sr * kCoeffSurround * voice.mix_volume[5]);
+
+                                    pcm_l = static_cast<s16>(std::clamp(static_cast<s32>(left_mix), -32768, 32767));
+                                    pcm_r = static_cast<s16>(std::clamp(static_cast<s32>(right_mix), -32768, 32767));
                                 } else {
-                                    pcm_r = pcm_l;
+                                    (void)ctx.memory->ReadBlock(voice.wave_buffer_addr + voice.play_offset, &pcm_l, sizeof(s16));
+                                    if (voice.channels > 1) {
+                                        (void)ctx.memory->ReadBlock(voice.wave_buffer_addr + voice.play_offset + sizeof(s16), &pcm_r, sizeof(s16));
+                                    } else {
+                                        pcm_r = pcm_l;
+                                    }
+                                    vol_l *= voice.mix_volume[0];
+                                    vol_r *= voice.mix_volume[1];
                                 }
                             }
                             voice.play_offset += bytes_per_frame;
 
-                            const float vol_l = voice.volume * voice.mix_volume[0];
-                            const float vol_r = voice.volume * voice.mix_volume[1];
                             const s32 mixed_l = frames[i].left + static_cast<s32>(pcm_l * vol_l);
                             const s32 mixed_r = frames[i].right + static_cast<s32>(pcm_r * vol_r);
                             frames[i].left = static_cast<s16>(std::clamp(mixed_l, -32768, 32767));

@@ -17,6 +17,11 @@
 #include "ldn_service.hpp"
 #include "caps_service.hpp"
 #include "bpc_service.hpp"
+#include "aoc_service.hpp"
+#include "apm_service.hpp"
+#include "pctl_service.hpp"
+#include "prepo_service.hpp"
+#include "friend_service.hpp"
 #include "core/network/ldn_network.hpp"
 
 #include "core/gpu/gpu_interface.hpp"
@@ -87,6 +92,30 @@ std::shared_ptr<ServiceRegistry> CreateDefaultServiceRegistry(
     registry->Register(std::make_shared<BpcService>("bpc:b"));
     registry->Register(std::make_shared<BpcService>("bpc:w"));
     registry->Register(std::make_shared<BpcService>("bpc:ams"));
+
+    // Add-On Content / DLC services (aoc:u, aoc:s)
+    registry->Register(std::make_shared<AocService>("aoc:u"));
+    registry->Register(std::make_shared<AocService>("aoc:s"));
+
+    // Application Performance Management services (apm, apm:p, apm:sys)
+    registry->Register(std::make_shared<ApmService>("apm"));
+    registry->Register(std::make_shared<ApmService>("apm:p"));
+    registry->Register(std::make_shared<ApmSysService>("apm:sys"));
+
+    // Parental Control services (pctl, pctl:a, pctl:s, pctl:r)
+    registry->Register(std::make_shared<PctlService>("pctl"));
+    registry->Register(std::make_shared<PctlService>("pctl:a"));
+    registry->Register(std::make_shared<PctlService>("pctl:s"));
+    registry->Register(std::make_shared<PctlService>("pctl:r"));
+
+    // Play Report / Telemetry services (prepo:u, prepo:a, prepo:m)
+    registry->Register(std::make_shared<PrepoService>("prepo:u"));
+    registry->Register(std::make_shared<PrepoService>("prepo:a"));
+    registry->Register(std::make_shared<PrepoService>("prepo:m"));
+
+    // Friend / Social services (friend:u, friend:v)
+    registry->Register(std::make_shared<FriendService>("friend:u"));
+    registry->Register(std::make_shared<FriendService>("friend:v"));
 
     // File system service.
     if (vfs) {
