@@ -408,3 +408,18 @@ target_link_libraries(test_emulator PRIVATE
 
 target_compile_features(test_emulator PRIVATE cxx_std_20)
 add_test(NAME test_emulator COMMAND test_emulator)
+
+add_executable(test_tier_a
+    gpu/test_tier_a.cpp
+)
+
+target_include_directories(test_tier_a PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_tier_a PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_tier_a PRIVATE cxx_std_20)
+add_test(NAME test_tier_a COMMAND test_tier_a)
