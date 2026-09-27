@@ -56,10 +56,30 @@ void Bc1Encoder::PickEndpoints(std::span<const u8, 64> rgba_block, u16& c0, u16&
 }
 
 Bc1Encoder::Block Bc1Encoder::EncodeBlock(std::span<const u8, 64> rgba_block) {
+    // Determine whether this block needs an alpha/transparent slot. A block is
+    // "alpha" if any pixel is transparent (< 8 alpha). Such blocks use BC1's
+    // 3-color + 1-transparent punch-through mode (signalled by c0 < c1), where
+    // index 3 renders transparent. Opaque blocks use 4-color mode (c0 >= c1),
+    // preserving 2 interpolated shades. This preserves sprite/UI alpha with no
+    // memory cost vs BC3 (still 8 bytes/block).
+    bool needs_alpha = false;
+    for (u32 i = 0; i < 16; ++i) {
+        if (rgba_block[i * 4 + 3] < 8) { needs_alpha = true; break; }
+    }
+
     u16 c0 = 0, c1 = 0;
     PickEndpoints(rgba_block, c0, c1);
 
-    // Build the 4-color palette (BC1: c0, c1, 2/3 c0 + 1/3 c1, 1/3 c0 + 2/3 c1).
+    if (needs_alpha) {
+        // 3-color mode: c0 must be < c1. PickEndpoints returns c0 >= c1 for the
+        // 4-color layout; swap so the decoder reads it as punch-through.
+        std::swap(c0, c1);
+    } else {
+        // 4-color mode: keep c0 >= c1 (PickEndpoints already guarantees it).
+    }
+
+    // Build the palette. For alpha blocks the decoder uses only colors 0,1,2
+    // (3-color) and index 3 = transparent; for opaque it uses all 4.
     std::array<std::array<u8, 3>, 4> palette{};
     Unpack565(c0, palette[0][0], palette[0][1], palette[0][2]);
     Unpack565(c1, palette[1][0], palette[1][1], palette[1][2]);
@@ -71,9 +91,16 @@ Bc1Encoder::Block Bc1Encoder::EncodeBlock(std::span<const u8, 64> rgba_block) {
     u32 indices = 0;
     for (u32 i = 0; i < 16; ++i) {
         const u8* px = rgba_block.data() + i * 4;
-        // Nearest palette color (squared error).
+        // Transparent pixels -> index 3 (the alpha slot) regardless of color.
+        if (needs_alpha && px[3] < 8) {
+            indices |= 3u << (2 * i);
+            continue;
+        }
+        // Nearest palette color among {0,1,2} for alpha blocks (index 3 is the
+        // transparent hole), all 4 for opaque blocks.
         u32 best = 0, best_err = 0xFFFFFFFFu;
-        for (u32 p = 0; p < 4; ++p) {
+        const u32 limit = needs_alpha ? 3u : 4u;
+        for (u32 p = 0; p < limit; ++p) {
             const int dr = px[0] - palette[p][0];
             const int dg = px[1] - palette[p][1];
             const int db = px[2] - palette[p][2];

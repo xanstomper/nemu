@@ -13,6 +13,7 @@
 #include "core/gpu/shader/sass_identifier.hpp"
 #include "core/memory/virtual_memory.hpp"
 #include <iostream>
+#include <array>
 #include <vector>
 #include <cstring>
 #include <cstdlib>
@@ -414,6 +415,47 @@ void TestBc1Encoder() {
 }
 
 // ---------------------------------------------------------------------------
+// BC1 alpha-aware emission (Tier-B1 x2): a block containing transparent pixels
+// must use the 3-color+1-transparent punch-through mode (c0 < c1, index 3 =
+// transparent) so UI sprites keep their alpha with no BC3 memory cost.
+// ---------------------------------------------------------------------------
+void TestBc1EncoderAlpha() {
+    using namespace nemu::core::gpu::texture;
+
+    // Fully opaque block: must stay 4-color mode (c0 >= c1) and no index 3.
+    std::array<u8, 64> opaque{};
+    for (u32 px = 0; px < 16; ++px) {
+        opaque[px * 4 + 0] = 200; // R
+        opaque[px * 4 + 1] = 100; // G
+        opaque[px * 4 + 2] = 50;  // B
+        opaque[px * 4 + 3] = 255; // A
+    }
+    auto b = Bc1Encoder::EncodeBlock(opaque);
+    NEMU_TEST_ASSERT(b.color0 >= b.color1, "opaque block uses 4-color mode (c0>=c1)");
+    bool used_idx3 = false;
+    for (u32 px = 0; px < 16; ++px) if (((b.indices >> (2 * px)) & 3) == 3) used_idx3 = true;
+    NEMU_TEST_ASSERT(!used_idx3, "opaque block never uses the transparent index");
+
+    // Alpha block: 3 clear pixels + 1 fully transparent pixel.
+    std::array<u8, 64> alpha{};
+    alpha.fill(255);
+    for (u32 px = 0; px < 3; ++px) {
+        alpha[px * 4 + 0] = 10; alpha[px * 4 + 1] = 20; alpha[px * 4 + 2] = 30;
+    }
+    // Pixel 15 (last) transparent.
+    alpha[15 * 4 + 3] = 0;
+    auto ba = Bc1Encoder::EncodeBlock(alpha);
+    NEMU_TEST_ASSERT(ba.color0 < ba.color1, "alpha block uses punch-through mode (c0<c1)");
+    NEMU_TEST_ASSERT((((ba.indices >> (2 * 15)) & 3) == 3),
+                     "transparent pixel maps to the transparent index 3");
+
+    // block size stays 8 bytes (no BC3 doubling).
+    NEMU_TEST_ASSERT(sizeof(Bc1Encoder::Block) == 8, "alpha block is still 8 bytes");
+
+    std::cout << "  BC1 encoder alpha PASS\n";
+}
+
+// ---------------------------------------------------------------------------
 // TextureCache BC1 integration (Tier-B1 wired): ASTC input -> BC1 host storage
 // ---------------------------------------------------------------------------
 void TestTextureCacheBc1Integration() {
@@ -771,6 +813,7 @@ int main() {
     TestExpandedMaxwell3D();
     TestExpandedShaderDecoder();
     TestBc1Encoder();
+    TestBc1EncoderAlpha();
     TestTextureCacheBc1Integration();
     TestPresentOptimizerPipeline();
     TestSassIdentifier();
