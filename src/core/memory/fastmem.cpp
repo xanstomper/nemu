@@ -1,4 +1,5 @@
 #include "fastmem.hpp"
+#include "memory_budget.hpp"
 #include "platform/logger.hpp"
 
 #if defined(_WIN32)
@@ -125,6 +126,9 @@ bool FastmemManager::Commit(vaddr_t address, size_t size, MemoryPermission perms
     }
 
     void* ptr = VirtualAlloc(base_pointer_ + address, size, MEM_COMMIT, win_prot);
+    if (ptr) {
+        MemoryBudget::AccrueCommitted(static_cast<s64>(size));
+    }
     return ptr != nullptr;
 #else
     int prot = PROT_NONE;
@@ -132,7 +136,12 @@ bool FastmemManager::Commit(vaddr_t address, size_t size, MemoryPermission perms
     if (HasPermission(perms, MemoryPermission::Write))   prot |= PROT_WRITE;
     if (HasPermission(perms, MemoryPermission::Execute)) prot |= PROT_EXEC;
 
-    return mprotect(base_pointer_ + address, size, prot) == 0;
+    const bool ret = mprotect(base_pointer_ + address, size, prot) == 0;
+    if (ret) {
+        // Linux mmap commit is implicit; account the reservation-side growth.
+        MemoryBudget::AccrueCommitted(static_cast<s64>(size));
+    }
+    return ret;
 #endif
 }
 
@@ -147,10 +156,15 @@ bool FastmemManager::Decommit(vaddr_t address, size_t size) {
     }
 
 #if defined(_WIN32)
-    return VirtualFree(base_pointer_ + address, size, MEM_DECOMMIT) != 0;
+    const bool ret = VirtualFree(base_pointer_ + address, size, MEM_DECOMMIT) != 0;
+    if (ret) {
+        MemoryBudget::AccrueCommitted(-static_cast<s64>(size));
+    }
+    return ret;
 #else
     mprotect(base_pointer_ + address, size, PROT_NONE);
     madvise(base_pointer_ + address, size, MADV_DONTNEED);
+    MemoryBudget::AccrueCommitted(-static_cast<s64>(size));
     return true;
 #endif
 }

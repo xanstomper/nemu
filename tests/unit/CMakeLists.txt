@@ -423,3 +423,18 @@ target_link_libraries(test_tier_a PRIVATE
 
 target_compile_features(test_tier_a PRIVATE cxx_std_20)
 add_test(NAME test_tier_a COMMAND test_tier_a)
+
+add_executable(test_memory_budget
+    memory/test_memory_budget.cpp
+)
+
+target_include_directories(test_memory_budget PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_memory_budget PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_memory_budget PRIVATE cxx_std_20)
+add_test(NAME test_memory_budget COMMAND test_memory_budget)

@@ -182,6 +182,10 @@ public:
         bool emulator_running{false};
         std::string backend_name{"-"};
         std::string audio_backend_name{"-"};
+        // Xbox Dev Mode 5 GiB RAM budget visibility (Tier-C3).
+        u64 mem_used_bytes{0};
+        u64 mem_peak_bytes{0};
+        u64 mem_cap_bytes{0};
     };
     void PushDiagnostics(const LiveDiagnostics& d) noexcept { live_diag_ = d; }
     [[nodiscard]] const LiveDiagnostics& GetDiagnostics() const noexcept { return live_diag_; }

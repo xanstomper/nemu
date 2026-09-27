@@ -8,6 +8,7 @@ add_library(Nemu.Memory STATIC
     fastmem_exception_handler.cpp
     address_space.hpp
     address_space.cpp
+    memory_budget.hpp
 )
 
 target_include_directories(Nemu.Memory PUBLIC

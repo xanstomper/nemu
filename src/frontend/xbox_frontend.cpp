@@ -2560,6 +2560,16 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
         opts.push_back({"JIT Blocks Compiled / Executed", kfmt(d.jit_blocks_compiled) + " / " + kfmt(d.jit_blocks_executed), "Dynamic recompiler block statistics"});
         opts.push_back({"GPU Backend", d.backend_name + " - " + std::to_string(d.gpu_draw_calls) + " draws, " + std::to_string(d.gpu_frames_presented) + " frames", "Active rendering pipeline"});
         opts.push_back({"Audio Backend", d.audio_backend_name, "Active audio output device"});
+        // Xbox Dev Mode 5 GiB RAM budget
+        {
+            auto fmt_mib = [](u64 b) -> std::string {
+                return std::to_string(b / (1024 * 1024)) + " MiB";
+            };
+            opts.push_back({"RAM Used / Peak (5 GiB cap)",
+                            fmt_mib(d.mem_used_bytes) + " / " + fmt_mib(d.mem_peak_bytes),
+                            "Estimated committed vs Xbox Dev Mode process budget (~" +
+                            std::to_string(d.mem_cap_bytes / (1024 * 1024)) + " MiB)"});
+        }
     }
 
     for (size_t r = 0; r < opts.size(); ++r) {

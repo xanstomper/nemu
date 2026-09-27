@@ -1,5 +1,6 @@
 #include "platform/logger.hpp"
 #include "core/system/emulator.hpp"
+#include "core/memory/memory_budget.hpp"
 #include "frontend/xbox_frontend.hpp"
 #include <iostream>
 #include <string>
@@ -430,6 +431,10 @@ int main(int argc, char** argv) {
             if (auto audio = emulator.GetAudioBackend()) {
                 d.audio_backend_name = std::string(audio->GetBackendName());
             }
+            // Xbox Dev Mode 5 GiB RAM budget visibility (Tier-C3).
+            d.mem_used_bytes = memory::MemoryBudget::TotalEstimated();
+            d.mem_peak_bytes = memory::MemoryBudget::Peak();
+            d.mem_cap_bytes = memory::MemoryBudget::kXboxDevCapBytes;
             frontend.PushDiagnostics(d);
         }
         ++ui_frames;
