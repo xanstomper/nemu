@@ -27,31 +27,73 @@ void Maxwell3D::InitializeRegisterDefaults() {
     regs_.SetFloat(MaxwellMethod::ViewportDepthRangeNear, 0.0f);
     regs_.SetFloat(MaxwellMethod::ViewportDepthRangeFar, 1.0f);
 
+    // Depth bounds: default 0.0f .. 1.0f, disabled
+    regs_.SetFloat(MaxwellMethod::DepthBoundsNear, 0.0f);
+    regs_.SetFloat(MaxwellMethod::DepthBoundsFar, 1.0f);
+    regs_.regs[MaxwellMethod::DepthBoundsEnable] = 0;
+
     // Blend defaults: Add, One, Zero (D3D-style equation encoding).
     regs_.regs[MaxwellMethod::BlendEquationRgb] = 1; // Add
     regs_.regs[MaxwellMethod::BlendEnablePerRT0] = 0;
+    regs_.regs[MaxwellMethod::BlendPerTargetEnabled] = 0;
+    regs_.SetFloat(MaxwellMethod::BlendColorR, 0.0f);
+    regs_.SetFloat(MaxwellMethod::BlendColorG, 0.0f);
+    regs_.SetFloat(MaxwellMethod::BlendColorB, 0.0f);
+    regs_.SetFloat(MaxwellMethod::BlendColorA, 0.0f);
 
     // Stencil: Keep/Keep/Keep ops, Always func, full masks (GL encoding).
     regs_.regs[MaxwellMethod::StencilEnable] = 1;
+    regs_.regs[MaxwellMethod::StencilEnableHw] = 1;
     regs_.regs[MaxwellMethod::StencilFrontOpFail] = 1;     // Keep
+    regs_.regs[MaxwellMethod::StencilFrontOpFailHw] = 1;   // Keep
     regs_.regs[MaxwellMethod::StencilFrontOpZfail] = 1;    // Keep
     regs_.regs[MaxwellMethod::StencilFrontOpZpass] = 1;    // Keep
     regs_.regs[MaxwellMethod::StencilFrontFuncRef] = 0;
     regs_.regs[MaxwellMethod::StencilFrontFuncMask] = 0xFFFFFFFFu;
     regs_.regs[MaxwellMethod::StencilFrontMask] = 0xFFFFFFFFu;
+    regs_.regs[MaxwellMethod::StencilFrontRefHw] = 0;
+    regs_.regs[MaxwellMethod::StencilFrontFuncMaskHw] = 0xFFFFFFFFu;
+    regs_.regs[MaxwellMethod::StencilFrontMaskHw] = 0xFFFFFFFFu;
+    regs_.regs[MaxwellMethod::StencilTwoSideEnable] = 1;
+    regs_.regs[MaxwellMethod::StencilBackRef] = 0;
+    regs_.regs[MaxwellMethod::StencilBackMask] = 0xFFFFFFFFu;
+    regs_.regs[MaxwellMethod::StencilBackFuncMask] = 0xFFFFFFFFu;
 
     // Depth test func = Always (GL encoding: Always = 0x207 -> our 7 encoding).
     regs_.regs[MaxwellMethod::DepthFunc] = 7;
+    regs_.regs[MaxwellMethod::DepthFuncHw] = 7;
     regs_.regs[MaxwellMethod::DepthTestEnable] = 0; // disabled until guest sets it
+    regs_.regs[MaxwellMethod::DepthTestEnableHw] = 0;
     regs_.regs[MaxwellMethod::DepthWriteEnable] = 1;
+    regs_.regs[MaxwellMethod::DepthWriteEnableHw] = 1;
 
     // Front face CCW (0), cull face Back (1), culling disabled by default.
     regs_.regs[MaxwellMethod::FrontFace] = 0;
+    regs_.regs[MaxwellMethod::GlFrontFace] = 0;
     regs_.regs[MaxwellMethod::CullFace] = 1;
+    regs_.regs[MaxwellMethod::GlCullFace] = 1;
     regs_.regs[MaxwellMethod::CullFaceEnable] = 0;
+    regs_.regs[MaxwellMethod::GlCullTestEnabled] = 0;
 
     // Point size default 1.0 (OpenGL default).
     regs_.SetFloat(MaxwellMethod::PointSize, 1.0f);
+    regs_.SetFloat(MaxwellMethod::PointSizeHw, 1.0f);
+
+    // Color masks (Sonic Mania / yuzu boot requirement: all components enabled).
+    regs_.regs[MaxwellMethod::ColorMaskCommon] = 0x1111;
+    for (u32 i = 0; i < 8; ++i) {
+        regs_.regs[MaxwellMethod::ColorMaskRT0 + i] = 0x1111;
+    }
+    regs_.regs[MaxwellMethod::ColorTargetMrtEnable] = 1;
+
+    // Rasterize enable, Line width, Polygon modes
+    regs_.regs[MaxwellMethod::RasterizeEnable] = 1;
+    regs_.regs[MaxwellMethod::FramebufferSrgb] = 1;
+    regs_.SetFloat(MaxwellMethod::LineWidthSmooth, 1.0f);
+    regs_.SetFloat(MaxwellMethod::LineWidthAliased, 1.0f);
+    regs_.regs[MaxwellMethod::PolygonModeFront] = 2; // Fill
+    regs_.regs[MaxwellMethod::PolygonModeBack] = 2;  // Fill
+    regs_.regs[MaxwellMethod::ClearControl] = 0;
 }
 
 void Maxwell3D::SetGpuMemory(std::shared_ptr<GpuMemoryManager> gmmu) {
@@ -65,7 +107,12 @@ void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
 
     switch (method) {
         case MaxwellMethod::Nop:
+        case MaxwellMethod::NopHw:
         case MaxwellMethod::WaitForIdle:
+        case MaxwellMethod::WaitForIdleHw:
+        case MaxwellMethod::SyncInfo:
+        case MaxwellMethod::FragmentBarrier:
+        case MaxwellMethod::PipeNop:
             break;
 
         case MaxwellMethod::ClearSurface:
@@ -104,10 +151,11 @@ void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
             break;
         }
 
-        case MaxwellMethod::ClearDepth: {
+        case MaxwellMethod::ClearDepth:
+        case MaxwellMethod::ClearDepthHw: {
             if (backend_) {
-                float depth = regs_.GetFloat(MaxwellMethod::ClearDepth);
-                backend_->ClearDepthStencil(depth, 0);
+                float depth = regs_.GetFloat(method == MaxwellMethod::ClearDepthHw ? MaxwellMethod::ClearDepthHw : MaxwellMethod::ClearDepth);
+                backend_->ClearDepthStencil(depth, static_cast<u8>(regs_.regs[MaxwellMethod::ClearStencilHw]));
             }
             break;
         }
@@ -160,20 +208,79 @@ void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
 
         // --- Tier-A2: rasterizer state surface -----------------------------
         case MaxwellMethod::DepthTestEnable:
+        case MaxwellMethod::DepthTestEnableHw:
         case MaxwellMethod::DepthWriteEnable:
+        case MaxwellMethod::DepthWriteEnableHw:
         case MaxwellMethod::DepthFunc:
+        case MaxwellMethod::DepthFuncHw:
+        case MaxwellMethod::DepthBoundsNear:
+        case MaxwellMethod::DepthBoundsFar:
+        case MaxwellMethod::DepthBoundsEnable:
+        case MaxwellMethod::DepthBiasPoint:
+        case MaxwellMethod::DepthBiasLine:
+        case MaxwellMethod::DepthBiasTriangle:
+        case MaxwellMethod::DepthBiasControl:
+        case MaxwellMethod::SlopeScaleDepthBias:
+        case MaxwellMethod::DepthBias:
+        case MaxwellMethod::DepthBiasClamp:
         case MaxwellMethod::BlendEnablePerRT0:
+        case MaxwellMethod::BlendPerTargetEnabled:
         case MaxwellMethod::BlendSeparateAlpha:
         case MaxwellMethod::BlendEquationRgb:
+        case MaxwellMethod::BlendHw:
+        case MaxwellMethod::BlendColorR:
+        case MaxwellMethod::BlendColorG:
+        case MaxwellMethod::BlendColorB:
+        case MaxwellMethod::BlendColorA:
+        case MaxwellMethod::BlendPerTarget:
+        case MaxwellMethod::ColorMaskCommon:
+        case MaxwellMethod::ColorMaskRT0:
+        case MaxwellMethod::ColorMaskRT1:
+        case MaxwellMethod::ColorMaskRT2:
+        case MaxwellMethod::ColorMaskRT3:
+        case MaxwellMethod::ColorTargetMrtEnable:
+        case MaxwellMethod::FramebufferSrgb:
+        case MaxwellMethod::LogicOpEnable:
         case MaxwellMethod::StencilEnable:
+        case MaxwellMethod::StencilFrontOpFail:
+        case MaxwellMethod::StencilFrontOpFailHw:
+        case MaxwellMethod::StencilFrontOpZfail:
+        case MaxwellMethod::StencilFrontOpZpass:
+        case MaxwellMethod::StencilFrontFuncRef:
+        case MaxwellMethod::StencilFrontFuncMask:
+        case MaxwellMethod::StencilFrontMask:
+        case MaxwellMethod::StencilTwoSideEnable:
+        case MaxwellMethod::StencilBackOpFail:
+        case MaxwellMethod::StencilBackRef:
+        case MaxwellMethod::StencilBackMask:
+        case MaxwellMethod::StencilBackFuncMask:
         case MaxwellMethod::AlphaTestEnable:
+        case MaxwellMethod::AlphaTestEnableHw:
         case MaxwellMethod::AlphaFunc:
+        case MaxwellMethod::AlphaFuncHw:
         case MaxwellMethod::AlphaRef:
+        case MaxwellMethod::AlphaRefHw:
         case MaxwellMethod::MSAAEnable:
         case MaxwellMethod::MSAA_samples:
         case MaxwellMethod::CullFaceEnable:
+        case MaxwellMethod::CullFaceEnableHw:
         case MaxwellMethod::FrontFace:
-        case MaxwellMethod::CullFace: {
+        case MaxwellMethod::FrontFaceHw:
+        case MaxwellMethod::CullFace:
+        case MaxwellMethod::CullFaceHw:
+        case MaxwellMethod::D3DCullMode:
+        case MaxwellMethod::RasterizeEnable:
+        case MaxwellMethod::PolygonModeFront:
+        case MaxwellMethod::LineWidthSmooth:
+        case MaxwellMethod::LineWidthAliased:
+        case MaxwellMethod::ProvokingVertex:
+        case MaxwellMethod::TwoSidedLightEnabled:
+        case MaxwellMethod::PolygonStippleEnabled:
+        case MaxwellMethod::PointSize:
+        case MaxwellMethod::PointSizeHw:
+        case MaxwellMethod::PointSpriteEnable:
+        case MaxwellMethod::PointCoordReplace:
+        case MaxwellMethod::AntiAliasPointEnable: {
             raster_state_dirty_ = true;
             break;
         }
@@ -187,6 +294,7 @@ void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
         case MaxwellMethod::VertexAttribFormat0 + 5:
         case MaxwellMethod::VertexAttribFormat0 + 6:
         case MaxwellMethod::VertexAttribFormat0 + 7:
+        case MaxwellMethod::VertexAttribFormatHw:
             BindGuestVertexAttributes();
             break;
 
@@ -203,7 +311,7 @@ void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
     }
 }
 
-void Maxwell3D::ExecuteClearSurface([[maybe_unused]] u32 argument) {
+void Maxwell3D::ExecuteClearSurface(u32 argument) {
     if (!backend_) return;
 
     ClearColor color{
@@ -213,6 +321,14 @@ void Maxwell3D::ExecuteClearSurface([[maybe_unused]] u32 argument) {
         .a = regs_.GetFloat(MaxwellMethod::ClearColorA)
     };
     backend_->ClearRenderTarget(color);
+
+    // If depth/stencil clear is requested (argument bit 4/5 or ClearDepth set)
+    if ((argument & 0x30) != 0) {
+        float depth = regs_.GetFloat(MaxwellMethod::ClearDepth);
+        if (depth == 0.0f) depth = regs_.GetFloat(MaxwellMethod::ClearDepthHw);
+        u8 stencil = static_cast<u8>(regs_.regs[MaxwellMethod::ClearStencilHw]);
+        backend_->ClearDepthStencil(depth, stencil);
+    }
 }
 
 void Maxwell3D::EmitDebugGeometry() {
@@ -513,21 +629,69 @@ void Maxwell3D::ApplyRasterizerState() {
         return;
     }
     RasterizerState rs{};
-    rs.depth_test_enable = regs_.regs[MaxwellMethod::DepthTestEnable] != 0;
-    rs.depth_write_enable = regs_.regs[MaxwellMethod::DepthWriteEnable] != 0;
-    rs.depth_func = regs_.regs[MaxwellMethod::DepthFunc];
-    rs.stencil_enable = regs_.regs[MaxwellMethod::StencilEnable] != 0;
-    rs.alpha_test_enable = regs_.regs[MaxwellMethod::AlphaTestEnable] != 0;
+    rs.depth_test_enable = (regs_.regs[MaxwellMethod::DepthTestEnable] != 0) ||
+                           (regs_.regs[MaxwellMethod::DepthTestEnableHw] != 0);
+    rs.depth_write_enable = (regs_.regs[MaxwellMethod::DepthWriteEnable] != 0) ||
+                            (regs_.regs[MaxwellMethod::DepthWriteEnableHw] != 0);
+    rs.depth_func = regs_.regs[MaxwellMethod::DepthFuncHw] != 0
+                        ? regs_.regs[MaxwellMethod::DepthFuncHw]
+                        : regs_.regs[MaxwellMethod::DepthFunc];
+    rs.stencil_enable = (regs_.regs[MaxwellMethod::StencilEnable] != 0) ||
+                        (regs_.regs[MaxwellMethod::StencilEnableHw] != 0);
+    rs.alpha_test_enable = (regs_.regs[MaxwellMethod::AlphaTestEnable] != 0) ||
+                           (regs_.regs[MaxwellMethod::AlphaTestEnableHw] != 0);
     rs.alpha_ref = regs_.GetFloat(MaxwellMethod::AlphaRef);
-    rs.cull_face_enable = regs_.regs[MaxwellMethod::CullFaceEnable] != 0;
-    rs.front_face = regs_.regs[MaxwellMethod::FrontFace];
-    rs.cull_face = regs_.regs[MaxwellMethod::CullFace];
+    if (rs.alpha_ref == 0.0f) {
+        rs.alpha_ref = regs_.GetFloat(MaxwellMethod::AlphaRefHw);
+    }
+    rs.cull_face_enable = (regs_.regs[MaxwellMethod::CullFaceEnable] != 0) ||
+                          (regs_.regs[MaxwellMethod::CullFaceEnableHw] != 0);
+    rs.front_face = regs_.regs[MaxwellMethod::FrontFaceHw] != 0
+                        ? regs_.regs[MaxwellMethod::FrontFaceHw]
+                        : regs_.regs[MaxwellMethod::FrontFace];
+    rs.cull_face = regs_.regs[MaxwellMethod::CullFaceHw] != 0
+                       ? regs_.regs[MaxwellMethod::CullFaceHw]
+                       : regs_.regs[MaxwellMethod::CullFace];
     rs.msaa_samples = regs_.regs[MaxwellMethod::MSAAEnable]
                           ? regs_.regs[MaxwellMethod::MSAA_samples]
                           : 1u;
-    // Per-RT blend enables: pack 4 enables into the u32 word.
-    rs.blend_enable_0 = regs_.regs[MaxwellMethod::BlendEnablePerRT0] != 0;
+    rs.blend_enable_0 = (regs_.regs[MaxwellMethod::BlendEnablePerRT0] != 0) ||
+                        (regs_.regs[MaxwellMethod::BlendPerTargetEnabled] != 0);
     rs.blend_equation_rgb = regs_.regs[MaxwellMethod::BlendEquationRgb];
+
+    // Depth bounds
+    rs.depth_bounds_enable = regs_.regs[MaxwellMethod::DepthBoundsEnable] != 0;
+    rs.depth_bounds_near = regs_.GetFloat(MaxwellMethod::DepthBoundsNear);
+    rs.depth_bounds_far = regs_.GetFloat(MaxwellMethod::DepthBoundsFar);
+
+    // Depth bias / Polygon offset
+    rs.polygon_offset_enable = (regs_.regs[MaxwellMethod::DepthBiasPoint] != 0) ||
+                               (regs_.regs[MaxwellMethod::DepthBiasLine] != 0) ||
+                               (regs_.regs[MaxwellMethod::DepthBiasTriangle] != 0);
+    rs.polygon_offset_factor = regs_.GetFloat(MaxwellMethod::SlopeScaleDepthBias);
+    rs.polygon_offset_units = regs_.GetFloat(MaxwellMethod::DepthBias);
+    rs.polygon_offset_clamp = regs_.GetFloat(MaxwellMethod::DepthBiasClamp);
+
+    // Line width & Polygon modes
+    rs.line_width = regs_.GetFloat(MaxwellMethod::LineWidthSmooth);
+    if (rs.line_width == 0.0f) rs.line_width = regs_.GetFloat(MaxwellMethod::LineWidthAliased);
+    if (rs.line_width == 0.0f) rs.line_width = 1.0f;
+    rs.polygon_mode_front = regs_.regs[MaxwellMethod::PolygonModeFront];
+    rs.polygon_mode_back = regs_.regs[MaxwellMethod::PolygonModeBack];
+
+    // Blend color
+    rs.blend_color[0] = regs_.GetFloat(MaxwellMethod::BlendColorR);
+    rs.blend_color[1] = regs_.GetFloat(MaxwellMethod::BlendColorG);
+    rs.blend_color[2] = regs_.GetFloat(MaxwellMethod::BlendColorB);
+    rs.blend_color[3] = regs_.GetFloat(MaxwellMethod::BlendColorA);
+
+    // Color mask
+    for (size_t i = 0; i < 4; ++i) {
+        rs.color_mask[i] = regs_.regs[MaxwellMethod::ColorMaskRT0 + i];
+    }
+    rs.logic_op_enable = regs_.regs[MaxwellMethod::LogicOpEnable] != 0;
+    rs.logic_op = regs_.regs[MaxwellMethod::LogicOpEnable];
+
     backend_->SetRasterizerState(rs);
     raster_state_dirty_ = false;
 }

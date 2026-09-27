@@ -67,6 +67,10 @@ public:
     // Raw guest vertex-buffer bytes -> upload + bind for the translated PSO.
     void SetGuestVertexBuffer(std::span<const u8> data, u32 stride) override;
 
+    // Guest rasterizer state block (Tier-A2)
+    void SetRasterizerState(const RasterizerState& state) override;
+    [[nodiscard]] const RasterizerState& GetRasterizerState() const noexcept { return current_rasterizer_state_; }
+
     [[nodiscard]] GpuStats GetStats() const noexcept override { return stats_; }
     [[nodiscard]] std::string_view GetBackendName() const noexcept override { return "Direct3D 12 (Xbox Series S/X & Win32)"; }
 
@@ -198,6 +202,8 @@ private:
     std::vector<u8> compute_shader_;           // last SetComputeShader payload
     bool compute_shader_valid_{false};
     bool compute_pending_{false};              // dispatch requested before shader ready
+
+    RasterizerState current_rasterizer_state_{};
 };
 
 } // namespace nemu::core::gpu

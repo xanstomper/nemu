@@ -53,7 +53,7 @@ public:
     }
 
     /// Unpack RGB565 back to 8-bit RGB (bit-replication for accuracy).
-    [[nodiscard]] static constexpr void Unpack565(u16 c, u8& r, u8& g, u8& b) noexcept {
+    static constexpr void Unpack565(u16 c, u8& r, u8& g, u8& b) noexcept {
         r = static_cast<u8>(((c >> 11) & 0x1F) << 3 | ((c >> 11) & 0x1F) >> 2);
         g = static_cast<u8>(((c >> 5) & 0x3F) << 2 | ((c >> 5) & 0x3F) >> 4);
         b = static_cast<u8>((c & 0x1F) << 3 | (c & 0x1F) >> 2);

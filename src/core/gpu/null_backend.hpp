@@ -45,6 +45,7 @@ public:
     [[nodiscard]] const ClearColor& GetLastClearColor() const noexcept { return last_clear_color_; }
     [[nodiscard]] const Viewport& GetCurrentViewport() const noexcept { return current_viewport_; }
     [[nodiscard]] const ScissorRect& GetCurrentScissor() const noexcept { return current_scissor_; }
+    [[nodiscard]] const RasterizerState& GetRasterizerState() const noexcept { return raster_state_; }
 
     /// Access to the raw host framebuffer (R8G8B8A8, row-major) for tests.
     [[nodiscard]] const u8* Framebuffer() const noexcept { return framebuffer_.data(); }

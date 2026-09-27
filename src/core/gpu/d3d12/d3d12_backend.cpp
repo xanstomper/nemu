@@ -434,6 +434,13 @@ void D3D12GpuBackend::SetRasterIndices(std::span<const u32> indices) {
     indices_.assign(indices.begin(), indices.end());
 }
 
+void D3D12GpuBackend::SetRasterizerState(const RasterizerState& state) {
+    current_rasterizer_state_ = state;
+    if (in_frame_ && command_list_) {
+        command_list_->OMSetBlendFactor(state.blend_color);
+    }
+}
+
 void D3D12GpuBackend::SetGuestShaders(std::span<const u8> vs_bytecode, std::span<const u8> ps_bytecode) {
     guest_vs_.assign(vs_bytecode.begin(), vs_bytecode.end());
     guest_ps_.assign(ps_bytecode.begin(), ps_bytecode.end());

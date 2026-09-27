@@ -141,6 +141,7 @@ public:
     u32 draw_calls_seen{0};
     u32 cbuf_binds{0};
     u32 last_block_x{0};
+    RasterizerState last_raster_state{};
 
     bool Initialize(u32, u32) override { return true; }
     void Shutdown() override {}
@@ -153,7 +154,10 @@ public:
     void ClearDepthStencil(float, u8) override {}
     void DrawArrays(PrimitiveTopology, u32, u32) override { draw_calls_seen++; }
     void DrawIndexed(PrimitiveTopology, u32, u32, u32) override { draw_calls_seen++; }
-    void SetRasterizerState(const RasterizerState&) override { raster_state_pushes++; }
+    void SetRasterizerState(const RasterizerState& state) override {
+        raster_state_pushes++;
+        last_raster_state = state;
+    }
     void DispatchCompute(u32 bx, u32, u32) override {
         compute_dispatches++;
         last_block_x = bx;
@@ -168,11 +172,48 @@ void TestExpandedMaxwell3D() {
     auto backend = std::make_shared<CountingBackend>();
     Maxwell3D maxwell(backend);
 
+    // Verify yuzu-style boot defaults (Tier-A2)
+    NEMU_TEST_ASSERT(maxwell.GetRegisters().GetFloat(MaxwellMethod::ViewportDepthRangeNear) == 0.0f, "depth range near default 0.0");
+    NEMU_TEST_ASSERT(maxwell.GetRegisters().GetFloat(MaxwellMethod::ViewportDepthRangeFar) == 1.0f, "depth range far default 1.0");
+    NEMU_TEST_ASSERT(maxwell.GetRegisters().regs[MaxwellMethod::RasterizeEnable] == 1, "rasterize enable default 1");
+    NEMU_TEST_ASSERT(maxwell.GetRegisters().regs[MaxwellMethod::ColorMaskRT0] == 0x1111, "color mask default 0x1111");
+    NEMU_TEST_ASSERT(maxwell.GetRegisters().GetFloat(MaxwellMethod::PointSize) == 1.0f, "point size default 1.0");
+
     // Rasterizer state registers -> pushed at first draw.
     maxwell.ProcessMethod(MaxwellMethod::DepthTestEnable, 1);
     maxwell.ProcessMethod(MaxwellMethod::DepthFunc, 5); // GEQUAL
     maxwell.ProcessMethod(MaxwellMethod::CullFaceEnable, 1);
     NEMU_TEST_ASSERT(backend->raster_state_pushes == 0, "deferred until draw");
+
+    // Depth bounds & depth bias & polygon modes via ProcessMethod
+    auto to_u32 = [](float f) noexcept {
+        u32 v = 0;
+        std::memcpy(&v, &f, sizeof(v));
+        return v;
+    };
+    maxwell.ProcessMethod(MaxwellMethod::DepthBoundsNear, to_u32(0.2f));
+    maxwell.ProcessMethod(MaxwellMethod::DepthBoundsFar, to_u32(0.8f));
+    maxwell.ProcessMethod(MaxwellMethod::DepthBoundsEnable, 1);
+    maxwell.ProcessMethod(MaxwellMethod::SlopeScaleDepthBias, to_u32(1.5f));
+    maxwell.ProcessMethod(MaxwellMethod::DepthBias, to_u32(2.0f));
+    maxwell.ProcessMethod(MaxwellMethod::DepthBiasClamp, to_u32(0.5f));
+    maxwell.ProcessMethod(MaxwellMethod::DepthBiasTriangle, 1);
+    maxwell.ProcessMethod(MaxwellMethod::LineWidthSmooth, to_u32(3.5f));
+    maxwell.ProcessMethod(MaxwellMethod::PolygonModeFront, 1);
+
+    // Blend color, color mask, logic op via ProcessMethod
+    maxwell.ProcessMethod(MaxwellMethod::BlendColorR, to_u32(0.1f));
+    maxwell.ProcessMethod(MaxwellMethod::BlendColorG, to_u32(0.2f));
+    maxwell.ProcessMethod(MaxwellMethod::BlendColorB, to_u32(0.3f));
+    maxwell.ProcessMethod(MaxwellMethod::BlendColorA, to_u32(0.4f));
+    maxwell.ProcessMethod(MaxwellMethod::ColorMaskRT0, 0x1010);
+    maxwell.ProcessMethod(MaxwellMethod::LogicOpEnable, 1);
+
+    // DMA & Sync methods (must not fault)
+    maxwell.ProcessMethod(MaxwellMethod::LaunchDma, 0);
+    maxwell.ProcessMethod(MaxwellMethod::InlineData, 0xCAFE);
+    maxwell.ProcessMethod(MaxwellMethod::SyncInfo, 0);
+    maxwell.ProcessMethod(MaxwellMethod::FragmentBarrier, 0);
 
     // DrawArrays: topology + vertex count encoding (count in [30:8]).
     const u32 count = 3;
@@ -180,6 +221,21 @@ void TestExpandedMaxwell3D() {
     maxwell.ProcessMethod(MaxwellMethod::DrawArrays, draw_arg);
     NEMU_TEST_ASSERT(backend->raster_state_pushes == 1, "raster state flushed at draw");
     NEMU_TEST_ASSERT(backend->draw_calls_seen == 1, "draw issued");
+
+    // Verify rasterizer state payload
+    NEMU_TEST_ASSERT(backend->last_raster_state.depth_bounds_enable, "depth bounds enable verified");
+    NEMU_TEST_ASSERT(backend->last_raster_state.depth_bounds_near == 0.2f, "depth bounds near verified");
+    NEMU_TEST_ASSERT(backend->last_raster_state.depth_bounds_far == 0.8f, "depth bounds far verified");
+    NEMU_TEST_ASSERT(backend->last_raster_state.polygon_offset_enable, "polygon offset enable verified");
+    NEMU_TEST_ASSERT(backend->last_raster_state.polygon_offset_factor == 1.5f, "polygon offset factor verified");
+    NEMU_TEST_ASSERT(backend->last_raster_state.polygon_offset_units == 2.0f, "polygon offset units verified");
+    NEMU_TEST_ASSERT(backend->last_raster_state.polygon_offset_clamp == 0.5f, "polygon offset clamp verified");
+    NEMU_TEST_ASSERT(backend->last_raster_state.line_width == 3.5f, "line width verified");
+    NEMU_TEST_ASSERT(backend->last_raster_state.polygon_mode_front == 1, "polygon mode front verified");
+    NEMU_TEST_ASSERT(backend->last_raster_state.blend_color[0] == 0.1f, "blend color R verified");
+    NEMU_TEST_ASSERT(backend->last_raster_state.blend_color[3] == 0.4f, "blend color A verified");
+    NEMU_TEST_ASSERT(backend->last_raster_state.color_mask[0] == 0x1010, "color mask RT0 verified");
+    NEMU_TEST_ASSERT(backend->last_raster_state.logic_op_enable, "logic op enable verified");
 
     // Instanced draw: InstanceCount = 4 -> 4 draw calls.
     maxwell.ProcessMethod(MaxwellMethod::InstanceCount, 4);
@@ -407,7 +463,6 @@ void TestPresentOptimizerPipeline() {
 // ---------------------------------------------------------------------------
 void TestSassIdentifier() {
     using namespace nemu::core::gpu::shader;
-    using S = SassOpcode;
 
     // EXIT must identify cleanly (EXIT: mask/value top16 = 1110 0011 0000 ----).
     const auto e = IdentifySass(0xE300000000000000ULL);
@@ -494,9 +549,10 @@ void TestRareSassDiagnostic() {
     using namespace nemu::core::gpu::shader;
 
     // SUATOM surface atomic: mask/val top16 = 1110 1010 0--- (from table).
+    // DecodeInstruction64 memcpy's 8 bytes host-endian, so write little-endian.
     const u64 suatom = 0xEA00000000000000ULL;
     std::vector<u8> code;
-    for (int b = 7; b >= 0; --b) code.push_back(static_cast<u8>((suatom >> (b * 8)) & 0xFF));
+    for (int b = 0; b < 8; ++b) code.push_back(static_cast<u8>((suatom >> (b * 8)) & 0xFF));
 
     NEMU_TEST_ASSERT(IdentifySass(suatom).encoding_index != SIZE_MAX, "SUATOM identified");
 

@@ -75,6 +75,22 @@ struct RasterizerState {
     u32 msaa_samples{1};
     bool blend_enable_0{false};
     u32 blend_equation_rgb{1}; // GL func enum (1 = Add)
+
+    // Tier-A2: expanded Maxwell 3D rasterizer state surface
+    bool depth_bounds_enable{false};
+    float depth_bounds_near{0.0f};
+    float depth_bounds_far{1.0f};
+    bool polygon_offset_enable{false};
+    float polygon_offset_factor{0.0f};
+    float polygon_offset_units{0.0f};
+    float polygon_offset_clamp{0.0f};
+    float line_width{1.0f};
+    u32 polygon_mode_front{2}; // 0 = Point, 1 = Line, 2 = Fill
+    u32 polygon_mode_back{2};
+    float blend_color[4]{0.0f, 0.0f, 0.0f, 0.0f};
+    u32 color_mask[4]{0x1111, 0x1111, 0x1111, 0x1111};
+    bool logic_op_enable{false};
+    u32 logic_op{0};
 };
 
 /// Live graphics-optimizer settings (Tier-B UI wiring). The frontend Settings
