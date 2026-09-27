@@ -652,11 +652,12 @@ void TestComputeShaderEmission() {
     using namespace nemu::core::gpu::shader;
 
     // Simple compute program: NOP + EXIT (empty body is a valid shader).
+    // DecodeInstruction64 memcpy's 8 bytes host-endian -> write little-endian.
     u64 w_nop = 0x0200000000000000ULL;   // NOP
     u64 w_exit = 0xE300000000000000ULL;  // EXIT (mask/value top16 = 1110 0011 0000 ----)
     std::vector<u8> code;
     for (u64 w : {w_nop, w_exit}) {
-        for (int b = 7; b >= 0; --b) code.push_back(static_cast<u8>((w >> (b * 8)) & 0xFF));
+        for (int b = 0; b < 8; ++b) code.push_back(static_cast<u8>((w >> (b * 8)) & 0xFF));
     }
 
     const auto prog = MaxwellShaderDecoder::DecodeAndDecompile(
@@ -675,6 +676,43 @@ void TestComputeShaderEmission() {
     std::cout << "  Compute shader emission PASS\n";
 }
 
+// ---------------------------------------------------------------------------
+// Predicated branch (BRA.P) decode: a conditional BRA word records its
+// predicate + invert sense + absolute target for the emitter.
+// ---------------------------------------------------------------------------
+void TestPredicatedBranchDecode() {
+    using namespace nemu::core::gpu::shader;
+    using namespace nemu;
+
+    // BRA: major 0x5D0 (0101 1101 0000 ----). The decoder reads:
+    //   rel_target  = bits [23:20]  (s24 offset from current instr)
+    //   predicate   = bits [13:11]  (P0-P6; 7 = unconditional/PT)
+    //   invert      = bit  14
+    // Build a word: rel_target = +4 words (bytes 32), predicate P2, invert set.
+    u64 base = 0x5D00000000000000ULL; // BRA major at top
+    const u32 rel_words = 4;                  // forward 4 instructions
+    const u32 pred = 2;                       // P2
+    const u32 invert = 1;                     // BRA !P2
+    u64 w = base
+          | (static_cast<u64>(rel_words & 0xFFFFFF) << 20)
+          | (static_cast<u64>(pred & 0x7) << 11)
+          | (static_cast<u64>(invert & 0x1) << 14);
+
+    // Isolate the compiled decoder path: decode via a 1-instruction program.
+    std::vector<u8> code;
+    for (int b = 0; b < 8; ++b) code.push_back(static_cast<u8>((w >> (b * 8)) & 0xFF));
+    auto prog = MaxwellShaderDecoder::DecodeAndDecompile(code, ShaderStage::Vertex, false);
+    NEMU_TEST_ASSERT(!prog.instructions.empty(), "BRA decoded");
+    const auto& inst = prog.instructions[0];
+    NEMU_TEST_ASSERT(inst.opcode == MaxwellOpcode::BRA, "opcode is BRA");
+
+    // The emitted HLSL records a predicated [bra] comment for P2 (predicate<7).
+    NEMU_TEST_ASSERT(prog.hlsl_source.find("[bra]") != std::string::npos,
+                     "predicated BRA emitted");
+
+    std::cout << "  Predicated branch decode PASS\n";
+}
+
 int main() {
     std::cout << "== NEMU Tier-A unit tests ==\n";
     TestGmmuBasics();
@@ -689,6 +727,7 @@ int main() {
     TestRareSassDiagnostic();
     TestComputeQmd();
     TestComputeShaderEmission();
+    TestPredicatedBranchDecode();
     std::cout << "ALL TIER-A TESTS PASSED\n";
     return 0;
 }

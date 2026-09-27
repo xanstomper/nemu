@@ -146,6 +146,17 @@ case MaxwellOpcode::SSY:
     // line bodies; branches within a decoded region are flattened by the
     // sequential model (same approach as the RasterVertex software path).
     break;
+case MaxwellOpcode::BRA:
+    // Conditional BRA.P: decode records the predicate (P0-P6) and target.
+    // The flattened emitter cannot host arbitrary control-flow, so a
+    // predicate-conditional forward branch records a semantics comment that
+    // unifies with the predicate file's `if (p[N])` guard the caller can use.
+    if (inst.predicate < 7) {
+        ss << "    // [bra] " << (inst.predicate_invert ? "!" : "")
+           << "if (p[" << static_cast<int>(inst.predicate) << "]) -> target 0x"
+           << std::hex << inst.branch_target << std::dec << "\n";
+    }
+    break;
 
 // ---- Memory: generic LD/ST + local ------------------------------------------
 case MaxwellOpcode::LD:

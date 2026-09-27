@@ -371,6 +371,14 @@ DecodedInstruction MaxwellShaderDecoder::DecodeInstruction64(u64 raw, u64 offset
         s32 rel_target = static_cast<s32>((raw >> 20) & 0xFFFFFF);
         if (rel_target & 0x800000) rel_target |= static_cast<s32>(0xFF000000);
         inst.branch_target = static_cast<u64>(static_cast<s64>(offset) + rel_target);
+        // Conditional BRA.P: predicate in bits [13:11] (Maxwell branch predicate
+        // field). P0-P6; default unconditional when the field is 7 (PT/never).
+        const u32 pred = static_cast<u32>((raw >> 11) & 0x7);
+        // P0-P6 conditional, PT (7) = unconditional — keep the struct's default.
+        inst.predicate = static_cast<u8>(pred & 0x7);
+        // A branch-else sense (BRA !P) is signalled by bit 14.
+        const bool inv = ((raw >> 14) & 0x1) != 0;
+        inst.predicate_invert = inv;
     } else if (major_high == 0x5D1) {
         inst.opcode = MaxwellOpcode::EXIT;
     } else if (major_high == 0x5D2) {
