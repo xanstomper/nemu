@@ -1,4 +1,5 @@
 #include "maxwell_shader_decoder.hpp"
+#include "sass_identifier.hpp"
 #include <sstream>
 #include <iomanip>
 #include <set>
@@ -382,6 +383,23 @@ DecodedInstruction MaxwellShaderDecoder::DecodeInstruction64(u64 raw, u64 offset
         inst.sources.push_back(ShaderOperand{.type = OperandType::SpecialRegister, .special_reg = sr});
     } else {
         inst.opcode = MaxwellOpcode::UNKNOWN;
+    }
+
+    // Tier-A1 full-table cross-check: when the fast-path map misses, identify
+    // the exact SASS family via the 279-encoding table and record it in the
+    // disassembly — real-game programs then show their true opcodes in logs.
+    if (inst.opcode == MaxwellOpcode::UNKNOWN) {
+        const auto sass = IdentifySass(raw);
+        if (sass.encoding_index != SIZE_MAX) {
+            inst.disassembly = std::string("SASS:") + SassCuteName(sass.encoding_index);
+        } else {
+            inst.disassembly = "UNKNOWN_0x" + [&] {
+                std::ostringstream ss;
+                ss << std::hex << static_cast<u32>(inst.opcode);
+                return ss.str();
+            }();
+        }
+        return inst;
     }
 
     inst.disassembly = DisassembleInstruction(inst);

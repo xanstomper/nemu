@@ -36,6 +36,8 @@ set(GPU_SOURCES
     texture/texture_cache.cpp
     shader/maxwell_shader_decoder.hpp
     shader/maxwell_shader_decoder.cpp
+    shader/sass_identifier.hpp
+    shader/sass_identifier.cpp
     shader/shader_translator.hpp
     shader/shader_translator.cpp
     shader/hlsl_validator.hpp

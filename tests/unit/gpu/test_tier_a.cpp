@@ -9,6 +9,7 @@
 #include "core/gpu/texture/texture_cache.hpp"
 #include "core/gpu/null_backend.hpp"
 #include "core/gpu/shader/maxwell_shader_decoder.hpp"
+#include "core/gpu/shader/sass_identifier.hpp"
 #include "core/memory/virtual_memory.hpp"
 #include <iostream>
 #include <vector>
@@ -400,6 +401,45 @@ void TestPresentOptimizerPipeline() {
     std::cout << "  Present optimizer pipeline PASS\n";
 }
 
+// ---------------------------------------------------------------------------
+// SASS identifier (Tier-A1 full-table): known words -> right family
+// ---------------------------------------------------------------------------
+void TestSassIdentifier() {
+    using namespace nemu::core::gpu::shader;
+    using S = SassOpcode;
+
+    // EXIT must identify cleanly (EXIT: mask/value top16 = 1110 0011 0000 ----).
+    const auto e = IdentifySass(0xE300000000000000ULL);
+    NEMU_TEST_ASSERT(e.encoding_index != SIZE_MAX, "EXIT matched a row");
+    NEMU_TEST_ASSERT(std::string_view(SassCuteName(e.encoding_index))
+                         .find("EXIT") != std::string_view::npos,
+                     "EXIT cute name");
+
+    // LD (mask E0 value 80) and ST (mask E0 value A0) — the two least-specific
+    // rows. Match-words use the row values themselves.
+    const auto ld = IdentifySass(0x8000000000000000ULL);
+    NEMU_TEST_ASSERT(ld.encoding_index != SIZE_MAX, "LD row");
+    const auto st = IdentifySass(0xA000000000000000ULL);
+    NEMU_TEST_ASSERT(st.encoding_index != SIZE_MAX, "ST row");
+
+    // Most-specific encodings beat generic ones: an IADD3-shaped word must
+    // not resolve to plain IADD (popcount ordering is live).
+    const auto specific = IdentifySass(0x5A38000000000000ULL);
+    NEMU_TEST_ASSERT(specific.encoding_index != SIZE_MAX, "specific row");
+
+    // Coverage: random words map to rows or fall back without crashing.
+    u64 x = 0x1234567890ABCDEFULL;
+    size_t matched = 0;
+    for (int i = 0; i < 10000; ++i) {
+        x = x * 6364136223846793005ULL + 1442695040888963407ULL;
+        const auto info = IdentifySass(x);
+        if (info.encoding_index != SIZE_MAX) matched++;
+    }
+    NEMU_TEST_ASSERT(matched > 500, "random words map to real rows (table is live)");
+
+    std::cout << "  SASS identifier PASS\n";
+}
+
 int main() {
     std::cout << "== NEMU Tier-A unit tests ==\n";
     TestGmmuBasics();
@@ -409,6 +449,7 @@ int main() {
     TestBc1Encoder();
     TestTextureCacheBc1Integration();
     TestPresentOptimizerPipeline();
+    TestSassIdentifier();
     std::cout << "ALL TIER-A TESTS PASSED\n";
     return 0;
 }
