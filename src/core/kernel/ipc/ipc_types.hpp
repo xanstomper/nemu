@@ -233,7 +233,9 @@ public:
     /// Write a primitive at a byte offset relative to the buffer base.
     template <typename T>
     bool Write(size_t offset, T value) {
-        static_assert(std::is_integral_v<T> && std::is_unsigned_v<T>);
+        // Integral-signed replies (e.g. signed RTC epoch seconds) are valid;
+        // the check only rejects non-integers (structs, pointers, floats).
+        static_assert(std::is_integral_v<T>);
         if (offset + sizeof(T) > IpcBufferSize) {
             return false;
         }
