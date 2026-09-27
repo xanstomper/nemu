@@ -13,9 +13,10 @@ public:
 
     enum : u32 {
         GetCurrentTime = 0x0,
-        SetCurrentTime = 0x1,
-        GetSystemClockContext = 0x2,
-        SetSystemClockContext = 0x3,
+        GetCurrentTimePoint = 0x1,  // steady clock: 0x18-byte SteadyClockTimePoint
+        SetCurrentTime = 0x2,
+        GetSystemClockContext = 0x3,
+        SetSystemClockContext = 0x4,
     };
 
     u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,

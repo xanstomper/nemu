@@ -27,6 +27,11 @@ namespace MaxwellMethod {
     // Viewport Z (real Maxwell: 0x035F scale-z, 0x035C/0x035D pair per vp 0).
     constexpr u32 ViewportScaleZ = 0x035F;
     constexpr u32 ViewportOffsetZ = 0x0264;
+    // Depth range defaults (yuzu: near=0.0 far=1.0 required by ARMS et al).
+    constexpr u32 ViewportDepthRangeNear = 0x0362;
+    constexpr u32 ViewportDepthRangeFar = 0x0363;
+    // Point size (OpenGL default 1.0 expected by games that never set it).
+    constexpr u32 PointSize = 0x0442;
     constexpr u32 ClearColorR = 0x0368;
     constexpr u32 ClearColorG = 0x0369;
     constexpr u32 ClearColorB = 0x036A;
@@ -48,6 +53,12 @@ namespace MaxwellMethod {
     constexpr u32 BlendSeparateAlpha = 0x04D8;
     constexpr u32 BlendEquationRgb = 0x04E0;   // func, src, dst triples per RT
     constexpr u32 StencilEnable = 0x04E4;      // front+back packed
+    constexpr u32 StencilFrontOpFail = 0x04E5; // Keep/Zero/Replace/Incr...
+    constexpr u32 StencilFrontOpZfail = 0x04E6;
+    constexpr u32 StencilFrontOpZpass = 0x04E7;
+    constexpr u32 StencilFrontFuncRef = 0x04E8;
+    constexpr u32 StencilFrontFuncMask = 0x04E9;
+    constexpr u32 StencilFrontMask = 0x04EA;
     constexpr u32 AlphaTestEnable = 0x042C;
     constexpr u32 AlphaFunc = 0x042D;
     constexpr u32 AlphaRef = 0x042E;
@@ -170,6 +181,7 @@ private:
     void BindGuestVertexAttributes(); // upload guest vertex layout + buffer
     void ApplyRasterizerState(); // push depth/stencil/blend/MSAA/cull state
     void BindGuestConstantBuffers(); // UBO upload via buffer cache
+    void InitializeRegisterDefaults(); // yuzu-style boot defaults (GPL-3.0 port)
 
     std::shared_ptr<IGpuBackend> backend_;
     memory::VirtualMemory* memory_{nullptr};

@@ -33,6 +33,18 @@ u32 TimeClockService::HandleRequest(const IpcContext& ctx, const IpcRequestReade
             reply.Payload<u64>(0, now);
             return static_cast<u32>(IpcResult::Success);
         }
+        case GetCurrentTimePoint: {
+            // Real reply: nn::time::SteadyClockTimePoint = 0x18 bytes
+            //   +0x00 u64 nanoseconds_since_epoch (steady)
+            //   +0x08 u128 unique_id (zero is the accepted HLE value)
+            // (layout verified against Ryujinx SteadyClockTimePoint.cs /
+            // ISteadyClock.cs GetCurrentTimePoint.)
+            reply.Begin(static_cast<u32>(IpcCommandType::Request), 0x18);
+            reply.Payload<u64>(0, SteadyNs());
+            reply.Payload<u64>(8, 0);
+            reply.Payload<u64>(16, 0);
+            return static_cast<u32>(IpcResult::Success);
+        }
         case SetCurrentTime: {
             const u64 t = request.Payload<u64>(0);
             NEMU_LOG_DEBUG("time", "SetCurrentTime({} ns) recorded (HLE no-op)", t);

@@ -117,9 +117,11 @@ u32 ApplicationFunctionsService::HandleRequest(
         }
 
         case NotifyRunning: {
-            reply.Begin(0, 8);
+            // Real reply: b8 (one byte) — verified against Ryujinx
+            // IApplicationFunctions.cs cmd 40 (NotifyRunning() -> b8).
+            reply.Begin(0, 5);
             reply.Payload<u32>(0, 0);
-            reply.Payload<u32>(4, 1); // out_running = true
+            reply.Payload<u8>(4, 1); // out_running = true
             return static_cast<u32>(IpcResult::Success);
         }
 

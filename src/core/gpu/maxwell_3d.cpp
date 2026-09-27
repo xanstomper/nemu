@@ -11,6 +11,46 @@ namespace nemu::core::gpu {
 
 Maxwell3D::Maxwell3D(std::shared_ptr<IGpuBackend> backend)
     : backend_(std::move(backend)) {
+    InitializeRegisterDefaults();
+}
+
+void Maxwell3D::InitializeRegisterDefaults() {
+    // Ported from yuzu Maxwell3D::InitializeRegisterDefaults (GPL-3.0-or-later,
+    // src/video_core/engines/maxwell_3d.cpp). Real games expect these defaults
+    // at boot and never explicitly set some of them (ARMS needs the depth
+    // range; Sonic Mania needs the color masks; Doom/Bomberman rely on sane
+    // blend defaults).
+    // regs_ is already zeroed by its member initializer.
+
+    // Depth range near/far defaults 0.0f/1.0f (single viewport model).
+    regs_.SetFloat(MaxwellMethod::ViewportDepthRangeNear, 0.0f);
+    regs_.SetFloat(MaxwellMethod::ViewportDepthRangeFar, 1.0f);
+
+    // Blend defaults: Add, One, Zero (D3D-style equation encoding).
+    regs_.regs[MaxwellMethod::BlendEquationRgb] = 1; // Add
+    regs_.regs[MaxwellMethod::BlendEnablePerRT0] = 0;
+
+    // Stencil: Keep/Keep/Keep ops, Always func, full masks (GL encoding).
+    regs_.regs[MaxwellMethod::StencilEnable] = 1;
+    regs_.regs[MaxwellMethod::StencilFrontOpFail] = 1;     // Keep
+    regs_.regs[MaxwellMethod::StencilFrontOpZfail] = 1;    // Keep
+    regs_.regs[MaxwellMethod::StencilFrontOpZpass] = 1;    // Keep
+    regs_.regs[MaxwellMethod::StencilFrontFuncRef] = 0;
+    regs_.regs[MaxwellMethod::StencilFrontFuncMask] = 0xFFFFFFFFu;
+    regs_.regs[MaxwellMethod::StencilFrontMask] = 0xFFFFFFFFu;
+
+    // Depth test func = Always (GL encoding: Always = 0x207 -> our 7 encoding).
+    regs_.regs[MaxwellMethod::DepthFunc] = 7;
+    regs_.regs[MaxwellMethod::DepthTestEnable] = 0; // disabled until guest sets it
+    regs_.regs[MaxwellMethod::DepthWriteEnable] = 1;
+
+    // Front face CCW (0), cull face Back (1), culling disabled by default.
+    regs_.regs[MaxwellMethod::FrontFace] = 0;
+    regs_.regs[MaxwellMethod::CullFace] = 1;
+    regs_.regs[MaxwellMethod::CullFaceEnable] = 0;
+
+    // Point size default 1.0 (OpenGL default).
+    regs_.SetFloat(MaxwellMethod::PointSize, 1.0f);
 }
 
 void Maxwell3D::SetGpuMemory(std::shared_ptr<GpuMemoryManager> gmmu) {
