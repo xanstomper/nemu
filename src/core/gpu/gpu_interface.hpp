@@ -56,6 +56,24 @@ struct GpuStats {
     u64 vertices_submitted{0};
 };
 
+/// Guest rasterizer state block (Tier-A2). Games push these every frame;
+/// the D3D12 backend maps them onto PSO/graphics state, the software
+/// rasterizer honors depth test/func + alpha test, other backends ignore.
+struct RasterizerState {
+    bool depth_test_enable{false};
+    bool depth_write_enable{true};
+    u32 depth_func{7};        // GL-style compare (0 Never .. 7 Always)
+    bool stencil_enable{false};
+    bool alpha_test_enable{false};
+    float alpha_ref{0.0f};
+    bool cull_face_enable{false};
+    u32 front_face{0};        // 0 = CCW, 1 = CW
+    u32 cull_face{1};         // 0 = front, 1 = back, 2 = front_and_back
+    u32 msaa_samples{1};
+    bool blend_enable_0{false};
+    u32 blend_equation_rgb{1}; // GL func enum (1 = Add)
+};
+
 // A rasterizer vertex: 2D normalized-device position (x,y in [-1,1]) plus an
 // RGBA color. This is the minimal geometric primitive the software rasterizer
 // (and future guest shader output) feed into the backend.
@@ -98,6 +116,14 @@ public:
 
     virtual void DrawArrays(PrimitiveTopology topology, u32 first_vertex, u32 vertex_count) = 0;
     virtual void DrawIndexed(PrimitiveTopology topology, u32 index_count, u32 first_index, u32 base_vertex) = 0;
+
+    // --- Tier-A2/A3: rasterizer state + compute dispatch --------------------
+    // Push the guest rasterizer state block (depth/stencil/blend/MSAA/cull).
+    // Default no-op: backends that cannot honor it (Null passthrough) ignore.
+    virtual void SetRasterizerState(const RasterizerState& /*state*/) {}
+    // Dispatch a compute shader launch (Tier-A3). block_x/y are the guest
+    // workgroup dims. Default no-op; D3D12 builds a compute PSO, Null counts.
+    virtual void DispatchCompute(u32 /*block_x*/, u32 /*block_y*/, u32 /*block_z*/) {}
 
     // --- Guest draw state (translation-layer input) -----------------------
     // These carry the real guest graphics state that the D3D12 backend feeds

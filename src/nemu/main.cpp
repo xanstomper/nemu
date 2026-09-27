@@ -65,10 +65,12 @@ int main(int argc, char** argv) {
 
     std::string target_title;
     std::string initial_subview;
-#ifdef NEMU_PLATFORM_LINUX
-    std::string run_boot_path;   // --run <path.nro> headless boot probe (Linux test path)
+    // Headless boot probe is compiled on ALL platforms (Linux + Windows/Xbox).
+    // It is a scriptable NRO boot verifier for CI and on-device bring-up:
+    // --run <path.nro> [--max-frames=N] loads a title, runs a bounded number of
+    // frames, and reports a BOOT verdict via stdout + exit code.
+    std::string run_boot_path;   // --run <path.nro> headless boot probe
     u64 run_max_frames = 3;
-#endif
     bool demo_mode = false;
     bool ui_test_mode = false;
 
@@ -80,12 +82,10 @@ int main(int argc, char** argv) {
             ui_test_mode = true;
         } else if (arg.rfind("--subview=", 0) == 0) {
             initial_subview = arg.substr(10);
-#ifdef NEMU_PLATFORM_LINUX
         } else if (arg == "--run") {
             if (i + 1 < argc) run_boot_path = argv[++i];
         } else if (arg.rfind("--max-frames=", 0) == 0) {
             run_max_frames = std::max<u64>(1, std::strtoull(arg.substr(13).c_str(), nullptr, 10));
-#endif
         } else if (!arg.starts_with("--")) {
             target_title = arg;
         }
@@ -109,15 +109,14 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-#ifdef NEMU_PLATFORM_LINUX
-    // Linux-only headless boot probe: --run <path.nro> loads a title and runs a
-    // bounded number of frames, then reports a BOOT verdict. This is a test
-    // harness for trying to boot things on Linux; it is NOT part of the Xbox
-    // deployment and never enters the interactive Switch UI.
+    // Headless boot probe (all platforms): --run <path.nro> loads a title and
+    // runs a bounded number of frames, then reports a BOOT verdict. Scriptable
+    // acceptance test for CI (Linux) AND on-device bring-up (Xbox Dev Mode
+    // console over Device Portal / SSH-style invocation).
     if (!run_boot_path.empty()) {
-        NEMU_LOG_INFO("LinuxBoot", "Headless run probe: '{}'", run_boot_path);
+        NEMU_LOG_INFO("BootProbe", "Headless run probe: '{}'", run_boot_path);
         if (!emulator.LoadTitle(run_boot_path)) {
-            NEMU_LOG_ERROR("LinuxBoot", "FAILED: could not load title '{}'", run_boot_path);
+            NEMU_LOG_ERROR("BootProbe", "FAILED: could not load title '{}'", run_boot_path);
             return 2;
         }
         std::cout << "[NEMU-BOOT] Loaded OK; running up to " << run_max_frames
@@ -128,10 +127,9 @@ int main(int argc, char** argv) {
         std::cout << "[NEMU-BOOT] frames_executed=" << frames
                   << " -> " << (advanced ? "BOOTED (advanced frames)" : "NO-FRAMES (stalled)")
                   << std::endl;
-        NEMU_LOG_INFO("LinuxBoot", "Headless run complete: {} frame(s)", frames);
+        NEMU_LOG_INFO("BootProbe", "Headless run complete: {} frame(s)", frames);
         return advanced ? 0 : 3;
     }
-#endif
 
     // If direct title or automated demo flag requested, execute immediately
     if (demo_mode) {

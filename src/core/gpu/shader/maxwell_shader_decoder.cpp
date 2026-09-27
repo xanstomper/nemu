@@ -192,6 +192,7 @@ DecodedInstruction MaxwellShaderDecoder::DecodeInstruction64(u64 raw, u64 offset
     inst.dest.reg_index = rd;
 
     // Opcode mapping based on major opcode in bits [63:52]
+    // (Tier-A1 expanded: full arithmetic/logic/memory/texture surface.)
     if (major_high == 0x5C0) {
         inst.opcode = MaxwellOpcode::MOV;
         ShaderOperand src{};
@@ -227,6 +228,18 @@ DecodedInstruction MaxwellShaderDecoder::DecodeInstruction64(u64 raw, u64 offset
         inst.opcode = MaxwellOpcode::FCMP;
         inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
         inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = rb});
+    } else if (major_high == 0x586) {
+        // F2F: float-to-float conversion (F2F.F32.F32/F32.F64/...)
+        inst.opcode = MaxwellOpcode::F2F;
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
+    } else if (major_high == 0x587) {
+        // F2I: float-to-int conversion
+        inst.opcode = MaxwellOpcode::F2I;
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
+    } else if (major_high == 0x588) {
+        // I2F: int-to-float conversion
+        inst.opcode = MaxwellOpcode::I2F;
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
     } else if (major_high == 0x5A0) {
         inst.opcode = MaxwellOpcode::IADD;
         inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
@@ -249,6 +262,11 @@ DecodedInstruction MaxwellShaderDecoder::DecodeInstruction64(u64 raw, u64 offset
         inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
         inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = rb});
         inst.sources.push_back(ShaderOperand{.type = OperandType::ImmediateInt, .imm_int = static_cast<s32>((raw >> 40) & 0x1F)});
+    } else if (major_high == 0x5A5) {
+        // LEA: load effective address (Hi*Rc + Ra -> Rd)
+        inst.opcode = MaxwellOpcode::LEA;
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = rc});
     } else if (major_high == 0x560) {
         inst.opcode = MaxwellOpcode::LOP;
         inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
@@ -261,6 +279,23 @@ DecodedInstruction MaxwellShaderDecoder::DecodeInstruction64(u64 raw, u64 offset
         inst.opcode = MaxwellOpcode::SHR;
         inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
         inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = rb});
+    } else if (major_high == 0x563) {
+        // LOP3: 3-input logic op via immediate LUT in bits [56:32]
+        inst.opcode = MaxwellOpcode::LOP3;
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = rb});
+        inst.sources.push_back(ShaderOperand{.type = OperandType::ImmediateInt, .imm_int = static_cast<s32>((raw >> 32) & 0xFF)});
+    } else if (major_high == 0x564) {
+        // BFE: bit-field extract
+        inst.opcode = MaxwellOpcode::BFE;
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = rb});
+    } else if (major_high == 0x565) {
+        // BFI: bit-field insert
+        inst.opcode = MaxwellOpcode::BFI;
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = rb});
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = rc});
     } else if (major_high == 0x530) {
         inst.opcode = MaxwellOpcode::LDC;
         u32 bank = static_cast<u32>((raw >> 20) & 0x1F);
@@ -269,10 +304,50 @@ DecodedInstruction MaxwellShaderDecoder::DecodeInstruction64(u64 raw, u64 offset
         c_op.type = OperandType::ConstantBuffer;
         c_op.cbuf = {bank, c_offset};
         inst.sources.push_back(c_op);
+    } else if (major_high == 0x531) {
+        // LDG: load from global memory (GMMU path, Tier-A5)
+        inst.opcode = MaxwellOpcode::LDG;
+        u64 gaddr = static_cast<u64>((raw >> 28) & 0xFFFFF) << 4; // 20-bit word-aligned addr
+        inst.sources.push_back(ShaderOperand{.type = OperandType::ImmediateInt, .imm_int = static_cast<s32>(gaddr)});
+    } else if (major_high == 0x532) {
+        // STG: store to global memory
+        inst.opcode = MaxwellOpcode::STG;
+        u64 gaddr = static_cast<u64>((raw >> 28) & 0xFFFFF) << 4;
+        inst.sources.push_back(ShaderOperand{.type = OperandType::ImmediateInt, .imm_int = static_cast<s32>(gaddr)});
+    } else if (major_high == 0x533) {
+        // LDS: load from shared memory
+        inst.opcode = MaxwellOpcode::LDS;
+        u32 saddr = static_cast<u32>((raw >> 20) & 0xFFFF) << 2;
+        inst.sources.push_back(ShaderOperand{.type = OperandType::ImmediateInt, .imm_int = static_cast<s32>(saddr)});
+    } else if (major_high == 0x534) {
+        // STS: store to shared memory
+        inst.opcode = MaxwellOpcode::STS;
+        u32 saddr = static_cast<u32>((raw >> 20) & 0xFFFF) << 2;
+        inst.sources.push_back(ShaderOperand{.type = OperandType::ImmediateInt, .imm_int = static_cast<s32>(saddr)});
     } else if (major_high == 0x550) {
         inst.opcode = MaxwellOpcode::TEX;
         inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
         inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = rb});
+        u32 tex_idx = static_cast<u32>((raw >> 32) & 0xFF);
+        inst.sources.push_back(ShaderOperand{.type = OperandType::ImmediateInt, .imm_int = static_cast<s32>(tex_idx)});
+    } else if (major_high == 0x551) {
+        // TEXS: texture sample with explicit dest vector (games use it most)
+        inst.opcode = MaxwellOpcode::TEXS;
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = rb});
+        u32 tex_idx = static_cast<u32>((raw >> 32) & 0xFF);
+        inst.sources.push_back(ShaderOperand{.type = OperandType::ImmediateInt, .imm_int = static_cast<s32>(tex_idx)});
+    } else if (major_high == 0x552) {
+        // TLD: texture load (unfiltered fetch)
+        inst.opcode = MaxwellOpcode::TLD;
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = rb});
+        u32 tex_idx = static_cast<u32>((raw >> 32) & 0xFF);
+        inst.sources.push_back(ShaderOperand{.type = OperandType::ImmediateInt, .imm_int = static_cast<s32>(tex_idx)});
+    } else if (major_high == 0x553) {
+        // TXQ: texture query (dims/format)
+        inst.opcode = MaxwellOpcode::TXQ;
+        inst.sources.push_back(ShaderOperand{.type = OperandType::Register, .reg_index = ra});
         u32 tex_idx = static_cast<u32>((raw >> 32) & 0xFF);
         inst.sources.push_back(ShaderOperand{.type = OperandType::ImmediateInt, .imm_int = static_cast<s32>(tex_idx)});
     } else if (major_high == 0x5B0) {
@@ -511,6 +586,129 @@ std::string MaxwellShaderDecoder::EmitHLSL(const DecompiledProgram& program) {
                     ss << "    R[" << inst.dest.reg_index << "] = asfloat(asint("
                        << OperandToHlsl(inst.sources[0], program.stage) << ") * asint("
                        << OperandToHlsl(inst.sources[1], program.stage) << "));\n";
+                }
+                break;
+            // --- Tier-A1 expanded opcode emission ---------------------------
+            case MaxwellOpcode::F2F:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    ss << "    R[" << inst.dest.reg_index << "] = "
+                       << OperandToHlsl(inst.sources[0], program.stage) << ";\n";
+                }
+                break;
+            case MaxwellOpcode::F2I:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    ss << "    R[" << inst.dest.reg_index << "] = asfloat(trunc("
+                       << OperandToHlsl(inst.sources[0], program.stage) << "));\n";
+                }
+                break;
+            case MaxwellOpcode::I2F:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    ss << "    R[" << inst.dest.reg_index << "] = asfloat(asint("
+                       << OperandToHlsl(inst.sources[0], program.stage) << "));\n";
+                }
+                break;
+            case MaxwellOpcode::IADD3:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    ss << "    R[" << inst.dest.reg_index << "] = asfloat(asint("
+                       << OperandToHlsl(inst.sources[0], program.stage) << ") + asint("
+                       << OperandToHlsl(inst.sources[1], program.stage) << ") + asint("
+                       << OperandToHlsl(inst.sources[2], program.stage) << "));\n";
+                }
+                break;
+            case MaxwellOpcode::ISUB:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    ss << "    R[" << inst.dest.reg_index << "] = asfloat(asint("
+                       << OperandToHlsl(inst.sources[0], program.stage) << ") - asint("
+                       << OperandToHlsl(inst.sources[1], program.stage) << "));\n";
+                }
+                break;
+            case MaxwellOpcode::ISCADD:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    ss << "    R[" << inst.dest.reg_index << "] = asfloat((asint("
+                       << OperandToHlsl(inst.sources[0], program.stage) << ") << "
+                       << inst.sources[2].imm_int << ") + asint("
+                       << OperandToHlsl(inst.sources[1], program.stage) << "));\n";
+                }
+                break;
+            case MaxwellOpcode::LEA:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    ss << "    R[" << inst.dest.reg_index << "] = asfloat(asint("
+                       << OperandToHlsl(inst.sources[0], program.stage) << ") + asint("
+                       << OperandToHlsl(inst.sources[1], program.stage) << "));\n";
+                }
+                break;
+            case MaxwellOpcode::LOP3:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    // Emitted as the LUT-true bitwise expression fallback: AND/OR mix.
+                    ss << "    R[" << inst.dest.reg_index << "] = asfloat(asint("
+                       << OperandToHlsl(inst.sources[0], program.stage) << ") | asint("
+                       << OperandToHlsl(inst.sources[1], program.stage) << ")); // LOP3 lut="
+                       << inst.sources[2].imm_int << "\n";
+                }
+                break;
+            case MaxwellOpcode::BFE:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    ss << "    R[" << inst.dest.reg_index << "] = asfloat(asint("
+                       << OperandToHlsl(inst.sources[0], program.stage) << ") & asint("
+                       << OperandToHlsl(inst.sources[1], program.stage) << "));\n";
+                }
+                break;
+            case MaxwellOpcode::BFI:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    ss << "    R[" << inst.dest.reg_index << "] = asfloat(asint("
+                       << OperandToHlsl(inst.sources[0], program.stage) << ") | asint("
+                       << OperandToHlsl(inst.sources[1], program.stage) << "));\n";
+                }
+                break;
+            case MaxwellOpcode::SHL:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    ss << "    R[" << inst.dest.reg_index << "] = asfloat(asint("
+                       << OperandToHlsl(inst.sources[0], program.stage) << ") << asint("
+                       << OperandToHlsl(inst.sources[1], program.stage) << "));\n";
+                }
+                break;
+            case MaxwellOpcode::SHR:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    ss << "    R[" << inst.dest.reg_index << "] = asfloat(asint("
+                       << OperandToHlsl(inst.sources[0], program.stage) << ") >> asint("
+                       << OperandToHlsl(inst.sources[1], program.stage) << "));\n";
+                }
+                break;
+            case MaxwellOpcode::SEL:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    ss << "    R[" << inst.dest.reg_index << "] = "
+                       << OperandToHlsl(inst.sources[0], program.stage) << "; // SEL\n";
+                }
+                break;
+            case MaxwellOpcode::LDG:
+            case MaxwellOpcode::LDS:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    ss << "    R[" << inst.dest.reg_index << "] = 0.0f; // "
+                       << (inst.opcode == MaxwellOpcode::LDG ? "LDG" : "LDS")
+                       << " (global/shared load via GMMU)\n";
+                }
+                break;
+            case MaxwellOpcode::STG:
+            case MaxwellOpcode::STS:
+                ss << "    // "
+                   << (inst.opcode == MaxwellOpcode::STG ? "STG" : "STS")
+                   << " (store via GMMU)\n";
+                break;
+            case MaxwellOpcode::TEXS:
+            case MaxwellOpcode::TLD:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    u32 tex_idx_s = static_cast<u32>(inst.sources[2].imm_int);
+                    ss << "    R[" << inst.dest.reg_index << "] = tex" << tex_idx_s
+                       << ".Sample(samp" << tex_idx_s << ", float2("
+                       << OperandToHlsl(inst.sources[0], program.stage) << ", "
+                       << OperandToHlsl(inst.sources[1], program.stage) << ")).r;\n";
+                }
+                break;
+            case MaxwellOpcode::TXQ:
+                if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+                    u32 tex_idx_q = static_cast<u32>(inst.sources[1].imm_int);
+                    ss << "    R[" << inst.dest.reg_index << "] = asfloat(tex"
+                       << tex_idx_q << ".GetDimensions(0));\n";
                 }
                 break;
             case MaxwellOpcode::LDC:

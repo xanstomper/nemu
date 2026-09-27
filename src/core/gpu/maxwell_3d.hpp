@@ -3,6 +3,8 @@
 #include "core/types.hpp"
 #include "core/common/scratch_buffer.hpp"
 #include "gpu_interface.hpp"
+#include "gmmu.hpp"
+#include "buffer_cache.hpp"
 #include <span>
 #include <array>
 #include <memory>
@@ -22,6 +24,9 @@ namespace MaxwellMethod {
     constexpr u32 ViewportScaleY = 0x035E;
     constexpr u32 ViewportOffsetX = 0x0360;
     constexpr u32 ViewportOffsetY = 0x0361;
+    // Viewport Z (real Maxwell: 0x035F scale-z, 0x035C/0x035D pair per vp 0).
+    constexpr u32 ViewportScaleZ = 0x035F;
+    constexpr u32 ViewportOffsetZ = 0x0264;
     constexpr u32 ClearColorR = 0x0368;
     constexpr u32 ClearColorG = 0x0369;
     constexpr u32 ClearColorB = 0x036A;
@@ -33,6 +38,35 @@ namespace MaxwellMethod {
     constexpr u32 ScissorY = 0x0382;
     constexpr u32 ScissorWidth = 0x0383;
     constexpr u32 ScissorHeight = 0x0384;
+    // --- Rasterizer state (Tier-A2 expanded surface) ---
+    // Depth/stencil test enable + funcs (addresses mirror yuzu's maxwell_3d
+    // RegisterIndexes; values are what real games push).
+    constexpr u32 DepthTestEnable = 0x0465;
+    constexpr u32 DepthWriteEnable = 0x0466;
+    constexpr u32 DepthFunc = 0x0467;          // 0 Never..7 Always (GL enum - 0x200)
+    constexpr u32 BlendEnablePerRT0 = 0x04D4;  // per-RT blend enables (0x04D4..0x04D7)
+    constexpr u32 BlendSeparateAlpha = 0x04D8;
+    constexpr u32 BlendEquationRgb = 0x04E0;   // func, src, dst triples per RT
+    constexpr u32 StencilEnable = 0x04E4;      // front+back packed
+    constexpr u32 AlphaTestEnable = 0x042C;
+    constexpr u32 AlphaFunc = 0x042D;
+    constexpr u32 AlphaRef = 0x042E;
+    constexpr u32 MSAAEnable = 0x04D0;         // raster enable / MSAA samples
+    constexpr u32 MSAA_samples = 0x04D1;
+    constexpr u32 CullFaceEnable = 0x042B;
+    constexpr u32 FrontFace = 0x0430;
+    constexpr u32 CullFace = 0x0431;
+    // Vertex attribute format registers (real Maxwell: 0x0620..0x063F = attrib
+    // format array, 8 attribs, each packs [offset:16][fmt:5][size:5][elems:3]...).
+    constexpr u32 VertexAttribFormat0 = 0x0620;  // ..0x0627
+    constexpr u32 VertexAttribCount = 0x0628;    // number of active attribs
+    // Draw topology register (real games set VertexGlTopo before draws).
+    constexpr u32 VertexGlTopology = 0x0593;
+    // Vertex buffer strides (0x0580..0x0587 per-vertex-stream stride words).
+    constexpr u32 VertexStreamStride0 = 0x0580;
+    // Instance/step mode for instanced draws.
+    constexpr u32 VertexIDBase = 0x05E8;
+    constexpr u32 InstanceCount = 0x05F6;      // used by DrawArraysInstanced
     constexpr u32 VertexArrayAddressHigh = 0x0587;
     constexpr u32 VertexArrayAddressLow = 0x0588;
     constexpr u32 VertexArrayStride = 0x0589;
@@ -42,11 +76,23 @@ namespace MaxwellMethod {
     constexpr u32 IndexCount = 0x05F5;
     constexpr u32 DrawArrays = 0x0674;
     constexpr u32 DrawElements = 0x0675;
+    // DrawTexture (blit-style draw; used by games for UI compositing).
+    constexpr u32 DrawTexture = 0x0676;
     constexpr u32 TextureAddressHigh = 0x0585;
     constexpr u32 TextureAddressLow = 0x0586;
     constexpr u32 TextureFormat = 0x0589;
     constexpr u32 TextureWidth = 0x058A;
     constexpr u32 TextureHeight = 0x058B;
+    // --- Compute (Tier-A3): shader launch through the compute engine ---
+    // Real Maxwell compute: write LaunchDescription (0x0180..0x018F region on
+    // the compute subchannel). We model the essential registers.
+    constexpr u32 ComputeLaunchDesc = 0x0180;   // block dims + shared mem size
+    constexpr u32 ComputeEntryAddressHigh = 0x0182;
+    constexpr u32 ComputeEntryAddressLow = 0x0183;
+    constexpr u32 ComputeConstBufferHigh = 0x0184;
+    constexpr u32 ComputeConstBufferLow = 0x0185;
+    constexpr u32 ComputeConstBufferSize = 0x0186;
+    constexpr u32 DispatchCompute = 0x0190;     // trigger method
     // Guest pipeline shader program upload (Maxwell PIPE/LOAD_PROGRAM). Addresses
     // point at guest memory holding the Maxwell SASS bytecode for each stage.
     constexpr u32 VertexProgramAddressHigh = 0x0E01;
@@ -104,21 +150,36 @@ public:
     void SetMemory(memory::VirtualMemory* memory) noexcept { memory_ = memory; }
     [[nodiscard]] memory::VirtualMemory* GetMemory() const noexcept { return memory_; }
 
+    /// GMMU + buffer cache accessors (Tier-A4/A5). The GMMU resolves guest GPU
+    /// virtual addresses; the buffer cache streams vertex/index/uniform/storage
+    /// uploads through it. Both are optional (null when unused).
+    void SetGpuMemory(std::shared_ptr<GpuMemoryManager> gmmu);
+    [[nodiscard]] GpuMemoryManager* GetGpuMemory() const noexcept { return gmmu_.get(); }
+    [[nodiscard]] BufferCache* GetBufferCache() const noexcept { return buffer_cache_.get(); }
+
 private:
     void ExecuteDrawArrays(u32 argument);
     void ExecuteDrawElements(u32 argument);
+    void ExecuteDrawTexture(u32 argument);
+    void ExecuteDispatchCompute(u32 argument);
     void ExecuteClearSurface(u32 argument);
     void EmitDebugGeometry(); // stage a recognizable test triangle for draws
     void EmitDebugIndexedGeometry(); // stage indexed test geometry
     void BindGuestShaders(); // upload guest VS/PS bytecode to the backend
     void BindGuestTextures(); // upload guest texture binding to the backend
     void BindGuestVertexAttributes(); // upload guest vertex layout + buffer
+    void ApplyRasterizerState(); // push depth/stencil/blend/MSAA/cull state
+    void BindGuestConstantBuffers(); // UBO upload via buffer cache
 
     std::shared_ptr<IGpuBackend> backend_;
     memory::VirtualMemory* memory_{nullptr};
+    std::shared_ptr<GpuMemoryManager> gmmu_;
+    std::shared_ptr<BufferCache> buffer_cache_;
     Maxwell3DRegisters regs_{};
     bool programs_dirty_{false};
     bool textures_dirty_{false};
+    bool raster_state_dirty_{false};
+    bool cbuffs_dirty_{false};
     // Reusable scratch buffer staging guest-draw vertex data
     mutable common::ScratchBuffer<RasterVertex> geometry_scratch_;
     mutable common::ScratchBuffer<u32> index_scratch_;

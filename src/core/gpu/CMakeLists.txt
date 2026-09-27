@@ -4,6 +4,10 @@ set(GPU_SOURCES
     gpu_interface.hpp
     null_backend.hpp
     null_backend.cpp
+    gmmu.hpp
+    gmmu.cpp
+    buffer_cache.hpp
+    buffer_cache.cpp
     maxwell_3d.hpp
     maxwell_3d.cpp
     gpu_factory.hpp

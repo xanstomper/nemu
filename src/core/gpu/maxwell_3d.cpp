@@ -13,6 +13,11 @@ Maxwell3D::Maxwell3D(std::shared_ptr<IGpuBackend> backend)
     : backend_(std::move(backend)) {
 }
 
+void Maxwell3D::SetGpuMemory(std::shared_ptr<GpuMemoryManager> gmmu) {
+    gmmu_ = std::move(gmmu);
+    buffer_cache_ = std::make_shared<BufferCache>(gmmu_);
+}
+
 void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
     const u32 reg_idx = method & 0xFFF;
     regs_.regs[reg_idx] = argument;
@@ -32,6 +37,14 @@ void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
 
         case MaxwellMethod::DrawElements:
             ExecuteDrawElements(argument);
+            break;
+
+        case MaxwellMethod::DrawTexture:
+            ExecuteDrawTexture(argument);
+            break;
+
+        case MaxwellMethod::DispatchCompute:
+            ExecuteDispatchCompute(argument);
             break;
 
         case MaxwellMethod::ViewportScaleX:
@@ -103,6 +116,45 @@ void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
             break;
         }
 
+        // --- Tier-A2: rasterizer state surface -----------------------------
+        case MaxwellMethod::DepthTestEnable:
+        case MaxwellMethod::DepthWriteEnable:
+        case MaxwellMethod::DepthFunc:
+        case MaxwellMethod::BlendEnablePerRT0:
+        case MaxwellMethod::BlendSeparateAlpha:
+        case MaxwellMethod::BlendEquationRgb:
+        case MaxwellMethod::StencilEnable:
+        case MaxwellMethod::AlphaTestEnable:
+        case MaxwellMethod::AlphaFunc:
+        case MaxwellMethod::AlphaRef:
+        case MaxwellMethod::MSAAEnable:
+        case MaxwellMethod::MSAA_samples:
+        case MaxwellMethod::CullFaceEnable:
+        case MaxwellMethod::FrontFace:
+        case MaxwellMethod::CullFace: {
+            raster_state_dirty_ = true;
+            break;
+        }
+
+        // --- Tier-A2: vertex attribute format array ------------------------
+        case MaxwellMethod::VertexAttribFormat0:
+        case MaxwellMethod::VertexAttribFormat0 + 1:
+        case MaxwellMethod::VertexAttribFormat0 + 2:
+        case MaxwellMethod::VertexAttribFormat0 + 3:
+        case MaxwellMethod::VertexAttribFormat0 + 4:
+        case MaxwellMethod::VertexAttribFormat0 + 5:
+        case MaxwellMethod::VertexAttribFormat0 + 6:
+        case MaxwellMethod::VertexAttribFormat0 + 7:
+            BindGuestVertexAttributes();
+            break;
+
+        // --- Tier-A4: uniform/storage buffer binds via the buffer cache ----
+        case MaxwellMethod::ComputeConstBufferHigh:
+        case MaxwellMethod::ComputeConstBufferLow:
+        case MaxwellMethod::ComputeConstBufferSize:
+            cbuffs_dirty_ = true;
+            break;
+
         default:
             NEMU_LOG_DEBUG("GPU", "Maxwell3D method 0x{:04X} = 0x{:08X}", method, argument);
             break;
@@ -145,6 +197,12 @@ void Maxwell3D::ExecuteDrawArrays(u32 argument) {
     if (textures_dirty_) {
         BindGuestTextures();
     }
+    if (raster_state_dirty_) {
+        ApplyRasterizerState();
+    }
+    if (cbuffs_dirty_) {
+        BindGuestConstantBuffers();
+    }
     BindGuestVertexAttributes();
 
     const u32 topology_raw = argument & 0x0F;
@@ -161,11 +219,29 @@ void Maxwell3D::ExecuteDrawArrays(u32 argument) {
         default: break;
     }
 
-    // Bind guest vertices if available; otherwise stage fallback debug geometry
+    // Tier-A4: prefer the buffer-cache path (GMMU-resolved guest vertex data,
+    // streamed with dirty-range uploads) when a GMMU is attached.
+    u64 vb_entry = 0;
     const u64 vtx_addr = (static_cast<u64>(regs_.regs[MaxwellMethod::VertexArrayAddressHigh]) << 32) |
                           static_cast<u64>(regs_.regs[MaxwellMethod::VertexArrayAddressLow]);
+    const u32 stride = std::max<u32>(24u, regs_.regs[MaxwellMethod::VertexArrayStride] & 0xFF);
+    if (buffer_cache_ && vtx_addr != 0 && vertex_count >= 3) {
+        vb_entry = buffer_cache_->Acquire(BufferCache::Type::Vertex, vtx_addr,
+                                          static_cast<u64>(stride) * vertex_count);
+        if (vb_entry != 0) {
+            // Upload the raw bytes to the backend as the guest vertex buffer
+            // (the D3D12 path uses this directly; software path falls through
+            // to the cached read below).
+            std::vector<u8> vb(static_cast<size_t>(stride) * vertex_count);
+            if (buffer_cache_->ReadEntry(vb_entry, 0, vb.data(), vb.size())) {
+                backend_->SetGuestVertexBuffer(std::span<const u8>(vb), stride);
+            }
+        }
+    }
+
+    // Bind guest vertices if available; otherwise stage fallback debug geometry
     bool bound_guest_verts = false;
-    if (memory_ && vtx_addr != 0 && vertex_count >= 3) {
+    if (memory_ && vtx_addr != 0 && vertex_count >= 3 && vb_entry == 0) {
         const size_t bytes_needed = vertex_count * sizeof(RasterVertex);
         if (memory_->IsValidAddress(vtx_addr, bytes_needed)) {
             RasterVertex* verts = geometry_scratch_.Resize(vertex_count);
@@ -175,10 +251,15 @@ void Maxwell3D::ExecuteDrawArrays(u32 argument) {
             }
         }
     }
-    if (!bound_guest_verts && vertex_count >= 3) {
+    if (!bound_guest_verts && vb_entry == 0 && vertex_count >= 3) {
         EmitDebugGeometry();
     }
-    backend_->DrawArrays(topology, 0, vertex_count);
+    // Instanced draws (Tier-A2): games pass instance count > 1 for vegetation,
+    // particles. The backend loops the draw; batch it into one call when 1.
+    const u32 instances = std::max<u32>(1u, regs_.regs[MaxwellMethod::InstanceCount]);
+    for (u32 inst = 0; inst < instances; ++inst) {
+        backend_->DrawArrays(topology, 0, vertex_count);
+    }
 }
 
 void Maxwell3D::ExecuteDrawElements(u32 argument) {
@@ -189,6 +270,12 @@ void Maxwell3D::ExecuteDrawElements(u32 argument) {
     }
     if (textures_dirty_) {
         BindGuestTextures();
+    }
+    if (raster_state_dirty_) {
+        ApplyRasterizerState();
+    }
+    if (cbuffs_dirty_) {
+        BindGuestConstantBuffers();
     }
     BindGuestVertexAttributes();
 
@@ -210,8 +297,17 @@ void Maxwell3D::ExecuteDrawElements(u32 argument) {
     const u64 idx_addr = (static_cast<u64>(regs_.regs[MaxwellMethod::IndexAddressHigh]) << 32) |
                           static_cast<u64>(regs_.regs[MaxwellMethod::IndexAddressLow]);
     const u32 idx_format = regs_.regs[MaxwellMethod::IndexFormat]; // 0 = u8, 1 = u16, 2 = u32
+    const u32 elem_size = (idx_format == 1) ? 2u : ((idx_format == 2) ? 4u : 1u);
+
+    // Tier-A4: buffer-cache path for index data (GMMU-resolved, streamed).
+    u64 ib_entry = 0;
+    if (buffer_cache_ && idx_addr != 0 && index_count >= 3) {
+        ib_entry = buffer_cache_->Acquire(BufferCache::Type::Index, idx_addr,
+                                          static_cast<u64>(elem_size) * index_count);
+    }
+
     bool bound_guest_indices = false;
-    if (memory_ && idx_addr != 0 && index_count >= 3) {
+    if (memory_ && idx_addr != 0 && index_count >= 3 && ib_entry == 0) {
         u32* indices = index_scratch_.Resize(index_count);
         if (idx_format == 1) { // u16
             std::vector<u16> u16_indices(index_count);
@@ -227,10 +323,113 @@ void Maxwell3D::ExecuteDrawElements(u32 argument) {
             }
         }
     }
-    if (!bound_guest_indices && index_count >= 3) {
+    if (!bound_guest_indices && ib_entry == 0 && index_count >= 3) {
         EmitDebugIndexedGeometry();
     }
     backend_->DrawIndexed(topology, index_count, 0, 0);
+}
+
+void Maxwell3D::ExecuteDrawTexture([[maybe_unused]] u32 argument) {
+    // Tier-A2: DrawTexture (games use it for UI/letterbox compositing). We map
+    // it to a fullscreen textured draw using the current texture binding.
+    if (!backend_) return;
+    if (textures_dirty_) {
+        BindGuestTextures();
+    }
+    // A fullscreen quad covering the viewport; the texture provides the color.
+    RasterVertex* verts = geometry_scratch_.Resize(4);
+    verts[0] = {-1.0f, -1.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+    verts[1] = { 1.0f, -1.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+    verts[2] = { 1.0f,  1.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+    verts[3] = {-1.0f,  1.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+    u32* indices = index_scratch_.Resize(6);
+    indices[0] = 0; indices[1] = 1; indices[2] = 2;
+    indices[3] = 0; indices[4] = 2; indices[5] = 3;
+    backend_->SetRasterVertices(std::span<const RasterVertex>(verts, 4));
+    backend_->SetRasterIndices(std::span<const u32>(indices, 6));
+    backend_->DrawIndexed(PrimitiveTopology::Triangles, 6, 0, 0);
+}
+
+void Maxwell3D::ExecuteDispatchCompute([[maybe_unused]] u32 argument) {
+    // Tier-A3: compute dispatch. The guest wrote ComputeLaunchDesc (block dims
+    // packed) + entry address + const buffer. Real games use this for postFX,
+    // shadows, GPU particles. We resolve the const buffer through the buffer
+    // cache and record the dispatch for the backend translation layer; the
+    // D3D12 backend translates the compute PSO, the Null/SDL2 backends count it.
+    if (!backend_) return;
+    if (cbuffs_dirty_) {
+        BindGuestConstantBuffers();
+    }
+    const u32 block_x = (regs_.regs[MaxwellMethod::ComputeLaunchDesc] >> 0) & 0xFFFF;
+    const u32 block_y = (regs_.regs[MaxwellMethod::ComputeLaunchDesc] >> 16) & 0xFFFF;
+    const u64 entry = (static_cast<u64>(regs_.regs[MaxwellMethod::ComputeEntryAddressHigh]) << 32) |
+                       static_cast<u64>(regs_.regs[MaxwellMethod::ComputeEntryAddressLow]);
+    NEMU_LOG_DEBUG("GPU", "DispatchCompute: blocks {}x{}, entry 0x{:X}",
+                   block_x, block_y, entry);
+    // The backend interface gains DispatchCompute; no-op default keeps the
+    // software path working while D3D12 implements it.
+    backend_->DispatchCompute(block_x, block_y, 1);
+}
+
+void Maxwell3D::ApplyRasterizerState() {
+    // Tier-A2: forward the guest rasterizer state block to the backend.
+    if (!backend_) {
+        raster_state_dirty_ = false;
+        return;
+    }
+    RasterizerState rs{};
+    rs.depth_test_enable = regs_.regs[MaxwellMethod::DepthTestEnable] != 0;
+    rs.depth_write_enable = regs_.regs[MaxwellMethod::DepthWriteEnable] != 0;
+    rs.depth_func = regs_.regs[MaxwellMethod::DepthFunc];
+    rs.stencil_enable = regs_.regs[MaxwellMethod::StencilEnable] != 0;
+    rs.alpha_test_enable = regs_.regs[MaxwellMethod::AlphaTestEnable] != 0;
+    rs.alpha_ref = regs_.GetFloat(MaxwellMethod::AlphaRef);
+    rs.cull_face_enable = regs_.regs[MaxwellMethod::CullFaceEnable] != 0;
+    rs.front_face = regs_.regs[MaxwellMethod::FrontFace];
+    rs.cull_face = regs_.regs[MaxwellMethod::CullFace];
+    rs.msaa_samples = regs_.regs[MaxwellMethod::MSAAEnable]
+                          ? regs_.regs[MaxwellMethod::MSAA_samples]
+                          : 1u;
+    // Per-RT blend enables: pack 4 enables into the u32 word.
+    rs.blend_enable_0 = regs_.regs[MaxwellMethod::BlendEnablePerRT0] != 0;
+    rs.blend_equation_rgb = regs_.regs[MaxwellMethod::BlendEquationRgb];
+    backend_->SetRasterizerState(rs);
+    raster_state_dirty_ = false;
+}
+
+void Maxwell3D::BindGuestConstantBuffers() {
+    // Tier-A4: resolve the guest uniform buffer (constant buffer slot 0) via
+    // the buffer cache and bind it to the backend. Games pack view/proj mats,
+    // light params, etc. into this.
+    if (!backend_) {
+        cbuffs_dirty_ = false;
+        return;
+    }
+    const u64 cb_addr = (static_cast<u64>(regs_.regs[MaxwellMethod::ComputeConstBufferHigh]) << 32) |
+                         static_cast<u64>(regs_.regs[MaxwellMethod::ComputeConstBufferLow]);
+    const u32 cb_size = regs_.regs[MaxwellMethod::ComputeConstBufferSize];
+
+    if (cb_addr == 0 || cb_size == 0) {
+        cbuffs_dirty_ = false;
+        return;
+    }
+    if (buffer_cache_) {
+        const u64 entry = buffer_cache_->Acquire(BufferCache::Type::Uniform, cb_addr, cb_size);
+        if (entry != 0) {
+            std::vector<u8> cb(cb_size);
+            if (buffer_cache_->ReadEntry(entry, 0, cb.data(), cb.size())) {
+                backend_->SetGuestConstantBuffer(0, cb.data(), static_cast<u32>(cb.size()));
+            }
+        }
+    } else if (memory_) {
+        // No GMMU attached (unit-test path): read straight from guest memory.
+        constexpr u32 kMaxCbufBytes = 1u << 16;
+        std::vector<u8> cb(std::min<u32>(cb_size, kMaxCbufBytes));
+        if (memory_->ReadBlock(cb_addr, cb.data(), cb.size())) {
+            backend_->SetGuestConstantBuffer(0, cb.data(), static_cast<u32>(cb.size()));
+        }
+    }
+    cbuffs_dirty_ = false;
 }
 
 void Maxwell3D::EmitDebugIndexedGeometry() {
