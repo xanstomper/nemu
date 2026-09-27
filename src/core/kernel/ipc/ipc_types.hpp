@@ -79,13 +79,14 @@ public:
     /// Read a primitive at a byte offset relative to the buffer base.
     template <typename T>
     T Read(size_t offset) const {
-        static_assert(std::is_integral_v<T> && std::is_unsigned_v<T>);
+        // Accept signed + unsigned integrals (e.g. signed RTC request payloads).
+        static_assert(std::is_integral_v<T>);
         if (offset + sizeof(T) > IpcBufferSize) {
             return T{0};
         }
         T value{0};
         for (size_t i = 0; i < sizeof(T); ++i) {
-            value |= static_cast<T>(base_[offset + i]) << (8 * i);
+            value |= static_cast<T>(static_cast<u8>(base_[offset + i])) << (8 * i);
         }
         return value;
     }
