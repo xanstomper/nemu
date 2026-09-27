@@ -28,6 +28,8 @@ set(GPU_SOURCES
     presentation/nvnflinger.cpp
     texture/astc_decoder.hpp
     texture/astc_decoder.cpp
+    texture/bc1_encoder.hpp
+    texture/bc1_encoder.cpp
     texture/texture_types.hpp
     texture/texture_types.cpp
     texture/texture_cache.hpp

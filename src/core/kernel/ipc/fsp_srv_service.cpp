@@ -318,7 +318,14 @@ u32 FspSrvService::HandleRequest(
 
         case OpenDataStorageByCurrentProcess:
         case OpenDataStorageByProgramId: {
-            auto storage_svc = std::make_shared<FileSystemStorageService>(vfs_, "romfs:/data.bin");
+            // Real protocol: returns an IStorage over the program's RomFS
+            // image. The guest then Read(offset,size) the raw RomFS IVFC
+            // image and parses it client-side (libnx romfsInitFromStorage).
+            // Serve the mounted romfs:/ tree: the storage path points at the
+            // RomFS staging root, and Read/GetSize resolve through the VFS.
+            // (A dedicated single-file path like "romfs:/data.bin" only exists
+            // for synthetic tests; real titles read the whole tree.)
+            auto storage_svc = std::make_shared<FileSystemStorageService>(vfs_, "romfs:/");
             auto session = std::make_shared<KClientSession>();
             session->SetService(storage_svc);
 

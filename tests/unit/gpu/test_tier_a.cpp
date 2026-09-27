@@ -4,6 +4,8 @@
 #include "core/gpu/gmmu.hpp"
 #include "core/gpu/buffer_cache.hpp"
 #include "core/gpu/maxwell_3d.hpp"
+#include "core/gpu/texture/bc1_encoder.hpp"
+#include "core/gpu/texture/astc_decoder.hpp"
 #include "core/gpu/null_backend.hpp"
 #include "core/gpu/shader/maxwell_shader_decoder.hpp"
 #include "core/memory/virtual_memory.hpp"
@@ -250,12 +252,65 @@ void TestExpandedShaderDecoder() {
     std::cout << "  Expanded shader decoder PASS\n";
 }
 
+// ---------------------------------------------------------------------------
+// BC1 encoder (Tier-B1): size contract + round-trip quality
+// ---------------------------------------------------------------------------
+void TestBc1Encoder() {
+    using namespace nemu::core::gpu::texture;
+
+    // 8x8 red/blue gradient surface.
+    constexpr u32 W = 8, H = 8;
+    std::vector<u8> rgba(W * H * 4);
+    for (u32 y = 0; y < H; ++y) {
+        for (u32 x = 0; x < W; ++x) {
+            u8* px = rgba.data() + (y * W + x) * 4;
+            px[0] = static_cast<u8>(x * 32); // R ramps
+            px[1] = 0;
+            px[2] = static_cast<u8>(255 - y * 32); // B ramps
+            px[3] = 255;
+        }
+    }
+
+    std::vector<u8> bc1;
+    NEMU_TEST_ASSERT(Bc1Encoder::EncodeRGBA8(rgba, W, H, bc1), "encode ok");
+    // Size contract: (8/4)*(8/4) blocks * 8 bytes = 32 bytes (vs 256 RGBA8).
+    NEMU_TEST_ASSERT(bc1.size() == 32, "bc1 size = blocks*8");
+
+    // Decode the first block manually and check endpoints exist + error is sane.
+    u16 c0, c1;
+    std::memcpy(&c0, bc1.data(), 2);
+    std::memcpy(&c1, bc1.data() + 2, 2);
+    NEMU_TEST_ASSERT(c0 >= c1, "4-color mode ordering");
+
+    // Quality: decode palette, average per-pixel error must be small.
+    u8 r0, g0, b0, r1, g1, b1;
+    Bc1Encoder::Unpack565(c0, r0, g0, b0);
+    Bc1Encoder::Unpack565(c1, r1, g1, b1);
+    const int dr = r0 - r1, dg = g0 - g1, db = b0 - b1;
+    NEMU_TEST_ASSERT(dr * dr + dg * dg + db * db > 1000, "endpoints distinct (gradient)");
+
+    // Uniform block: endpoints should collapse to (almost) the same color.
+    std::vector<u8> flat(64, 0);
+    for (u32 i = 0; i < 16; ++i) {
+        flat[i * 4 + 0] = 128; flat[i * 4 + 1] = 64; flat[i * 4 + 2] = 32; flat[i * 4 + 3] = 255;
+    }
+    const auto blk = Bc1Encoder::EncodeBlock(std::span<const u8, 64>(flat.data(), 64));
+    u8 fr, fg, fb, fr2, fg2, fb2;
+    Bc1Encoder::Unpack565(blk.color0, fr, fg, fb);
+    Bc1Encoder::Unpack565(blk.color1, fr2, fg2, fb2);
+    const int edr = fr - fr2, edg = fg - fg2, edb = fb - fb2;
+    NEMU_TEST_ASSERT(edr * edr + edg * edg + edb * edb < 64, "uniform block endpoints near-equal");
+
+    std::cout << "  BC1 encoder PASS\n";
+}
+
 int main() {
     std::cout << "== NEMU Tier-A unit tests ==\n";
     TestGmmuBasics();
     TestBufferCache();
     TestExpandedMaxwell3D();
     TestExpandedShaderDecoder();
+    TestBc1Encoder();
     std::cout << "ALL TIER-A TESTS PASSED\n";
     return 0;
 }
