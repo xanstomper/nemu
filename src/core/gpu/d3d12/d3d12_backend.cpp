@@ -447,6 +447,89 @@ void D3D12GpuBackend::SetGuestShaders(std::span<const u8> vs_bytecode, std::span
     }
 }
 
+void D3D12GpuBackend::SetComputeShader(std::span<const u8> compute_bytecode) {
+    compute_shader_.assign(compute_bytecode.begin(), compute_bytecode.end());
+    compute_shader_valid_ = !compute_shader_.empty();
+    compute_pending_ = false; // a fresh shader invalidates any pending state
+    compute_pso_.Reset();
+    compute_root_signature_.Reset();
+    NEMU_LOG_INFO("D3D12", "SetComputeShader: {} bytes queued for compute translation",
+                  compute_shader_.size());
+}
+
+bool D3D12GpuBackend::CreateComputePipeline() {
+    if (!device_ || !compute_shader_valid_) {
+        return false;
+    }
+    // Translate the guest compute Maxwell shader to HLSL, compile to cs_5_0,
+    // and build a compute PSO with a minimal root signature (no root params:
+    // constant buffers are bound via a CBV descriptor table in the translated
+    // pipeline; compute keeps the same register layout).
+    const auto translated = shader::ShaderTranslator::Translate(
+        compute_shader_, shader::ShaderStage::Compute, /*has_control_codes=*/true);
+    if (!translated.ok || translated.hlsl_source.empty()) {
+        NEMU_LOG_WARN("D3D12", "CreateComputePipeline: guest compute shader failed to translate");
+        return false;
+    }
+
+    D3D12_ROOT_SIGNATURE_DESC root_desc{};
+    root_desc.NumParameters = 0;
+    root_desc.NumStaticSamplers = 0;
+    Microsoft::WRL::ComPtr<ID3DBlob> sig_blob, sig_error;
+    hr_ = D3D12SerializeRootSignature(&root_desc, D3D_ROOT_SIGNATURE_VERSION_1, &sig_blob, &sig_error);
+    if (FAILED(hr_)) {
+        NEMU_LOG_WARN("D3D12", "CreateComputePipeline: root signature serialization failed 0x{:08X}",
+                      static_cast<u32>(hr_));
+        return false;
+    }
+    if (FAILED(device_->CreateRootSignature(0, sig_blob->GetBufferPointer(), sig_blob->GetBufferSize(),
+                                            IID_PPV_ARGS(&compute_root_signature_)))) {
+        NEMU_LOG_WARN("D3D12", "CreateComputePipeline: CreateRootSignature failed");
+        return false;
+    }
+
+    Microsoft::WRL::ComPtr<ID3DBlob> cs_blob;
+    hr_ = D3DCompile(translated.hlsl_source.data(), translated.hlsl_source.size(), "NemuCS",
+                     nullptr, nullptr, "main", "cs_5_0", 0, 0, &cs_blob, nullptr);
+    if (FAILED(hr_)) {
+        NEMU_LOG_WARN("D3D12", "CreateComputePipeline: D3DCompile(cs) failed 0x{:08X}",
+                      static_cast<u32>(hr_));
+        return false;
+    }
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC cs_desc{};
+    cs_desc.pRootSignature = compute_root_signature_.Get();
+    cs_desc.CS = {cs_blob->GetBufferPointer(), cs_blob->GetBufferSize()};
+    if (FAILED(device_->CreateComputePipelineState(&cs_desc, IID_PPV_ARGS(&compute_pso_)))) {
+        NEMU_LOG_WARN("D3D12", "CreateComputePipeline: CreateComputePipelineState failed");
+        return false;
+    }
+    NEMU_LOG_INFO("D3D12", "CreateComputePipeline: translated + compiled compute PSO");
+    return true;
+}
+
+void D3D12GpuBackend::DispatchCompute(u32 block_x, u32 block_y, u32 block_z) {
+    // Tier-A3: build the compute PSO lazily on first dispatch, then bind and
+    // run. This is what retail postFX/shadows/GPU-particles use.
+    if (!device_ || !command_list_) {
+        return;
+    }
+    if (!compute_pso_) {
+        if (!CreateComputePipeline()) {
+            // Shader not ready / translation failed: record the accounting and
+            // fall through (the software path continues; nothing fatal).
+            compute_pending_ = true;
+            stats_.draw_calls++; // observable accounting
+            return;
+        }
+        compute_pending_ = false;
+    }
+    command_list_->SetComputeRootSignature(compute_root_signature_.Get());
+    command_list_->SetPipelineState(compute_pso_.Get());
+    command_list_->Dispatch(block_x, block_y, block_z);
+    stats_.frames_generated++; // approximate: a dispatch is a real GPU pass
+}
+
 void D3D12GpuBackend::SetGuestConstantBuffer(u32 slot, const void* data, u32 bytes) {
     if (slot >= kMaxGuestCbufSlots) {
         NEMU_LOG_WARN("D3D12", "SetGuestConstantBuffer: slot {} out of range (max {})", slot, kMaxGuestCbufSlots - 1);

@@ -4,6 +4,7 @@
 #include "core/gpu/gmmu.hpp"
 #include "core/gpu/buffer_cache.hpp"
 #include "core/gpu/maxwell_3d.hpp"
+#include "core/gpu/compute_qmd.hpp"
 #include "core/gpu/texture/bc1_encoder.hpp"
 #include "core/gpu/texture/astc_decoder.hpp"
 #include "core/gpu/texture/texture_cache.hpp"
@@ -484,6 +485,116 @@ void TestExtendedSassEmission() {
     std::cout << "  Extended SASS emission PASS\n";
 }
 
+// ---------------------------------------------------------------------------
+// ComputeQmd & Hardware ComputeLaunch (Tier-A3)
+// ---------------------------------------------------------------------------
+void TestComputeQmd() {
+    ComputeQmd qmd{};
+    // word 8: program offset
+    qmd.words[8] = 0x1200;
+    // word 12: GridDimX
+    qmd.words[12] = 32;
+    // word 13: GridDimY (low 16), GridDimZ (high 16)
+    qmd.words[13] = 16 | (4 << 16);
+    // word 18: BlockDimX (high 16)
+    qmd.words[18] = (8 << 16);
+    // word 19: BlockDimY (low 16), BlockDimZ (high 16)
+    qmd.words[19] = 4 | (2 << 16);
+    // word 17: shared memory size
+    qmd.words[17] = 4096;
+    // word 20: cbuf mask (bits 0..7) -> enable slot 0 and slot 2
+    qmd.words[20] = (1 << 0) | (1 << 2);
+    // slot 0: word 29 (addr low), word 30 (addr high bits 0..7, size >> 15)
+    // address = 0x20000, size = 512
+    qmd.words[29] = 0x20000;
+    qmd.words[30] = 0x0 | (512 << 15);
+    // slot 2: word 33 (addr low), word 34 (addr high + size)
+    // address = 0x30000, size = 1024
+    qmd.words[33] = 0x30000;
+    qmd.words[34] = 0x0 | (1024 << 15);
+
+    NEMU_TEST_ASSERT(qmd.ProgramOffset() == 0x1200, "QMD program offset");
+    NEMU_TEST_ASSERT(qmd.GridDimX() == 32, "QMD GridDimX");
+    NEMU_TEST_ASSERT(qmd.GridDimY() == 16, "QMD GridDimY");
+    NEMU_TEST_ASSERT(qmd.GridDimZ() == 4, "QMD GridDimZ");
+    NEMU_TEST_ASSERT(qmd.BlockDimX() == 8, "QMD BlockDimX");
+    NEMU_TEST_ASSERT(qmd.BlockDimY() == 4, "QMD BlockDimY");
+    NEMU_TEST_ASSERT(qmd.BlockDimZ() == 2, "QMD BlockDimZ");
+    NEMU_TEST_ASSERT(qmd.SharedMemorySize() == 4096, "QMD SharedMemorySize");
+    NEMU_TEST_ASSERT(qmd.ConstantBufferValid(0), "QMD cbuf 0 valid");
+    NEMU_TEST_ASSERT(!qmd.ConstantBufferValid(1), "QMD cbuf 1 not valid");
+    NEMU_TEST_ASSERT(qmd.ConstantBufferValid(2), "QMD cbuf 2 valid");
+    NEMU_TEST_ASSERT(qmd.ConstantBufferAddress(0) == 0x20000, "QMD cbuf 0 addr");
+    NEMU_TEST_ASSERT(qmd.ConstantBufferSize(0) == 512, "QMD cbuf 0 size");
+    NEMU_TEST_ASSERT(qmd.ConstantBufferAddress(2) == 0x30000, "QMD cbuf 2 addr");
+    NEMU_TEST_ASSERT(qmd.ConstantBufferSize(2) == 1024, "QMD cbuf 2 size");
+
+    // Test Hardware QMD ComputeLaunch through Maxwell3D with GMMU
+    auto backend = std::make_shared<CountingBackend>();
+    Maxwell3D maxwell(backend);
+    auto gmmu = std::make_shared<GpuMemoryManager>(nullptr);
+    maxwell.SetGpuMemory(gmmu);
+
+    // Map a big page for QMD and constant buffers
+    static u8 page[GpuMemoryManager::kBigPageSize];
+    std::memset(page, 0, sizeof(page));
+    const u64 gpu_base = 0x4000000ULL;
+    NEMU_TEST_ASSERT(gmmu->Map(gpu_base, sizeof(page), page), "map QMD memory");
+
+    // Configure cbuf 0 at gpu_base + 0x2000 (size 128)
+    qmd.words[29] = static_cast<u32>(gpu_base + 0x2000);
+    qmd.words[30] = static_cast<u32>(((gpu_base + 0x2000) >> 32) & 0xFF) | (128 << 15);
+    qmd.words[20] = (1 << 0); // only slot 0 enabled
+    std::memcpy(page, qmd.words.data(), sizeof(qmd.words));
+
+    // launch_desc_loc = gpu_base >> 8
+    const u32 launch_loc = static_cast<u32>(gpu_base >> 8);
+    maxwell.ProcessMethod(MaxwellMethod::ComputeLaunchDescLoc, launch_loc);
+
+    const u32 dispatches_before = backend->compute_dispatches;
+    const u32 cbufs_before = backend->cbuf_binds;
+
+    // Issue hardware ComputeLaunch (method 0x00AF)
+    maxwell.ProcessMethod(MaxwellMethod::ComputeLaunch, 0);
+
+    NEMU_TEST_ASSERT(backend->compute_dispatches == dispatches_before + 1, "QMD compute launched");
+    NEMU_TEST_ASSERT(backend->last_block_x == 32, "QMD grid x = 32 passed as block_x to backend");
+    NEMU_TEST_ASSERT(backend->cbuf_binds == cbufs_before + 1, "QMD cbuf bound");
+
+    std::cout << "  ComputeQmd and Hardware ComputeLaunch PASS\n";
+}
+
+// ---------------------------------------------------------------------------
+// Compute shader HLSL emission (Tier-A3): a compute-stage program decodes and
+// the emitter produces a valid cs_5_0 skeleton (numthreads + dispatch id).
+// ---------------------------------------------------------------------------
+void TestComputeShaderEmission() {
+    using namespace nemu::core::gpu::shader;
+
+    // Simple compute program: NOP + EXIT (empty body is a valid shader).
+    u64 w_nop = 0x0200000000000000ULL;   // NOP
+    u64 w_exit = 0xE300000000000000ULL;  // EXIT (mask/value top16 = 1110 0011 0000 ----)
+    std::vector<u8> code;
+    for (u64 w : {w_nop, w_exit}) {
+        for (int b = 7; b >= 0; --b) code.push_back(static_cast<u8>((w >> (b * 8)) & 0xFF));
+    }
+
+    const auto prog = MaxwellShaderDecoder::DecodeAndDecompile(
+        code, ShaderStage::Compute, /*has_control_codes=*/false);
+    NEMU_TEST_ASSERT(!prog.instructions.empty(), "compute decoded");
+    NEMU_TEST_ASSERT(!prog.hlsl_source.empty(), "compute HLSL emitted");
+
+    // Compute skeleton must be cs_5_0-valid: numthreads + dispatch id + void void.
+    const auto& h = prog.hlsl_source;
+    NEMU_TEST_ASSERT(h.find("[numthreads(8, 8, 1)]") != std::string::npos, "numthreads decl");
+    NEMU_TEST_ASSERT(h.find("SV_DispatchThreadID") != std::string::npos, "dispatch thread id");
+    NEMU_TEST_ASSERT(h.find("void main(") != std::string::npos, "void main (no output return)");
+    // No stray 'return output' in compute.
+    NEMU_TEST_ASSERT(h.find("return output") == std::string::npos, "compute has no output return");
+
+    std::cout << "  Compute shader emission PASS\n";
+}
+
 int main() {
     std::cout << "== NEMU Tier-A unit tests ==\n";
     TestGmmuBasics();
@@ -495,6 +606,8 @@ int main() {
     TestPresentOptimizerPipeline();
     TestSassIdentifier();
     TestExtendedSassEmission();
+    TestComputeQmd();
+    TestComputeShaderEmission();
     std::cout << "ALL TIER-A TESTS PASSED\n";
     return 0;
 }

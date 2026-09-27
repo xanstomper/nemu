@@ -1,4 +1,5 @@
 #include "maxwell_3d.hpp"
+#include "compute_qmd.hpp"
 #include "texture/astc_decoder.hpp"
 #include "texture/texture_types.hpp"
 #include "core/memory/virtual_memory.hpp"
@@ -84,6 +85,7 @@ void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
             break;
 
         case MaxwellMethod::DispatchCompute:
+        case MaxwellMethod::ComputeLaunch:
             ExecuteDispatchCompute(argument);
             break;
 
@@ -391,24 +393,117 @@ void Maxwell3D::ExecuteDrawTexture([[maybe_unused]] u32 argument) {
 }
 
 void Maxwell3D::ExecuteDispatchCompute([[maybe_unused]] u32 argument) {
-    // Tier-A3: compute dispatch. The guest wrote ComputeLaunchDesc (block dims
-    // packed) + entry address + const buffer. Real games use this for postFX,
-    // shadows, GPU particles. We resolve the const buffer through the buffer
-    // cache and record the dispatch for the backend translation layer; the
-    // D3D12 backend translates the compute PSO, the Null/SDL2 backends count it.
+    // Tier-A3: compute dispatch. Handles both hardware Kepler/Maxwell Queue
+    // Meta Descriptor (QMD) launches (via method 0xAD launch_desc_loc + 0xAF
+    // launch) and synthetic/direct register dispatches (method 0x0190).
+    // Real games use compute for postFX, shadows, and GPU particles.
     if (!backend_) return;
     if (cbuffs_dirty_) {
         BindGuestConstantBuffers();
     }
+
+    const u32 launch_desc_loc = regs_.regs[MaxwellMethod::ComputeLaunchDescLoc];
+    if (launch_desc_loc != 0) {
+        // Hardware Kepler/Maxwell Queue Meta Descriptor (QMD) launch.
+        const u64 qmd_address = static_cast<u64>(launch_desc_loc) << 8;
+        std::array<u8, ComputeQmd::kByteSize> qmd_bytes{};
+        bool qmd_read = false;
+
+        if (gmmu_ && gmmu_->IsMapped(qmd_address, ComputeQmd::kByteSize)) {
+            qmd_read = (gmmu_->Read(qmd_address, qmd_bytes.data(), qmd_bytes.size()) == qmd_bytes.size());
+        } else if (memory_) {
+            qmd_read = memory_->ReadBlock(qmd_address, qmd_bytes.data(), qmd_bytes.size());
+        }
+
+        if (qmd_read) {
+            const ComputeQmd qmd = ComputeQmd::FromBytes(qmd_bytes);
+            const u32 grid_x = qmd.GridDimX();
+            const u32 grid_y = qmd.GridDimY();
+            const u32 grid_z = qmd.GridDimZ();
+
+            // Bind constant buffers specified in the QMD descriptor table.
+            for (size_t i = 0; i < ComputeQmd::kMaxConstantBuffers; ++i) {
+                if (qmd.ConstantBufferValid(i)) {
+                    const u64 cb_addr = qmd.ConstantBufferAddress(i);
+                    const u32 cb_size = qmd.ConstantBufferSize(i);
+                    if (cb_addr != 0 && cb_size > 0 && cb_size <= 65536) {
+                        std::vector<u8> cb_data(cb_size);
+                        bool cb_read = false;
+                        if (gmmu_ && gmmu_->IsMapped(cb_addr, cb_size)) {
+                            cb_read = (gmmu_->Read(cb_addr, cb_data.data(), cb_size) == cb_size);
+                        } else if (memory_) {
+                            cb_read = memory_->ReadBlock(cb_addr, cb_data.data(), cb_size);
+                        }
+                        if (cb_read) {
+                            backend_->SetGuestConstantBuffer(static_cast<u32>(i), cb_data.data(), cb_size);
+                        }
+                    }
+                }
+            }
+
+            // Determine compute program entry address.
+            u64 code_addr = (static_cast<u64>(regs_.regs[MaxwellMethod::ComputeEntryAddressHigh]) << 32) |
+                             static_cast<u64>(regs_.regs[MaxwellMethod::ComputeEntryAddressLow]);
+            if (code_addr == 0) {
+                code_addr = qmd.ProgramOffset();
+            } else {
+                code_addr += qmd.ProgramOffset();
+            }
+
+            if (code_addr != 0) {
+                const u32 prog_bytes = (regs_.regs[MaxwellMethod::ComputeProgramSize] + 1) & 0xFFFFFF;
+                const u32 read_size = (prog_bytes > 0 && prog_bytes < (1u << 16)) ? prog_bytes : 256;
+                std::vector<u8> cs(read_size);
+                bool cs_read = false;
+                if (gmmu_ && gmmu_->IsMapped(code_addr, read_size)) {
+                    cs_read = (gmmu_->Read(code_addr, cs.data(), read_size) == read_size);
+                } else if (memory_) {
+                    cs_read = memory_->ReadBlock(code_addr, cs.data(), read_size);
+                }
+                if (cs_read) {
+                    backend_->SetComputeShader(cs);
+                }
+            }
+
+            NEMU_LOG_DEBUG("GPU", "DispatchCompute (QMD): grid {}x{}x{}, entry 0x{:X}",
+                           grid_x, grid_y, grid_z, code_addr);
+            backend_->DispatchCompute(grid_x, grid_y, grid_z);
+            return;
+        }
+    }
+
+    // Direct / synthetic fallback dispatch path.
     const u32 block_x = (regs_.regs[MaxwellMethod::ComputeLaunchDesc] >> 0) & 0xFFFF;
     const u32 block_y = (regs_.regs[MaxwellMethod::ComputeLaunchDesc] >> 16) & 0xFFFF;
+    // Grid dims from the dedicated registers (fall back to block-dims-derived).
+    const u32 grid_x = regs_.regs[MaxwellMethod::ComputeGridDimX] ? regs_.regs[MaxwellMethod::ComputeGridDimX] : block_x;
+    const u32 grid_y = regs_.regs[MaxwellMethod::ComputeGridDimY] ? regs_.regs[MaxwellMethod::ComputeGridDimY] : block_y;
+    const u32 grid_z = regs_.regs[MaxwellMethod::ComputeGridDimZ] ? regs_.regs[MaxwellMethod::ComputeGridDimZ] : 1;
     const u64 entry = (static_cast<u64>(regs_.regs[MaxwellMethod::ComputeEntryAddressHigh]) << 32) |
                        static_cast<u64>(regs_.regs[MaxwellMethod::ComputeEntryAddressLow]);
-    NEMU_LOG_DEBUG("GPU", "DispatchCompute: blocks {}x{}, entry 0x{:X}",
-                   block_x, block_y, entry);
+
+    // Upload the compute shader bytecode (from GMMU or guest memory) to the backend.
+    if (entry != 0) {
+        const u32 prog_bytes = (regs_.regs[MaxwellMethod::ComputeProgramSize] + 1) & 0xFFFFFF;
+        if (prog_bytes < (1u << 16)) {
+            std::vector<u8> cs(prog_bytes);
+            bool cs_read = false;
+            if (gmmu_ && gmmu_->IsMapped(entry, prog_bytes)) {
+                cs_read = (gmmu_->Read(entry, cs.data(), prog_bytes) == prog_bytes);
+            } else if (memory_) {
+                cs_read = memory_->ReadBlock(entry, cs.data(), cs.size());
+            }
+            if (cs_read) {
+                backend_->SetComputeShader(cs);
+            }
+        }
+    }
+
+    NEMU_LOG_DEBUG("GPU", "DispatchCompute: grid {}x{}x{}, entry 0x{:X}",
+                   grid_x, grid_y, grid_z, entry);
     // The backend interface gains DispatchCompute; no-op default keeps the
     // software path working while D3D12 implements it.
-    backend_->DispatchCompute(block_x, block_y, 1);
+    backend_->DispatchCompute(grid_x, grid_y, grid_z);
 }
 
 void Maxwell3D::ApplyRasterizerState() {

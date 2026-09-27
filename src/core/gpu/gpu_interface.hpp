@@ -151,6 +151,10 @@ public:
     // render the software/passthrough path (Null, SDL2, or a D3D12 backend in
     // fallback mode) are unaffected.
     virtual void SetGuestShaders(std::span<const u8> /*vs_bytecode*/, std::span<const u8> /*ps_bytecode*/) {}
+    // Carry a guest compute shader program so the translated backend can build
+    // and dispatch a compute PSO. Default no-op (software backends count the
+    // dispatch only).
+    virtual void SetComputeShader(std::span<const u8> /*compute_bytecode*/) {}
     virtual void SetGuestConstantBuffer(u32 /*slot*/, const void* /*data*/, u32 /*bytes*/) {}
 
     // --- Guest texture state (translation-layer input) ---------------------

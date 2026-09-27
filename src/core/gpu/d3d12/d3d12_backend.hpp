@@ -45,6 +45,8 @@ public:
     // PipelineBridge/PipelineCache; otherwise it falls back to the embedded
     // color-passthrough pipeline so rendering always works.
     void SetGuestShaders(std::span<const u8> vs_bytecode, std::span<const u8> ps_bytecode) override;
+    void SetComputeShader(std::span<const u8> compute_bytecode) override;
+    void DispatchCompute(u32 block_x, u32 block_y, u32 block_z) override;
 
     // Feed guest shader constant-buffer data. Each `slot` maps to a root CBV
     // (b/slot) declared by the translated root signature built by PipelineCache
@@ -108,6 +110,7 @@ private:
     void UploadGeometry();
     void BindPipelineAndTopology(PrimitiveTopology topology);
     bool BindTranslatedPipeline(PrimitiveTopology topology);
+    bool CreateComputePipeline();
     void BindGuestConstantBuffers(UINT cbv_first_slot);
     void BindGuestTextures();
     void ReleaseGuestCbuffers();
@@ -188,6 +191,13 @@ private:
     UINT guest_vertex_buffer_size_{0};
     UINT guest_vertex_stride_{0};
     bool guest_vertex_buffer_valid_{false};
+
+    // --- Compute (Tier-A3): translated compute shader + PSO. ------------
+    Microsoft::WRL::ComPtr<ID3D12RootSignature> compute_root_signature_;
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> compute_pso_;
+    std::vector<u8> compute_shader_;           // last SetComputeShader payload
+    bool compute_shader_valid_{false};
+    bool compute_pending_{false};              // dispatch requested before shader ready
 };
 
 } // namespace nemu::core::gpu

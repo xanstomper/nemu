@@ -534,6 +534,18 @@ std::string MaxwellShaderDecoder::EmitHLSL(const DecompiledProgram& program) {
 
         ss << "VSOutput main(VSInput input) {\n";
         ss << "    VSOutput output = (VSOutput)0;\n";
+    } else if (program.stage == ShaderStage::Compute) {
+        // Compute shader (Tier-A3): fixed 8x8x1 thread group. The guest's CTA
+        // dims come from the dispatch registers; the emitter uses a sane fixed
+        // workgroup and the caller scales the grid accordingly.
+        ss << "[numthreads(8, 8, 1)]\n";
+        ss << "void main(uint3 dispatch_id : SV_DispatchThreadID,\n";
+        ss << "          uint3 group_id : SV_GroupThreadID) {\n";
+        ss << "    float R[" << std::max(program.max_register_used + 1, 16u) << "];\n";
+        for (u32 i = 0; i < std::max(program.max_register_used + 1, 16u); ++i) {
+            ss << "    R[" << i << "] = 0.0f;\n";
+        }
+        ss << "\n";
     } else { // Fragment / Pixel Shader
         ss << "struct PSInput {\n";
         ss << "    float4 in_pos : SV_Position;\n";
@@ -550,9 +562,11 @@ std::string MaxwellShaderDecoder::EmitHLSL(const DecompiledProgram& program) {
         ss << "    PSOutput output = (PSOutput)0;\n";
     }
 
-    u32 num_regs = std::max(program.max_register_used + 1, 16u);
-    ss << "    float R[" << num_regs << "];\n";
-    ss << "    [unroll] for (int _i = 0; _i < " << num_regs << "; ++_i) R[_i] = 0.0f;\n\n";
+    if (program.stage != ShaderStage::Compute) {
+        u32 num_regs = std::max(program.max_register_used + 1, 16u);
+        ss << "    float R[" << num_regs << "];\n";
+        ss << "    [unroll] for (int _i = 0; _i < " << num_regs << "; ++_i) R[_i] = 0.0f;\n\n";
+    }
 
     // Predicate register file: declared + initialized so predicated emission
     // (`if (p[N])`) is valid HLSL. Maxwell predicates are set by the PSET/
@@ -808,7 +822,10 @@ std::string MaxwellShaderDecoder::EmitHLSL(const DecompiledProgram& program) {
                 ss << "    discard;\n";
                 break;
             case MaxwellOpcode::EXIT:
-                ss << "    return output;\n";
+                // Compute shaders have no return value; the shader just ends.
+                if (program.stage != ShaderStage::Compute) {
+                    ss << "    return output;\n";
+                }
                 break;
             default:
                 // Extended SASS families (IMAD/XMAD/SETP/MUFU/IPA/half-float/
@@ -818,7 +835,9 @@ std::string MaxwellShaderDecoder::EmitHLSL(const DecompiledProgram& program) {
         }
     }
 
-    ss << "    return output;\n";
+    if (program.stage != ShaderStage::Compute) {
+        ss << "    return output;\n";
+    }
     ss << "}\n";
 
     return ss.str();

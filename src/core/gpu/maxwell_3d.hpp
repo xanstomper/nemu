@@ -95,15 +95,23 @@ namespace MaxwellMethod {
     constexpr u32 TextureWidth = 0x058A;
     constexpr u32 TextureHeight = 0x058B;
     // --- Compute (Tier-A3): shader launch through the compute engine ---
-    // Real Maxwell compute: write LaunchDescription (0x0180..0x018F region on
-    // the compute subchannel). We model the essential registers.
+    // Real Maxwell compute writes a LaunchDescription / queue-meta-descriptor
+    // (QMD) region; we model the essential registers: block dims, program
+    // (shader bytecode address + size), grid dims, and constants.
     constexpr u32 ComputeLaunchDesc = 0x0180;   // block dims + shared mem size
     constexpr u32 ComputeEntryAddressHigh = 0x0182;
     constexpr u32 ComputeEntryAddressLow = 0x0183;
+    constexpr u32 ComputeProgramSize = 0x0188;  // compute shader bytecode size (-1)
+    constexpr u32 ComputeGridDimX = 0x0189;     // grid/CTA raster X
+    constexpr u32 ComputeGridDimY = 0x018A;     // grid Y
+    constexpr u32 ComputeGridDimZ = 0x018B;     // grid Z
     constexpr u32 ComputeConstBufferHigh = 0x0184;
     constexpr u32 ComputeConstBufferLow = 0x0185;
     constexpr u32 ComputeConstBufferSize = 0x0186;
     constexpr u32 DispatchCompute = 0x0190;     // trigger method
+    // Hardware Kepler/Maxwell compute launch (Tier-A3: method 0xAD launch_desc_loc, 0xAF launch)
+    constexpr u32 ComputeLaunchDescLoc = 0x00AD;
+    constexpr u32 ComputeLaunch = 0x00AF;
     // Guest pipeline shader program upload (Maxwell PIPE/LOAD_PROGRAM). Addresses
     // point at guest memory holding the Maxwell SASS bytecode for each stage.
     constexpr u32 VertexProgramAddressHigh = 0x0E01;
