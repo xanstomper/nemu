@@ -35,9 +35,9 @@ struct UiColor {
     static constexpr UiColor BadgeXci() { return {0.10f, 0.65f, 0.35f, 1.0f}; }
     static constexpr UiColor BadgeNro() { return {0.15f, 0.50f, 0.90f, 1.0f}; }
 
-    // Nintendo Switch HOME menu palette
-    static constexpr UiColor SwitchHomeBg()    { return {0.1765f, 0.1765f, 0.1765f, 1.0f}; }
-    static constexpr UiColor SwitchHomeBg2()   { return {0.1765f, 0.1765f, 0.1765f, 1.0f}; }
+    // Nintendo Switch & NEMULATOR Xbox UWP palette
+    static constexpr UiColor SwitchHomeBg()    { return {0.12f, 0.125f, 0.14f, 1.0f}; }
+    static constexpr UiColor SwitchHomeBg2()   { return {0.14f, 0.145f, 0.16f, 1.0f}; }
     static constexpr UiColor SwitchTeal()      { return {0.04f, 0.73f, 0.90f, 1.0f}; }
     static constexpr UiColor SwitchTileFocus() { return {0.0f, 0.88f, 0.95f, 1.0f}; }
     static constexpr UiColor SwitchAccent()    { return {0.24f, 0.55f, 0.95f, 1.0f}; }
@@ -45,6 +45,18 @@ struct UiColor {
     static constexpr UiColor SwitchOrange()    { return {0.95f, 0.45f, 0.10f, 1.0f}; }
     static constexpr UiColor SwitchIconBg()    { return {0.235f, 0.247f, 0.278f, 1.0f}; }
     static constexpr UiColor AvatarBg()        { return {0.16f, 0.36f, 0.72f, 1.0f}; }
+
+    // NEMULATOR Xbox UWP Edition palette
+    static constexpr UiColor XboxGreen()       { return {0.063f, 0.486f, 0.255f, 1.0f}; } // #107C41
+    static constexpr UiColor XboxNeon()        { return {0.0f, 0.95f, 0.45f, 1.0f}; }
+    static constexpr UiColor NemulatorCyan()   { return {0.0f, 0.85f, 0.95f, 1.0f}; }
+    static constexpr UiColor NemulatorDark()   { return {0.10f, 0.105f, 0.115f, 1.0f}; }
+    static constexpr UiColor NemulatorCard()   { return {0.145f, 0.150f, 0.165f, 1.0f}; }
+    static constexpr UiColor NemulatorGlass()  { return {0.08f, 0.085f, 0.095f, 0.88f}; }
+    static constexpr UiColor BtnA()            { return {0.08f, 0.68f, 0.25f, 1.0f}; }
+    static constexpr UiColor BtnB()            { return {0.88f, 0.18f, 0.18f, 1.0f}; }
+    static constexpr UiColor BtnX()            { return {0.15f, 0.50f, 0.92f, 1.0f}; }
+    static constexpr UiColor BtnY()            { return {0.95f, 0.78f, 0.12f, 1.0f}; }
 };
 
 inline constexpr uint8_t kFont8x8[95][8] = {
@@ -212,6 +224,39 @@ public:
             // Right span
             AddQuad(out, cx + hi, cy + y, ho - hi, 1.0f, col, sw, sh);
         }
+    }
+
+    /// Rounded rectangle fill
+    static void AddRoundedRect(std::vector<core::gpu::RasterVertex>& out,
+                               float px, float py, float pw, float ph, float r,
+                               UiColor col, float sw = 1280.0f, float sh = 720.0f) {
+        if (r <= 1.0f) {
+            AddQuad(out, px, py, pw, ph, col, sw, sh);
+            return;
+        }
+        r = std::min(r, std::min(pw * 0.5f, ph * 0.5f));
+        // Center quad
+        AddQuad(out, px + r, py, pw - (r * 2.0f), ph, col, sw, sh);
+        // Left & right side quads
+        AddQuad(out, px, py + r, r, ph - (r * 2.0f), col, sw, sh);
+        AddQuad(out, px + pw - r, py + r, r, ph - (r * 2.0f), col, sw, sh);
+        // Corner spans
+        const int rows = static_cast<int>(r);
+        for (int dy = 0; dy <= rows; ++dy) {
+            const float y = static_cast<float>(dy);
+            const float w = std::sqrt(std::max(0.0f, r * r - (r - y) * (r - y)));
+            AddQuad(out, px + r - w, py + y, w, 1.0f, col, sw, sh);
+            AddQuad(out, px + pw - r, py + y, w, 1.0f, col, sw, sh);
+            AddQuad(out, px + r - w, py + ph - 1.0f - y, w, 1.0f, col, sw, sh);
+            AddQuad(out, px + pw - r, py + ph - 1.0f - y, w, 1.0f, col, sw, sh);
+        }
+    }
+
+    /// Pill / Capsule shape (height / 2 radius)
+    static void AddPill(std::vector<core::gpu::RasterVertex>& out,
+                        float px, float py, float pw, float ph,
+                        UiColor col, float sw = 1280.0f, float sh = 720.0f) {
+        AddRoundedRect(out, px, py, pw, ph, ph * 0.5f, col, sw, sh);
     }
 
     static void AddText(std::vector<core::gpu::RasterVertex>& out,

@@ -1700,50 +1700,103 @@ void XboxFrontend::AttachCover(GameEntry& entry) {
 void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu, bool draw_shortcuts) {
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
-    // Background: flat dark charcoal #2D2D2D matching the reference exactly
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.1765f, 0.1765f, 0.1765f, 1.0f});
+    // Background: dark charcoal with subtle depth
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.11f, 0.115f, 0.125f, 1.0f});
+    // Header dark glass strip
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 86, UiColor{0.075f, 0.08f, 0.09f, 0.95f});
+    UiGeometryBuilder::AddQuad(out, 0, 86, 1280, 1.5f, UiColor{0.18f, 0.20f, 0.22f, 1.0f});
 
-    // Header: single profile avatar (active user) + Nemulator version branding (left)
+    if (overlay) {
+        gpu->UiFillRectOverlay(0.0f, 0.0f, 1280.0f, 720.0f, 0.11f, 0.115f, 0.125f, 1.0f);
+        gpu->UiFillRectOverlay(0.0f, 0.0f, 1280.0f, 86.0f, 0.075f, 0.08f, 0.09f, 0.95f);
+        gpu->UiFillRectOverlay(0.0f, 86.0f, 1280.0f, 1.5f, 0.18f, 0.20f, 0.22f, 1.0f);
+    }
+
+    // Top-Left: Player Avatar + Gamertag / Status
     const std::string av_path = FindAsset("ui/avatar_arwing.png");
-    const float av_x = 68.0f;
-    const float av_y = 56.0f;
-    const float av_r = 22.0f;
+    const float av_x = 56.0f;
+    const float av_y = 44.0f;
+    const float av_r = 24.0f;
     const float av_d = av_r * 2.0f;
 
-    // Active user luminous cyan ring
-    UiGeometryBuilder::AddRing(out, av_x, av_y, av_r + 3.5f, 2.5f, UiColor{0.20f, 0.85f, 0.90f, 1.0f});
+    // Glowing avatar halo (Switch Cyan / Xbox Neon Green pulsating)
+    float pulse = 0.88f + 0.12f * std::sin(glow_anim_timer_ * 3.5f);
+    UiGeometryBuilder::AddRing(out, av_x, av_y, av_r + 3.0f, 2.5f, UiColor{0.0f, 0.88f * pulse, 0.95f * pulse, 1.0f});
 
     if (overlay && !av_path.empty()) {
         gpu->UiImageOverlay("avatar_0", av_path, av_x - av_r, av_y - av_r, av_d, av_d);
     } else {
-        UiGeometryBuilder::AddDisc(out, av_x, av_y, av_r, UiColor{0.20f, 0.85f, 0.90f, 1.0f});
+        UiGeometryBuilder::AddDisc(out, av_x, av_y, av_r, UiColor{0.0f, 0.85f, 0.95f, 1.0f});
         UiGeometryBuilder::AddDisc(out, av_x, av_y, av_r - 2.0f, UiColor::SwitchIconBg());
-        UiGeometryBuilder::AddText(out, "A", av_x - 5.0f, av_y - 8.0f, 1.6f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "P", av_x - 5.0f, av_y - 8.0f, 1.6f, UiColor::White());
     }
 
-    // Top-left branding: "Nemu Xbox Horizon OS" with version preview
+    // Player name & Online status
     if (overlay) {
-        gpu->UiTextOverlay("Nemu Xbox Horizon OS", 108.0f, 32.0f, 21.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
-        gpu->UiTextOverlay("v0.8.4-preview", 108.0f, 58.0f, 15.0f, 0.25f, 0.76f, 0.88f, 0.95f, -1);
+        gpu->UiTextOverlay("Player 1", 92.0f, 30.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiFillRectOverlay(92.0f, 55.0f, 8.0f, 8.0f, 0.10f, 0.90f, 0.40f, 1.0f);
+        gpu->UiTextOverlay("LAN Ready • Xbox Full Trust", 106.0f, 52.0f, 13.0f, 0.20f, 0.85f, 0.40f, 0.95f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "Nemu Xbox Horizon OS", 108.0f, 32.0f, 1.6f, UiColor::White());
-        UiGeometryBuilder::AddText(out, "v0.8.4-preview", 108.0f, 58.0f, 1.2f, UiColor::EdenCyan());
+        UiGeometryBuilder::AddText(out, "Player 1", 92.0f, 30.0f, 1.6f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "LAN Ready • Xbox Full Trust", 92.0f, 52.0f, 1.2f, UiColor::NeonGreen());
     }
 
-    // Status cluster (top right): clock and Wi-Fi icon (battery removed per user requirement)
+    // Top-Center: Branded "NEMULATOR" logo + Xbox UWP Edition Badge
+    if (overlay) {
+        gpu->UiTextOverlay("NEMULATOR", 640.0f, 28.0f, 26.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
+        gpu->UiFillRectOverlay(520.0f, 54.0f, 240.0f, 22.0f, 0.063f, 0.486f, 0.255f, 0.35f);
+        gpu->UiRectOutlineOverlay(520.0f, 54.0f, 240.0f, 22.0f, 1.0f, 0.0f, 0.95f, 0.45f, 0.85f);
+        gpu->UiTextOverlay("XBOX SERIES X|S • UWP NATIVE", 640.0f, 58.0f, 12.0f, 0.0f, 0.95f, 0.45f, 1.0f, 0);
+    } else {
+        UiGeometryBuilder::AddText(out, "NEMULATOR", 580.0f, 28.0f, 2.2f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "XBOX SERIES X|S • UWP NATIVE", 530.0f, 56.0f, 1.2f, UiColor::XboxNeon());
+    }
+
+    // Top-Right: RAM Budget Governor Pill, TV Mode Pill, Clock, and Network Icon
     std::string clock_str = GetSystemClockString();
-    if (clock_str.empty()) clock_str = "05:02";
+    if (clock_str.empty()) clock_str = "12:00 PM";
+
+    // 5 GiB UWP RAM Budget Status
+    u64 used_mb = live_diag_.mem_used_bytes / (1024 * 1024);
+    u64 cap_mb = live_diag_.mem_cap_bytes > 0 ? (live_diag_.mem_cap_bytes / (1024 * 1024)) : 5120;
+    if (used_mb == 0) used_mb = 1240; // Default sensible reading for UI display
+    char ram_buf[48];
+    std::snprintf(ram_buf, sizeof(ram_buf), "RAM: %llu / %llu MB",
+                  static_cast<unsigned long long>(used_mb),
+                  static_cast<unsigned long long>(cap_mb));
+
+    // Console TV Mode: Docked 4K / 1080p
+    const auto& cfg = config_.GetConfig();
+    std::string mode_str = (cfg.resolution_scale == core::config::ResolutionScale::Ultra4K_2_0x) ? "TV 4K" :
+                           (cfg.resolution_scale == core::config::ResolutionScale::SeriesX_1_5x) ? "TV 1440p" : "TV 1080p";
 
     std::string wifi_path = FindAsset("ui/wifi.png");
 
     if (overlay) {
-        gpu->UiTextOverlay(clock_str, 1172.0f, 45.0f, 22.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1);
+        // RAM Pill (Emerald for <3.5G, Amber for <4.5G, Red for >4.5G)
+        float r_r = (used_mb > 4500) ? 0.95f : ((used_mb > 3500) ? 0.95f : 0.0f);
+        float r_g = (used_mb > 4500) ? 0.20f : ((used_mb > 3500) ? 0.70f : 0.88f);
+        float r_b = (used_mb > 4500) ? 0.20f : ((used_mb > 3500) ? 0.20f : 0.45f);
+
+        gpu->UiFillRectOverlay(910.0f, 32.0f, 125.0f, 24.0f, 0.15f, 0.16f, 0.18f, 0.8f);
+        gpu->UiRectOutlineOverlay(910.0f, 32.0f, 125.0f, 24.0f, 1.0f, r_r, r_g, r_b, 0.7f);
+        gpu->UiTextOverlay(ram_buf, 972.0f, 37.0f, 11.5f, r_r, r_g, r_b, 1.0f, 0);
+
+        // TV Mode Pill
+        gpu->UiFillRectOverlay(1042.0f, 32.0f, 75.0f, 24.0f, 0.15f, 0.16f, 0.18f, 0.8f);
+        gpu->UiRectOutlineOverlay(1042.0f, 32.0f, 75.0f, 24.0f, 1.0f, 0.0f, 0.82f, 0.95f, 0.7f);
+        gpu->UiTextOverlay(mode_str, 1079.0f, 37.0f, 12.0f, 0.0f, 0.85f, 0.95f, 1.0f, 0);
+
+        // Clock & Network
+        gpu->UiTextOverlay(clock_str, 1155.0f, 36.0f, 19.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1);
         if (!wifi_path.empty()) {
-            gpu->UiImageOverlay("wifi", wifi_path, 1198.0f, 46.0f, 26.0f, 20.0f);
+            gpu->UiImageOverlay("wifi", wifi_path, 1165.0f, 36.0f, 22.0f, 18.0f);
         }
     } else {
-        UiGeometryBuilder::AddText(out, clock_str, 1150.0f, 48.0f, 1.5f, UiColor::White());
-        UiGeometryBuilder::AddQuad(out, 1200.0f, 48.0f, 22.0f, 16.0f, UiColor::White());
+        UiGeometryBuilder::AddText(out, ram_buf, 910.0f, 36.0f, 1.1f, UiColor::NeonGreen());
+        UiGeometryBuilder::AddText(out, mode_str, 1045.0f, 36.0f, 1.1f, UiColor::EdenCyan());
+        UiGeometryBuilder::AddText(out, clock_str, 1140.0f, 36.0f, 1.5f, UiColor::White());
+        UiGeometryBuilder::AddQuad(out, 1215.0f, 36.0f, 20.0f, 14.0f, UiColor::White());
     }
 
     if (!draw_shortcuts) return;
@@ -1761,13 +1814,13 @@ void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& ou
     };
 
     const char* icon_labels[7] = {
-        "Nintendo Switch Online",
-        "News",
+        "NEMU Network",
+        "News & Updates",
         "Game Manager",
         "Album",
         "Controllers",
         "System Settings",
-        "Sleep Mode"
+        "Sleep & Power"
     };
 
     const float icon_y = 546.0f;
@@ -1782,16 +1835,16 @@ void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& ou
         bool hovered = hover_shortcut_index_ && (*hover_shortcut_index_ == i) && !sel;
 
         if (sel) {
-            // Circular blue focus ring only (no square box)
-            float pulse = 0.88f + 0.12f * std::sin(glow_anim_timer_ * 4.0f);
+            // Circular focus ring with pulsating glow
             UiGeometryBuilder::AddRing(out, cx, icon_y, icon_radius + 6.0f, 3.5f,
-                                       UiColor{0.0f, 0.82f * pulse, 0.90f * pulse, 0.95f});
+                                       UiColor{0.0f, 0.88f * pulse, 0.95f * pulse, 0.95f});
             if (overlay) {
-                // Authentic Switch subtitle: centered label pill with backing fill
-                gpu->UiFillRectOverlay(cx - 130.0f, 606.0f, 260.0f, 30.0f, 0.1765f, 0.1765f, 0.1765f, 1.0f);
-                gpu->UiTextOverlay(icon_labels[i], cx, 612.0f, 17.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
+                // Centered label pill with subtle outline
+                gpu->UiFillRectOverlay(cx - 110.0f, 606.0f, 220.0f, 28.0f, 0.14f, 0.15f, 0.17f, 0.95f);
+                gpu->UiRectOutlineOverlay(cx - 110.0f, 606.0f, 220.0f, 28.0f, 1.0f, 0.25f, 0.28f, 0.32f, 1.0f);
+                gpu->UiTextOverlay(icon_labels[i], cx, 612.0f, 16.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
             } else {
-                UiGeometryBuilder::AddText(out, icon_labels[i], cx - 60.0f, 612.0f, 1.3f, UiColor::White());
+                UiGeometryBuilder::AddText(out, icon_labels[i], cx - 50.0f, 612.0f, 1.3f, UiColor::White());
             }
         } else if (hovered) {
             UiGeometryBuilder::AddRing(out, cx, icon_y, icon_radius + 4.0f, 2.0f, UiColor{0.0f, 0.82f, 0.90f, 0.85f});
@@ -1807,27 +1860,40 @@ void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& ou
         }
     }
 
-    // Thin separator line above controller hints: x=30 to 1250, y=646, 2.0f thick, subtle grey #5D5D5D
-    UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.365f, 0.365f, 0.365f, 1.0f});
+    // Separator line above controller hints
+    UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 1.5f, UiColor{0.22f, 0.23f, 0.26f, 1.0f});
     if (overlay) {
-        gpu->UiFillRectOverlay(30.0f, 646.0f, 1220.0f, 2.0f, 0.365f, 0.365f, 0.365f, 1.0f);
+        gpu->UiFillRectOverlay(30.0f, 646.0f, 1220.0f, 1.5f, 0.22f, 0.23f, 0.26f, 1.0f);
     }
 
-    // Controller hints bottom right: (A) Continue   (+) Start
-    std::string btn_a = FindAsset("ui/btn_a.png");
-    std::string btn_plus = FindAsset("ui/btn_plus.png");
-    if (overlay && !btn_a.empty() && !btn_plus.empty()) {
-        gpu->UiImageOverlay("btn_a", btn_a, 988.0f, 676.0f, 22.0f, 22.0f);
-        gpu->UiTextOverlay("Continue", 1018.0f, 678.0f, 16.0f, 0.92f, 0.92f, 0.92f, 1.0f, -1);
-        gpu->UiImageOverlay("btn_plus", btn_plus, 1134.0f, 676.0f, 22.0f, 22.0f);
-        gpu->UiTextOverlay("Start", 1164.0f, 678.0f, 16.0f, 0.92f, 0.92f, 0.92f, 1.0f, -1);
-    } else if (overlay) {
-        gpu->UiTextOverlay("(A)", 990.0f, 678.0f, 16.0f, 0.90f, 0.90f, 0.95f, 1.0f, -1);
-        gpu->UiTextOverlay("Continue", 1020.0f, 678.0f, 16.0f, 0.85f, 0.85f, 0.88f, 1.0f, -1);
-        gpu->UiTextOverlay("(+)", 1136.0f, 678.0f, 16.0f, 0.90f, 0.90f, 0.95f, 1.0f, -1);
-        gpu->UiTextOverlay("Start", 1166.0f, 678.0f, 16.0f, 0.85f, 0.85f, 0.88f, 1.0f, -1);
+    // Left Footer: Controller status
+    if (overlay) {
+        gpu->UiTextOverlay("Xbox Wireless Controller (Player 1) • Direct3D 12 Surface", 45.0f, 678.0f, 15.0f, 0.65f, 0.68f, 0.75f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "(A) Continue   (+) Start", 990.0f, 678.0f, 1.3f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "Xbox Controller (P1) • D3D12", 45.0f, 678.0f, 1.3f, UiColor::TextDim());
+    }
+
+    // Right Footer: Xbox button prompts
+    std::string btn_a = FindAsset("ui/btn_a.png");
+    std::string btn_b = FindAsset("ui/btn_b.png");
+    std::string btn_x = FindAsset("ui/btn_x.png");
+    std::string btn_y = FindAsset("ui/btn_y.png");
+    std::string btn_plus = FindAsset("ui/btn_plus.png");
+
+    if (overlay && !btn_a.empty() && !btn_plus.empty()) {
+        gpu->UiImageOverlay("btn_a", btn_a, 760.0f, 674.0f, 22.0f, 22.0f);
+        gpu->UiTextOverlay("Start", 788.0f, 677.0f, 15.0f, 0.90f, 0.90f, 0.90f, 1.0f, -1);
+        if (!btn_x.empty()) gpu->UiImageOverlay("btn_x", btn_x, 850.0f, 674.0f, 22.0f, 22.0f);
+        gpu->UiTextOverlay("Files", 878.0f, 677.0f, 15.0f, 0.90f, 0.90f, 0.90f, 1.0f, -1);
+        if (!btn_y.empty()) gpu->UiImageOverlay("btn_y", btn_y, 940.0f, 674.0f, 22.0f, 22.0f);
+        gpu->UiTextOverlay("Options", 968.0f, 677.0f, 15.0f, 0.90f, 0.90f, 0.90f, 1.0f, -1);
+        gpu->UiImageOverlay("btn_plus", btn_plus, 1050.0f, 674.0f, 22.0f, 22.0f);
+        gpu->UiTextOverlay("Properties", 1078.0f, 677.0f, 15.0f, 0.90f, 0.90f, 0.90f, 1.0f, -1);
+        gpu->UiTextOverlay("(≡) Menu", 1170.0f, 677.0f, 15.0f, 0.80f, 0.82f, 0.85f, 1.0f, -1);
+    } else if (overlay) {
+        gpu->UiTextOverlay("(A) Start   (X) Files   (Y) Options   (+) Properties   (≡) Menu", 1235.0f, 678.0f, 15.0f, 0.85f, 0.88f, 0.92f, 1.0f, 1);
+    } else {
+        UiGeometryBuilder::AddText(out, "(A) Start   (X) Files   (Y) Options   (+) Properties", 720.0f, 678.0f, 1.3f, UiColor::White());
     }
 }
 
@@ -1838,7 +1904,7 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out,
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
     const float tile_unfocused = 260.0f;
-    const float step = 272.0f;
+    const float step = 276.0f;
     const float row_y = 192.0f;
 
     // Authentic gooey Switch carousel scrolling with damped spring physics
@@ -1857,41 +1923,58 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out,
     glow_anim_timer_ += 0.04f;
     focus_animation_timer_ = std::min(1.0f, focus_animation_timer_ + 0.08f);
 
-    // Selected title display: Left-aligned above carousel at X=65.0f, Y=120.0f in authentic Switch Cyan
+    // Selected title display: Left-aligned above carousel at X=65.0f, Y=108.0f in authentic Switch Cyan
     if (selected_game_index_ < library_.size()) {
         const auto& g = library_[selected_game_index_];
         if (overlay) {
-            gpu->UiFillRectOverlay(60.0f, 112.0f, 900.0f, 46.0f, 0.1765f, 0.1765f, 0.1765f, 1.0f);
-            gpu->UiTextOverlay(g.title, 65.0f, 120.0f, 28.0f, 0.25f, 0.76f, 0.88f, 1.0f, -1);
+            gpu->UiFillRectOverlay(60.0f, 96.0f, 980.0f, 68.0f, 0.11f, 0.115f, 0.125f, 0.95f);
+            gpu->UiTextOverlay(g.title, 65.0f, 108.0f, 28.0f, 0.0f, 0.88f, 0.95f, 1.0f, -1);
+
+            // Sub-detail metadata row
+            std::string sub_info = g.format_badge + "  •  " + g.playtime_str + "  •  " + g.optimizer_tag;
+            gpu->UiTextOverlay(sub_info, 65.0f, 142.0f, 14.5f, 0.70f, 0.72f, 0.78f, 1.0f, -1);
         } else {
-            UiGeometryBuilder::AddText(out, g.title, 65.0f, 120.0f, 2.2f, UiColor::SwitchTeal());
+            UiGeometryBuilder::AddText(out, g.title, 65.0f, 108.0f, 2.2f, UiColor::SwitchTeal());
+            UiGeometryBuilder::AddText(out, g.format_badge + " • " + g.optimizer_tag, 65.0f, 142.0f, 1.3f, UiColor::TextDim());
         }
     }
 
     for (size_t i = 0; i < library_.size(); ++i) {
         const auto& g = library_[i];
         bool is_focus = (i == selected_game_index_) && !home_in_shortcuts_;
-        
+
         // Dynamic gooey scale for focused card (spring pop)
-        float card_scale = is_focus ? (1.0f + 0.065f * (1.0f - std::exp(-focus_animation_timer_ * 6.0f))) : 1.0f;
+        float card_scale = is_focus ? (1.0f + 0.075f * (1.0f - std::exp(-focus_animation_timer_ * 6.0f))) : 1.0f;
         float tw = tile_unfocused * card_scale;
         float th = tile_unfocused * card_scale;
-        
+
         float shift = is_focus ? 0.0f : (i > selected_game_index_ ? 16.0f : 0.0f);
         float cx = base_x + static_cast<float>(i) * step + shift - (tw - tile_unfocused) * 0.5f;
-        float cy = is_focus ? (row_y - 6.0f - (th - tile_unfocused) * 0.5f) : row_y;
+        float cy = is_focus ? (row_y - 8.0f - (th - tile_unfocused) * 0.5f) : row_y;
 
         if (cx + tw < -80.0f || cx > 1360.0f) continue;
 
-        // Background placeholder quad
-        UiGeometryBuilder::AddQuad(out, cx, cy, tw, th, UiColor{0.1765f, 0.1765f, 0.1765f, 1.0f});
+        // Rounded background card
+        UiGeometryBuilder::AddRoundedRect(out, cx, cy, tw, th, 12.0f, UiColor{0.145f, 0.150f, 0.165f, 1.0f});
 
         if (overlay && !g.cover_host_path.empty()) {
             gpu->UiImageOverlay(g.cover_host_path, g.cover_host_path, cx, cy, tw, th);
         } else if (overlay) {
+            // Elegant dark glassmorphic card fallback
+            gpu->UiFillRectOverlay(cx, cy, tw, th, 0.145f, 0.150f, 0.165f, 1.0f);
+            // Format badge in top-right corner
+            gpu->UiFillRectOverlay(cx + tw - 64.0f, cy + 12.0f, 52.0f, 22.0f, 0.063f, 0.486f, 0.255f, 0.85f);
+            gpu->UiTextOverlay(g.format_badge, cx + tw - 38.0f, cy + 16.0f, 12.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
+
+            // Centered initial
             std::string ini = g.title.empty() ? "?" : g.title.substr(0, 1);
-            gpu->UiTextOverlay(ini, cx + tw * 0.5f, cy + th * 0.5f - 44.0f, 84.0f,
+            gpu->UiTextOverlay(ini, cx + tw * 0.5f, cy + th * 0.5f - 40.0f, 76.0f,
                                1.0f, 1.0f, 1.0f, 0.9f, 0);
+
+            // Bottom title banner
+            gpu->UiFillRectOverlay(cx, cy + th - 44.0f, tw, 44.0f, 0.08f, 0.085f, 0.095f, 0.92f);
+            std::string short_title = (g.title.size() > 22) ? (g.title.substr(0, 20) + "...") : g.title;
+            gpu->UiTextOverlay(short_title, cx + tw * 0.5f, cy + th - 32.0f, 14.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
         } else {
             std::string ini = g.title.empty() ? "?" : g.title.substr(0, 1);
             UiGeometryBuilder::AddText(out, ini, cx + tw * 0.5f - 10.0f, cy + th * 0.5f - 22.0f, 5.0f, UiColor::White());
@@ -1902,18 +1985,23 @@ void XboxFrontend::DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out,
             if (is_focus) {
                 float pulse = 0.88f + 0.12f * std::sin(glow_anim_timer_ * 3.5f);
                 gpu->UiRectOutlineOverlay(cx - 5.0f, cy - 5.0f, tw + 10.0f, th + 10.0f, 4.5f,
-                                          0.25f * pulse, 0.88f * pulse, 0.95f * pulse, 1.0f);
+                                          0.0f, 0.88f * pulse, 0.95f * pulse, 1.0f);
                 gpu->UiRectOutlineOverlay(cx - 1.5f, cy - 1.5f, tw + 3.0f, th + 3.0f, 2.0f,
                                           0.10f, 0.10f, 0.10f, 1.0f);
+
+                // Floating prompt on focused card
+                gpu->UiFillRectOverlay(cx + (tw - 170.0f) * 0.5f, cy + th - 34.0f, 170.0f, 26.0f, 0.06f, 0.07f, 0.08f, 0.90f);
+                gpu->UiRectOutlineOverlay(cx + (tw - 170.0f) * 0.5f, cy + th - 34.0f, 170.0f, 26.0f, 1.0f, 0.0f, 0.88f, 0.95f, 0.85f);
+                gpu->UiTextOverlay("[ (A) START SOFTWARE ]", cx + tw * 0.5f, cy + th - 29.0f, 12.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
             } else if (hover_game_index_ && (*hover_game_index_ == i)) {
                 gpu->UiRectOutlineOverlay(cx - 2.0f, cy - 2.0f, tw + 4.0f, th + 4.0f, 2.5f,
                                           0.90f, 0.95f, 1.0f, 0.80f);
             }
         } else {
             if (is_focus) {
-                UiColor cyan{0.35f, 0.88f, 0.90f, 1.0f};
+                UiColor cyan{0.0f, 0.88f, 0.95f, 1.0f};
                 UiGeometryBuilder::AddRectOutline(out, cx - 6.0f, cy - 6.0f, tw + 12.0f, th + 12.0f, 4.0f, cyan);
-                UiGeometryBuilder::AddRectOutline(out, cx - 2.0f, cy - 2.0f, tw + 4.0f, th + 4.0f, 2.0f, UiColor{0.12f, 0.12f, 0.12f, 1.0f});
+                UiGeometryBuilder::AddRectOutline(out, cx - 2.0f, cy - 2.0f, tw + 4.0f, th + 4.0f, 2.0f, UiColor{0.10f, 0.10f, 0.10f, 1.0f});
             } else if (hover_game_index_ && (*hover_game_index_ == i)) {
                 UiGeometryBuilder::AddRectOutline(out, cx - 2.0f, cy - 2.0f, tw + 4.0f, th + 4.0f, 2.5f, UiColor{0.9f, 0.95f, 1.0f, 0.75f});
             }
