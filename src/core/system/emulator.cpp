@@ -136,6 +136,25 @@ bool Emulator::Initialize() {
 void Emulator::ApplyRuntimeConfig() {
     const auto& cfg = config_manager_->GetConfig();
 
+    // CPU backend (JIT / Interpreter) - applied live. Toggling from the Switch
+    // UI constructs/destroys the JIT compiler; the interpreter fallback is
+    // always available, so the guest keeps executing without a restart.
+    const bool jit_wanted = (cfg.cpu_backend == config::CpuBackendMode::Jit);
+    if (jit_wanted && !jit_) {
+        jit_ = std::make_unique<cpu::jit::JitCompiler>();
+        cpu::jit::JitCompiler::SetSvcHandler([this](cpu::CpuState& state, u32 svc_id) {
+            if (process_ && main_thread_) {
+                kernel::SvcDispatcher::Dispatch(state, *process_, *main_thread_, svc_id);
+            }
+        });
+        NEMU_LOG_INFO("System", "Runtime config: JIT compiler enabled (live)");
+    } else if (!jit_wanted && jit_) {
+        jit_->Clear();
+        jit_.reset();
+        NEMU_LOG_INFO("System", "Runtime config: JIT disabled, interpreter engaged (live)");
+    }
+    config_.jit_enabled = jit_wanted;
+
     // HID: face-button layout + analog deadzones
     if (hid_manager_) {
         hid_manager_->SetButtonLayout(cfg.button_layout);

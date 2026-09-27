@@ -50,3 +50,6 @@ keys/
 save/
 sdmc/
 switch/
+
+# CTest temporary artifacts
+Testing/
