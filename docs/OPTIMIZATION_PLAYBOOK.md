@@ -101,10 +101,14 @@ pre-committing the whole image.
 | Order | Item | Effort | Payoff |
 |---|---|---|---|
 | 1 | ✅ Buffer dedup (done this session) | small | big (cut redundant uploads) |
-| 2 | BC1 alpha (BC2/BC3) + BC1 for UI sprites | medium | big (correct color + more compression) |
-| 3 | Buffer overlap **merge** in FindCovering | small | medium (fewer, bigger buffers) |
+| 2 | ✅ BC1 alpha punch-through (done this session) | medium | big (correct alpha, no BC3 cost) |
+| 3 | Buffer overlap **merge** in FindCovering | small-medium | medium (fewer, bigger buffers) |
 | 4 | Big/small GMMU page split | medium | small-medium (bookkeeping/table). |
 
-Items 2-4 are implementable next; item 4 matters most if profiling shows
-page-table memory. The on-device seatbelt remains `scripts/xbox_bringup.sh`
-+ the live `RAM Used / Peak (5 GiB cap)` Diagnostics row.
+Items 3 and 4 remain. Item 3's covering-reuse (shipped in #1) already captures
+most of its memory win without the id-invalidating merge complexity — a merge
+would force child entry-id remaps that risk stale ids held by callers. Item 4
+matters most if profiling shows GPU page-table memory dominating.
+
+On-device seatbelt: `scripts/xbox_bringup.sh` + the live
+`RAM Used / Peak (5 GiB cap)` Diagnostics row.
