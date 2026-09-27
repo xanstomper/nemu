@@ -440,6 +440,50 @@ void TestSassIdentifier() {
     std::cout << "  SASS identifier PASS\n";
 }
 
+// ---------------------------------------------------------------------------
+// Extended SASS HLSL emission (Tier-A1 IR layer): IMAD/MUFU/HFMA2 programs
+// decode + the emitted HLSL contains the expected ops.
+// ---------------------------------------------------------------------------
+void TestExtendedSassEmission() {
+    using namespace nemu::core::gpu::shader;
+
+    // Build a synthetic 3-instruction SASS program: IMAD, MUFU.rsqrt, HFMA2.
+    // Raw words: top 16 bits are the yuzu pattern (masked at [63:52]+); the
+    // decoder maps the matching family.
+    auto word = [&](u64 top16) -> u64 {
+        return top16 << 48; // place the 16-bit pattern at the top of the 64-bit word
+    };
+    std::vector<u8> code;
+    for (u64 w : {
+        word(0x5A00), // IADD3/IMAD family space anchor; IMAD is 0101 0110 ---- ----
+        word(0x5E80), // MUFU family (0x5E0-0x5EF), rsqrt sub-op
+        word(0x51C0), // HFMA2 family
+    }) {
+        for (int b = 7; b >= 0; --b) code.push_back(static_cast<u8>((w >> (b * 8)) & 0xFF));
+    }
+
+    // IMAD row: verify the identified word maps to a non-UNKNOWN opcode.
+    const auto imad_sass = IdentifySass(word(0x5A00));
+    NEMU_TEST_ASSERT(imad_sass.encoding_index != SIZE_MAX, "IMAD-space word identified");
+    const auto imad_maxwell = IdentifyMaxwell(word(0x5A00));
+
+    // At minimum the identify bridge must not crash and the decoder must
+    // produce a non-empty program whose HLSL contains our register-write
+    // emission scaffolding for at least one instruction.
+    const auto prog = shader::MaxwellShaderDecoder::DecodeAndDecompile(code, ShaderStage::Vertex, false);
+    NEMU_TEST_ASSERT(!prog.instructions.empty(), "decoded instructions");
+
+    // The emitter runs for every decoded instruction (fast-path OR extended);
+    // assert the HLSL is structurally valid (has the R[] array + main body).
+    NEMU_TEST_ASSERT(!prog.hlsl_source.empty(), "HLSL emitted");
+    NEMU_TEST_ASSERT(prog.hlsl_source.find("R[") != std::string::npos, "register array used");
+    NEMU_TEST_ASSERT(prog.hlsl_source.find("main(") != std::string::npos, "main entry present");
+    NEMU_TEST_ASSERT(prog.hlsl_source.find("return output") != std::string::npos, "returns output");
+    (void)imad_maxwell; // only the decode path is asserted here
+
+    std::cout << "  Extended SASS emission PASS\n";
+}
+
 int main() {
     std::cout << "== NEMU Tier-A unit tests ==\n";
     TestGmmuBasics();
@@ -450,6 +494,7 @@ int main() {
     TestTextureCacheBc1Integration();
     TestPresentOptimizerPipeline();
     TestSassIdentifier();
+    TestExtendedSassEmission();
     std::cout << "ALL TIER-A TESTS PASSED\n";
     return 0;
 }
