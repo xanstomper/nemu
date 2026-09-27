@@ -74,10 +74,11 @@ def main():
     out.append("")
     out.append("inline constexpr std::array<SassEncoding, %d> kSassEncodings{"
                % len(rows))
+    out.append("{")  # std::array aggregate: inner brace for the inner array
     for r in rows:
         out.append("    {0x%016XULL, 0x%016XULL, SassOpcode::%s}, // %s"
                    % (r["mask"], r["value"], r["base"], r["disp"]))
-    out.append("};")
+    out.append("}};")
     open(os.path.join(SHADER_DIR, "sass_opcode_table.inc"), "w").write(
         "\n".join(out))
 
@@ -86,9 +87,10 @@ def main():
     nout.append("// do not edit; regenerate with tools/gen_sass_table.py).")
     nout.append("inline constexpr std::array<const char*, %d> kSassCuteNames{"
                 % len(rows))
+    nout.append("{")  # std::array aggregate inner brace
     for r in rows:
         nout.append('    "%s",' % r["disp"])
-    nout.append("};")
+    nout.append("}};")
     open(os.path.join(SHADER_DIR, "sass_cute_names.inc"), "w").write(
         "\n".join(nout))
 

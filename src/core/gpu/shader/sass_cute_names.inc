@@ -1,6 +1,7 @@
 // Parallel cute-name array for kSassEncodings (generated together —
 // do not edit; regenerate with tools/gen_sass_table.py).
 inline constexpr std::array<const char*, 279> kSassCuteNames{
+{
     "AL2P",
     "ALD",
     "AST",
@@ -280,4 +281,4 @@ inline constexpr std::array<const char*, 279> kSassCuteNames{
     "TEX",
     "LD",
     "ST",
-};
+}};

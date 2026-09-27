@@ -166,7 +166,6 @@ enum class SassOpcode : u32 {
     VSHL = 159,
     VSHR = 160,
     XMAD = 161,
-    _Count = 162,
 };
 
 struct SassEncoding {
@@ -175,8 +174,8 @@ struct SassEncoding {
     SassOpcode opcode;
 };
 
-// clang-format off
-inline constexpr std::array<SassEncoding, 279> kSassEncodings{{
+inline constexpr std::array<SassEncoding, 279> kSassEncodings{
+{
     {0xFFF8000000000000ULL, 0xEFA0000000000000ULL, SassOpcode::AL2P}, // AL2P
     {0xFFF8000000000000ULL, 0xEFD8000000000000ULL, SassOpcode::ALD}, // ALD
     {0xFFF8000000000000ULL, 0xEFF0000000000000ULL, SassOpcode::AST}, // AST
@@ -457,4 +456,3 @@ inline constexpr std::array<SassEncoding, 279> kSassEncodings{{
     {0xE000000000000000ULL, 0x8000000000000000ULL, SassOpcode::LD}, // LD
     {0xE000000000000000ULL, 0xA000000000000000ULL, SassOpcode::ST}, // ST
 }};
-// clang-format on
