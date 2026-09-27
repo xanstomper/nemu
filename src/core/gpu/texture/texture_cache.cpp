@@ -1,5 +1,6 @@
 #include "texture_cache.hpp"
 #include "astc_decoder.hpp"
+#include "bc1_encoder.hpp"
 #include "core/gpu/deswizzle.hpp"
 #include "platform/logger.hpp"
 #include <cstring>
@@ -129,7 +130,25 @@ std::shared_ptr<CachedTexture> TextureCache::GetOrCreateTexture(
             if (memory->ReadBlock(desc.gpu_address, raw_astc.data(), astc_bytes)) {
                 std::vector<u32> decoded_rgba(desc.width * desc.height);
                 AstcDecoder::DecompressSurface(raw_astc, desc.width, desc.height, bw, bh, decoded_rgba);
-                std::memcpy(cached->linear_pixel_data.data(), decoded_rgba.data(), decoded_rgba.size() * sizeof(u32));
+
+                // Tier-B1 recompression (yuzu accelerated-ASTC pattern):
+                // don't retain the 34x-blowup RGBA8 surface — re-encode to
+                // BC1 (0.5 B/px) immediately and keep only that. D3D12
+                // samples BC1 natively; the GPU decodes at draw for free.
+                const u8* rgba_bytes = reinterpret_cast<const u8*>(decoded_rgba.data());
+                std::vector<u8> bc1;
+                if (Bc1Encoder::EncodeRGBA8(
+                        std::span<const u8>(rgba_bytes, decoded_rgba.size() * sizeof(u32)),
+                        desc.width, desc.height, bc1)) {
+                    cached->linear_pixel_data = std::move(bc1);
+                    cached->host_storage = CachedTexture::HostStorage::BC1;
+                    NEMU_LOG_DEBUG("gpu", "TextureCache: ASTC {}x{} recompressed to BC1 ({} B)",
+                                   desc.width, desc.height, bc1.size());
+                } else {
+                    // Unaligned dims for 4x4 blocks: keep RGBA8 fallback.
+                    std::memcpy(cached->linear_pixel_data.data(), decoded_rgba.data(),
+                                decoded_rgba.size() * sizeof(u32));
+                }
                 cached->is_valid = true;
             }
         } else if (desc.is_block_linear) {
@@ -172,22 +191,28 @@ std::shared_ptr<CachedTexture> TextureCache::GetOrCreateTexture(
 #ifdef _WIN32
     if (device_ && srv_heap_) {
         DXGI_FORMAT dxgi_fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
-        switch (desc.format) {
-            case TextureFormat::RGBA8_SRGB: dxgi_fmt = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; break;
-            case TextureFormat::BGRA8_UNORM: dxgi_fmt = DXGI_FORMAT_B8G8R8A8_UNORM; break;
-            case TextureFormat::BGRA8_SRGB: dxgi_fmt = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB; break;
-            case TextureFormat::BC1_UNORM: dxgi_fmt = DXGI_FORMAT_BC1_UNORM; break;
-            case TextureFormat::BC1_SRGB: dxgi_fmt = DXGI_FORMAT_BC1_UNORM_SRGB; break;
-            case TextureFormat::BC2_UNORM: dxgi_fmt = DXGI_FORMAT_BC2_UNORM; break;
-            case TextureFormat::BC3_UNORM: dxgi_fmt = DXGI_FORMAT_BC3_UNORM; break;
-            case TextureFormat::BC7_UNORM: dxgi_fmt = DXGI_FORMAT_BC7_UNORM; break;
-            case TextureFormat::BC7_SRGB: dxgi_fmt = DXGI_FORMAT_BC7_UNORM_SRGB; break;
-            case TextureFormat::R8_UNORM: dxgi_fmt = DXGI_FORMAT_R8_UNORM; break;
-            case TextureFormat::R16_FLOAT: dxgi_fmt = DXGI_FORMAT_R16_FLOAT; break;
-            case TextureFormat::R32_FLOAT: dxgi_fmt = DXGI_FORMAT_R32_FLOAT; break;
-            case TextureFormat::RGBA16_FLOAT: dxgi_fmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
-            case TextureFormat::RGBA32_FLOAT: dxgi_fmt = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
-            default: dxgi_fmt = DXGI_FORMAT_R8G8B8A8_UNORM; break;
+        if (cached->host_storage == CachedTexture::HostStorage::BC1) {
+            // Tier-B1: host buffer holds BC1 blocks — sample as BC1 so the
+            // GPU does the decode; the RGBA8 surface never existed host-side.
+            dxgi_fmt = DXGI_FORMAT_BC1_UNORM;
+        } else {
+            switch (desc.format) {
+                case TextureFormat::RGBA8_SRGB: dxgi_fmt = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; break;
+                case TextureFormat::BGRA8_UNORM: dxgi_fmt = DXGI_FORMAT_B8G8R8A8_UNORM; break;
+                case TextureFormat::BGRA8_SRGB: dxgi_fmt = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB; break;
+                case TextureFormat::BC1_UNORM: dxgi_fmt = DXGI_FORMAT_BC1_UNORM; break;
+                case TextureFormat::BC1_SRGB: dxgi_fmt = DXGI_FORMAT_BC1_UNORM_SRGB; break;
+                case TextureFormat::BC2_UNORM: dxgi_fmt = DXGI_FORMAT_BC2_UNORM; break;
+                case TextureFormat::BC3_UNORM: dxgi_fmt = DXGI_FORMAT_BC3_UNORM; break;
+                case TextureFormat::BC7_UNORM: dxgi_fmt = DXGI_FORMAT_BC7_UNORM; break;
+                case TextureFormat::BC7_SRGB: dxgi_fmt = DXGI_FORMAT_BC7_UNORM_SRGB; break;
+                case TextureFormat::R8_UNORM: dxgi_fmt = DXGI_FORMAT_R8_UNORM; break;
+                case TextureFormat::R16_FLOAT: dxgi_fmt = DXGI_FORMAT_R16_FLOAT; break;
+                case TextureFormat::R32_FLOAT: dxgi_fmt = DXGI_FORMAT_R32_FLOAT; break;
+                case TextureFormat::RGBA16_FLOAT: dxgi_fmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
+                case TextureFormat::RGBA32_FLOAT: dxgi_fmt = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
+                default: dxgi_fmt = DXGI_FORMAT_R8G8B8A8_UNORM; break;
+            }
         }
 
         D3D12_RESOURCE_DESC res_desc{};

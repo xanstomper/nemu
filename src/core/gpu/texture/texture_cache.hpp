@@ -18,10 +18,17 @@
 namespace nemu::core::gpu::texture {
 
 struct CachedTexture {
+    /// How `linear_pixel_data` is encoded host-side.
+    enum class HostStorage : u32 {
+        RGBA8 = 0,  // raw deswizzled pixels (4 B/px)
+        BC1 = 1,    // D3D12-native compressed (0.5 B/px, Tier-B1)
+    };
+
     TextureDescriptor desc{};
     u32 srv_index{0};
     bool is_valid{false};
     std::vector<u8> linear_pixel_data{}; // Deswizzled/decompressed pixel buffer
+    HostStorage host_storage{HostStorage::RGBA8};
 
 #ifdef _WIN32
     Microsoft::WRL::ComPtr<ID3D12Resource> resource{};

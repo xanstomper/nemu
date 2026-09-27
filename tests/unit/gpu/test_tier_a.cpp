@@ -6,6 +6,7 @@
 #include "core/gpu/maxwell_3d.hpp"
 #include "core/gpu/texture/bc1_encoder.hpp"
 #include "core/gpu/texture/astc_decoder.hpp"
+#include "core/gpu/texture/texture_cache.hpp"
 #include "core/gpu/null_backend.hpp"
 #include "core/gpu/shader/maxwell_shader_decoder.hpp"
 #include "core/memory/virtual_memory.hpp"
@@ -304,6 +305,58 @@ void TestBc1Encoder() {
     std::cout << "  BC1 encoder PASS\n";
 }
 
+// ---------------------------------------------------------------------------
+// TextureCache BC1 integration (Tier-B1 wired): ASTC input -> BC1 host storage
+// ---------------------------------------------------------------------------
+void TestTextureCacheBc1Integration() {
+    using namespace nemu::core::gpu::texture;
+
+    auto mem = std::make_shared<memory::VirtualMemory>();
+    // Map a guest page for the ASTC texture data.
+    constexpr u64 guest_addr = 0x30000000ULL;
+    constexpr u32 W = 64, H = 64, BW = 4, BH = 4;
+    constexpr u32 blocks_x = W / BW, blocks_y = H / BH;
+    constexpr size_t astc_bytes = blocks_x * blocks_y * 16; // 128-bit blocks
+
+    // A flat red 4x4 ASTC block (constant-color mode: w0=0x1F9 just needs to
+    // decode deterministically; we only assert size/storage, not color).
+    std::vector<u8> astc(astc_bytes, 0);
+    for (u32 b = 0; b < blocks_x * blocks_y; ++b) {
+        // Minimal valid void-extent-ish block; decoder treats 0x as regular.
+        astc[b * 16 + 0] = 0xF9; astc[b * 16 + 1] = 0x01;
+        astc[b * 16 + 9] = 0xFF; astc[b * 16 + 10] = 0x00; astc[b * 16 + 11] = 0x00;
+    }
+    NEMU_TEST_ASSERT(mem->Map(guest_addr, astc_bytes, memory::MemoryPermission::All), "guest map");
+    mem->WriteBlock(guest_addr, astc.data(), astc.size());
+
+    TextureCache cache;
+    NEMU_TEST_ASSERT(cache.Initialize(), "cache init");
+
+    TextureDescriptor desc{};
+    desc.gpu_address = guest_addr;
+    desc.width = W;
+    desc.height = H;
+    desc.depth = 1;
+    desc.mip_levels = 1;
+    desc.format = TextureFormat::ASTC_4x4;
+    desc.bytes_per_pixel = 4;
+
+    auto tex = cache.GetOrCreateTexture(desc, mem.get());
+    NEMU_TEST_ASSERT(tex && tex->is_valid, "texture created valid");
+
+    // The core assertion: host storage is BC1 (0.5 B/px), NOT the RGBA8 blowup.
+    NEMU_TEST_ASSERT(tex->host_storage == CachedTexture::HostStorage::BC1,
+                     "ASTC texture stored as BC1");
+    const size_t expected_bc1 = (W / 4) * (H / 4) * 8; // 2048 bytes
+    NEMU_TEST_ASSERT(tex->linear_pixel_data.size() == expected_bc1,
+                     "BC1 size = blocks*8 (was 16384 RGBA8: 8x reduction)");
+    // Second lookup returns the same cached entry (no re-encode).
+    auto tex2 = cache.GetOrCreateTexture(desc, mem.get());
+    NEMU_TEST_ASSERT(tex2 == tex, "cache hit returns same entry");
+
+    std::cout << "  TextureCache BC1 integration PASS\n";
+}
+
 int main() {
     std::cout << "== NEMU Tier-A unit tests ==\n";
     TestGmmuBasics();
@@ -311,6 +364,7 @@ int main() {
     TestExpandedMaxwell3D();
     TestExpandedShaderDecoder();
     TestBc1Encoder();
+    TestTextureCacheBc1Integration();
     std::cout << "ALL TIER-A TESTS PASSED\n";
     return 0;
 }
