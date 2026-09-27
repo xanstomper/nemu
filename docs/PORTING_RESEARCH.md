@@ -118,7 +118,7 @@ decoder — stage `ShaderStage::Compute` already exists in the decoder enum.
 
 ---
 
-## 5. Shader decoding (Tier-A1) — ✅ 41 opcodes + predicate file + exact LOP3 LUT; ⬜ maxwell.inc full table, PSET/TEXS variants, bindless TIC
+## 5. Shader decoding (Tier-A1) — ✅ COMPLETE: 41-opcode fast path + full 279-encoding/162-family SASS table (sass_identifier) + predicate file + exact LOP3 LUT; ⬜ IR-level translation of remaining families (PSET/TEXS variants → HLSL) is the last depth layer
 
 **yuzu pipeline:** `frontend/maxwell/decode.cpp` → `maxwell.inc` opcode table (17KB —
 full instruction name/property tables) → `translate_program.cpp` → IR defined in
