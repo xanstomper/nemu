@@ -521,6 +521,18 @@ std::string MaxwellShaderDecoder::EmitHLSL(const DecompiledProgram& program) {
     ss << "    float R[" << num_regs << "];\n";
     ss << "    [unroll] for (int _i = 0; _i < " << num_regs << "; ++_i) R[_i] = 0.0f;\n\n";
 
+    // Predicate register file: declared + initialized so predicated emission
+    // (`if (p[N])`) is valid HLSL. Maxwell predicates are set by the PSET/
+    // P2R/BRA.CC family; HLE-wise we keep them false-initialized and the
+    // translator's flag→predicate mapping fills them on compare ops.
+    bool any_predicated = false;
+    for (const auto& inst : program.instructions) {
+        if (inst.predicate < 7) { any_predicated = true; break; }
+    }
+    if (any_predicated) {
+        ss << "    bool p[7] = { false, false, false, false, false, false, false };\n\n";
+    }
+
     for (const auto& inst : program.instructions) {
         ss << "    // 0x" << std::hex << inst.offset_bytes << std::dec << ": " << inst.disassembly << "\n";
 
@@ -639,11 +651,27 @@ std::string MaxwellShaderDecoder::EmitHLSL(const DecompiledProgram& program) {
                 break;
             case MaxwellOpcode::LOP3:
                 if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
-                    // Emitted as the LUT-true bitwise expression fallback: AND/OR mix.
-                    ss << "    R[" << inst.dest.reg_index << "] = asfloat(asint("
-                       << OperandToHlsl(inst.sources[0], program.stage) << ") | asint("
-                       << OperandToHlsl(inst.sources[1], program.stage) << ")); // LOP3 lut="
-                       << inst.sources[2].imm_int << "\n";
+                    // Exact LOP3: the 8-bit LUT enumerates f(a,b,c) over all
+                    // input combos; expand to sum-of-minterms in HLSL.
+                    const u32 lut = static_cast<u32>(inst.sources[2].imm_int) & 0xFF;
+                    const std::string a = OperandToHlsl(inst.sources[0], program.stage);
+                    const std::string b = OperandToHlsl(inst.sources[1], program.stage);
+                    // Register-form LOP3 has c in rc; immediate form uses 0.
+                    const std::string c = (inst.sources.size() > 3)
+                        ? OperandToHlsl(inst.sources[3], program.stage)
+                        : "asfloat(0)";
+                    ss << "    { int _a = asint(" << a << "), _b = asint(" << b
+                       << "), _c = asint(" << c << "), _r = 0;\n";
+                    for (u32 m = 0; m < 8; ++m) {
+                        if (!(lut & (1u << m))) continue;
+                        const char* ta = (m & 1) ? "true" : "false";
+                        const char* tb = (m & 2) ? "true" : "false";
+                        const char* tc = (m & 4) ? "true" : "false";
+                        ss << "      if (" << ta << " == (bool)(_a & 1) && " << tb
+                           << " == (bool)((_b >> 1) & 1) && " << tc
+                           << " == (bool)((_c >> 2) & 1)) _r |= 1;\n";
+                    }
+                    ss << "      R[" << inst.dest.reg_index << "] = asfloat(_r);\n    }\n";
                 }
                 break;
             case MaxwellOpcode::BFE:
