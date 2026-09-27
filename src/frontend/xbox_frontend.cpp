@@ -2571,9 +2571,11 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
     std::string icon_path = FindAsset("ui/icon_settings.png");
     if (overlay && !icon_path.empty()) {
         gpu->UiImageOverlay("hdr_settings", icon_path, 60.0f, 32.0f, 38.0f, 38.0f);
-        gpu->UiTextOverlay("System Settings", 112.0f, 36.0f, 26.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("NEMULATOR System Settings", 112.0f, 36.0f, 26.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("XBOX UWP EDITION • SERIES X|S", 1220.0f, 40.0f, 15.0f, 0.0f, 0.95f, 0.45f, 1.0f, 1);
     } else {
-        UiGeometryBuilder::AddText(out, "SYSTEM SETTINGS", 60.0f, 36.0f, 2.0f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "NEMULATOR SYSTEM SETTINGS", 60.0f, 36.0f, 2.0f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "[ XBOX UWP ]", 950.0f, 36.0f, 1.4f, UiColor::XboxNeon());
     }
 
     UiGeometryBuilder::AddQuad(out, 40.0f, 80.0f, 1200.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
@@ -2584,8 +2586,8 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
         "Graphics Optimizers",
         "Controllers & Sensors",
         "Audio & Output",
-        "System & Storage",
-        "Diagnostics (Live)"
+        "System, Storage & Keys",
+        "Diagnostics (5GB Budget)"
     };
 
     for (size_t c = 0; c < 7; ++c) {
@@ -2621,11 +2623,11 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
     std::vector<OptionItem> opts;
 
     if (settings_category_ == 0) {
-        opts.push_back({"Console Operation Mode", (cfg.console_mode == core::config::ConsoleMode::Docked) ? "Docked (1080p TV)" : "Handheld (720p)", "Select TV/Docked mode for Xbox full performance"});
+        opts.push_back({"Console Operation Mode", (cfg.console_mode == core::config::ConsoleMode::Docked) ? "Docked (1080p/4K TV)" : "Handheld (720p)", "Select TV/Docked mode for Xbox full performance"});
         opts.push_back({"Vertical Sync (VSync)", cfg.vsync ? "Enabled (60 Hz)" : "Disabled", "Smooth 60 Hz frame delivery aligned with TV refresh"});
         opts.push_back({"ARM64 JIT Dynamic Recompiler", (cfg.cpu_backend == core::config::CpuBackendMode::Jit) ? "Enabled" : "Disabled", "Hardware dynamic code generation for peak performance"});
         opts.push_back({"Fastmem MMU Exception Trap", cfg.fastmem_enabled ? "Enabled" : "Disabled", "Zero-overhead direct host pointer memory mapping"});
-        opts.push_back({"Multithreaded CPU", cfg.multithreaded_cpu ? "Enabled" : "Disabled", "Parallel guest thread execution across host cores"});
+        opts.push_back({"Multithreaded CPU", cfg.multithreaded_cpu ? "Enabled" : "Disabled", "Parallel guest thread execution across host Zen 2 cores"});
     } else if (settings_category_ == 1) {
         std::string res_str = (cfg.resolution_scale == core::config::ResolutionScale::Ultra4K_2_0x) ? "2.0x 4K UHD (Series X Ultra)" :
                               (cfg.resolution_scale == core::config::ResolutionScale::SeriesX_1_5x) ? "1.5x 1440p (Series X Enhanced)" :
@@ -2670,11 +2672,11 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
             : std::string("Unavailable");
         // Order must match enum class SystemLanguage (English=0, Japanese=1, ..., Italian=5).
         const char* lang_names[] = {"English", "Japanese", "French", "German", "Spanish", "Italian"};
-        opts.push_back({"Console Nickname", "Nemu (Xbox Horizon OS)", "Network identifier for local wireless play"});
+        opts.push_back({"Console Nickname", "NEMULATOR (Xbox UWP)", "Network identifier for local wireless play"});
         opts.push_back({"System Language", std::string(lang_names[static_cast<u32>(cfg.system_language) % 6]), "Horizon OS system language (applies to set:u service)"});
-        opts.push_back({"Emulator Firmware", GetEmulatorVersionString(), "Running build of the emulator core"});
+        opts.push_back({"Emulator Firmware", "Nemulator v1.0.0 (Horizon OS 18.1.0)", "Running build of the emulator core"});
         opts.push_back({"Storage (sdmc:/)", cap_str + " - " + free_str, "Live filesystem stats for the game storage mount"});
-        opts.push_back({"Save Data & Config", "save:/ (config.ini, states, screenshots)", "Virtual file system roots mounted for game data"});
+        opts.push_back({"Graphics Surface", "Direct3D 12 (Xbox Full Trust Game Mode)", "Hardware GPU render presentation engine"});
     } else if (settings_category_ == 6) { // Diagnostics - live emulator telemetry
         const auto& d = live_diag_;
         auto kfmt = [](u64 v) {
@@ -2694,10 +2696,9 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
             auto fmt_mib = [](u64 b) -> std::string {
                 return std::to_string(b / (1024 * 1024)) + " MiB";
             };
-            opts.push_back({"RAM Used / Peak (5 GiB cap)",
-                            fmt_mib(d.mem_used_bytes) + " / " + fmt_mib(d.mem_peak_bytes),
-                            "Estimated committed vs Xbox Dev Mode process budget (~" +
-                            std::to_string(d.mem_cap_bytes / (1024 * 1024)) + " MiB)"});
+            opts.push_back({"RAM Governor Budget (5 GiB Cap)",
+                            fmt_mib(d.mem_used_bytes) + " / " + fmt_mib(d.mem_cap_bytes > 0 ? d.mem_cap_bytes : 5368709120ULL),
+                            "Committed vs Xbox Dev Mode UWP budget limit (5120 MiB max)"});
         }
     }
 
@@ -2741,7 +2742,7 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
 void XboxFrontend::DrawSwitchControllers(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu) {
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.1765f, 0.1765f, 0.1765f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.11f, 0.115f, 0.125f, 1.0f});
 
     std::string icon_path = FindAsset("ui/icon_controllers.png");
     // Real polled connection state from the Xbox controller driver
@@ -2762,16 +2763,16 @@ void XboxFrontend::DrawSwitchControllers(std::vector<core::gpu::RasterVertex>& o
     }
     if (overlay && !icon_path.empty()) {
         gpu->UiImageOverlay("hdr_ctrl", icon_path, 60.0f, 32.0f, 38.0f, 38.0f);
-        gpu->UiTextOverlay("Controllers", 112.0f, 36.0f, 26.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("NEMULATOR Controller Configuration", 112.0f, 36.0f, 26.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
         gpu->UiTextOverlay(input_status, 1220.0f, 40.0f, 15.0f, 0.20f, 0.85f, 0.35f, 1.0f, 1);
     } else {
-        UiGeometryBuilder::AddText(out, "CONTROLLERS", 60.0f, 36.0f, 2.0f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "NEMULATOR CONTROLLER CONFIGURATION", 60.0f, 36.0f, 2.0f, UiColor::White());
         UiGeometryBuilder::AddText(out, "[ Input: Keyboard / Mouse ]", 800.0f, 36.0f, 1.4f, UiColor::NeonGreen());
     }
 
     UiGeometryBuilder::AddQuad(out, 40.0f, 80.0f, 1200.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
 
-    UiGeometryBuilder::AddQuad(out, 60.0f, 105.0f, 500.0f, 515.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 60.0f, 105.0f, 500.0f, 515.0f, UiColor{0.145f, 0.150f, 0.165f, 1.0f});
     UiGeometryBuilder::AddRectOutline(out, 60.0f, 105.0f, 500.0f, 515.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
 
     if (overlay) {
@@ -2815,7 +2816,7 @@ void XboxFrontend::DrawSwitchControllers(std::vector<core::gpu::RasterVertex>& o
         {"2. Find Controllers (Test Rumble)", "[ Press (A) to Test Motors ]"},
         {"3. Button Mapping Scheme", (cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard) ? "Nintendo Standard (B/A/Y/X)" : "Xbox Mirrored (A/B/X/Y)"},
         {"4. HD Rumble Actuators", cfg.vibration_enabled ? "Enabled" : "Disabled"},
-        {"5. Return to Home Menu", "Press (B) or (A)"}
+        {"5. Return to NEMULATOR Home", "Press (B) or (A)"}
     };
 
     for (size_t r = 0; r < 5; ++r) {
@@ -2826,7 +2827,7 @@ void XboxFrontend::DrawSwitchControllers(std::vector<core::gpu::RasterVertex>& o
             UiGeometryBuilder::AddQuad(out, 590.0f, ry, 630.0f, 84.0f, UiColor{0.25f, 0.27f, 0.30f, 1.0f});
             UiGeometryBuilder::AddRectOutline(out, 590.0f, ry, 630.0f, 84.0f, 2.5f, UiColor{0.0f, 0.82f, 0.90f, 1.0f});
         } else {
-            UiGeometryBuilder::AddQuad(out, 590.0f, ry, 630.0f, 84.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
+            UiGeometryBuilder::AddQuad(out, 590.0f, ry, 630.0f, 84.0f, UiColor{0.145f, 0.150f, 0.165f, 1.0f});
             UiGeometryBuilder::AddRectOutline(out, 590.0f, ry, 630.0f, 84.0f, 1.0f, UiColor{0.26f, 0.26f, 0.26f, 1.0f});
         }
 
@@ -2856,23 +2857,23 @@ void XboxFrontend::DrawSwitchControllers(std::vector<core::gpu::RasterVertex>& o
 void XboxFrontend::DrawSwitchPowerMenu(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu) {
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.0f, 0.0f, 0.0f, 0.75f});
-    UiGeometryBuilder::AddQuad(out, 380.0f, 150.0f, 520.0f, 400.0f, UiColor{0.18f, 0.18f, 0.18f, 1.0f});
-    UiGeometryBuilder::AddRectOutline(out, 380.0f, 150.0f, 520.0f, 400.0f, 3.0f, UiColor{0.0f, 0.82f, 0.90f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.0f, 0.0f, 0.0f, 0.80f});
+    UiGeometryBuilder::AddQuad(out, 380.0f, 150.0f, 520.0f, 400.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
+    UiGeometryBuilder::AddRectOutline(out, 380.0f, 150.0f, 520.0f, 400.0f, 3.0f, UiColor{0.0f, 0.88f, 0.95f, 1.0f});
 
     if (overlay) {
-        gpu->UiFillRectOverlay(0.0f, 0.0f, 1280.0f, 720.0f, 0.0f, 0.0f, 0.0f, 0.75f);
-        gpu->UiFillRectOverlay(380.0f, 150.0f, 520.0f, 400.0f, 0.18f, 0.18f, 0.18f, 1.0f);
-        gpu->UiRectOutlineOverlay(380.0f, 150.0f, 520.0f, 400.0f, 3.0f, 0.0f, 0.82f, 0.90f, 1.0f);
+        gpu->UiFillRectOverlay(0.0f, 0.0f, 1280.0f, 720.0f, 0.0f, 0.0f, 0.0f, 0.80f);
+        gpu->UiFillRectOverlay(380.0f, 150.0f, 520.0f, 400.0f, 0.14f, 0.145f, 0.16f, 1.0f);
+        gpu->UiRectOutlineOverlay(380.0f, 150.0f, 520.0f, 400.0f, 3.0f, 0.0f, 0.88f, 0.95f, 1.0f);
     }
 
     std::string icon_path = FindAsset("ui/icon_sleep.png");
     if (overlay && !icon_path.empty()) {
         gpu->UiImageOverlay("modal_pwr_icon", icon_path, 405.0f, 170.0f, 44.0f, 44.0f);
-        gpu->UiTextOverlay("Power Options", 460.0f, 172.0f, 24.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
-        gpu->UiTextOverlay("Choose an action for Nemu Switch on Xbox", 460.0f, 200.0f, 14.0f, 0.65f, 0.65f, 0.65f, 1.0f, -1);
+        gpu->UiTextOverlay("NEMULATOR Power Options", 460.0f, 172.0f, 24.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("Choose an action for NEMULATOR on Xbox Series X|S", 460.0f, 200.0f, 14.0f, 0.65f, 0.65f, 0.65f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "POWER OPTIONS", 460.0f, 175.0f, 1.8f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "NEMULATOR POWER OPTIONS", 460.0f, 175.0f, 1.8f, UiColor::White());
     }
 
     UiGeometryBuilder::AddQuad(out, 405.0f, 230.0f, 470.0f, 1.0f, UiColor{0.30f, 0.30f, 0.30f, 1.0f});
@@ -2882,9 +2883,9 @@ void XboxFrontend::DrawSwitchPowerMenu(std::vector<core::gpu::RasterVertex>& out
 
     const char* pwr_opts[] = {
         "Sleep Mode (Low-Power Standby)",
-        "Restart Nemu",
+        "Restart NEMULATOR",
         "Exit to Xbox Dashboard / Desktop",
-        "Cancel (Return to Home)"
+        "Cancel (Return to NEMULATOR Home)"
     };
 
     for (size_t r = 0; r < 4; ++r) {
@@ -2893,18 +2894,18 @@ void XboxFrontend::DrawSwitchPowerMenu(std::vector<core::gpu::RasterVertex>& out
 
         if (is_sel) {
             UiGeometryBuilder::AddQuad(out, 405.0f, ry, 470.0f, 52.0f, UiColor{0.0f, 0.50f, 0.65f, 0.45f});
-            UiGeometryBuilder::AddRectOutline(out, 405.0f, ry, 470.0f, 52.0f, 2.0f, UiColor{0.0f, 0.82f, 0.90f, 1.0f});
+            UiGeometryBuilder::AddRectOutline(out, 405.0f, ry, 470.0f, 52.0f, 2.0f, UiColor{0.0f, 0.88f, 0.95f, 1.0f});
             if (overlay) {
                 gpu->UiFillRectOverlay(405.0f, ry, 470.0f, 52.0f, 0.0f, 0.50f, 0.65f, 0.45f);
-                gpu->UiRectOutlineOverlay(405.0f, ry, 470.0f, 52.0f, 2.0f, 0.0f, 0.82f, 0.90f, 1.0f);
+                gpu->UiRectOutlineOverlay(405.0f, ry, 470.0f, 52.0f, 2.0f, 0.0f, 0.88f, 0.95f, 1.0f);
                 gpu->UiTextOverlay(std::string(">  ") + pwr_opts[r], 425.0f, ry + 16.0f, 18.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
             } else {
                 UiGeometryBuilder::AddText(out, std::string("> ") + pwr_opts[r], 425.0f, ry + 16.0f, 1.5f, UiColor::EdenCyan());
             }
         } else {
-            UiGeometryBuilder::AddQuad(out, 405.0f, ry, 470.0f, 52.0f, UiColor{0.22f, 0.22f, 0.22f, 1.0f});
+            UiGeometryBuilder::AddQuad(out, 405.0f, ry, 470.0f, 52.0f, UiColor{0.18f, 0.185f, 0.20f, 1.0f});
             if (overlay) {
-                gpu->UiFillRectOverlay(405.0f, ry, 470.0f, 52.0f, 0.22f, 0.22f, 0.22f, 1.0f);
+                gpu->UiFillRectOverlay(405.0f, ry, 470.0f, 52.0f, 0.18f, 0.185f, 0.20f, 1.0f);
                 gpu->UiTextOverlay(std::string("   ") + pwr_opts[r], 425.0f, ry + 16.0f, 18.0f, 0.90f, 0.90f, 0.90f, 1.0f, -1);
             } else {
                 UiGeometryBuilder::AddText(out, std::string("  ") + pwr_opts[r], 425.0f, ry + 16.0f, 1.5f, UiColor::TextWhite());
@@ -2924,22 +2925,22 @@ void XboxFrontend::DrawSwitchPowerMenu(std::vector<core::gpu::RasterVertex>& out
 void XboxFrontend::DrawSwitchGameOptions(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu) {
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.0f, 0.0f, 0.0f, 0.75f});
-    UiGeometryBuilder::AddQuad(out, 340.0f, 110.0f, 600.0f, 500.0f, UiColor{0.18f, 0.18f, 0.18f, 1.0f});
-    UiGeometryBuilder::AddRectOutline(out, 340.0f, 110.0f, 600.0f, 500.0f, 2.5f, UiColor{0.0f, 0.82f, 0.90f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.0f, 0.0f, 0.0f, 0.80f});
+    UiGeometryBuilder::AddQuad(out, 340.0f, 110.0f, 600.0f, 500.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
+    UiGeometryBuilder::AddRectOutline(out, 340.0f, 110.0f, 600.0f, 500.0f, 2.5f, UiColor{0.0f, 0.88f, 0.95f, 1.0f});
 
     if (overlay) {
-        gpu->UiFillRectOverlay(0.0f, 0.0f, 1280.0f, 720.0f, 0.0f, 0.0f, 0.0f, 0.75f);
-        gpu->UiFillRectOverlay(340.0f, 110.0f, 600.0f, 500.0f, 0.18f, 0.18f, 0.18f, 1.0f);
-        gpu->UiRectOutlineOverlay(340.0f, 110.0f, 600.0f, 500.0f, 2.5f, 0.0f, 0.82f, 0.90f, 1.0f);
+        gpu->UiFillRectOverlay(0.0f, 0.0f, 1280.0f, 720.0f, 0.0f, 0.0f, 0.0f, 0.80f);
+        gpu->UiFillRectOverlay(340.0f, 110.0f, 600.0f, 500.0f, 0.14f, 0.145f, 0.16f, 1.0f);
+        gpu->UiRectOutlineOverlay(340.0f, 110.0f, 600.0f, 500.0f, 2.5f, 0.0f, 0.88f, 0.95f, 1.0f);
     }
 
     const auto& game = (selected_game_index_ < library_.size()) ? library_[selected_game_index_] : GameEntry{};
 
     if (overlay) {
-        gpu->UiTextOverlay("SOFTWARE OPTIONS", 365.0f, 130.0f, 22.0f, 0.0f, 0.82f, 0.90f, 1.0f, -1);
+        gpu->UiTextOverlay("NEMULATOR SOFTWARE OPTIONS & 60 FPS PROFILE", 365.0f, 130.0f, 21.0f, 0.0f, 0.88f, 0.95f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "SOFTWARE OPTIONS", 365.0f, 130.0f, 1.8f, UiColor::EdenCyan());
+        UiGeometryBuilder::AddText(out, "NEMULATOR SOFTWARE OPTIONS", 365.0f, 130.0f, 1.7f, UiColor::EdenCyan());
     }
 
     if (overlay && !game.cover_host_path.empty()) {
@@ -2953,7 +2954,7 @@ void XboxFrontend::DrawSwitchGameOptions(std::vector<core::gpu::RasterVertex>& o
         char tid_buf[64];
         std::snprintf(tid_buf, sizeof(tid_buf), "Title ID: %016llX", static_cast<unsigned long long>(game.title_id));
         gpu->UiTextOverlay(tid_buf, 475.0f, 196.0f, 14.0f, 0.65f, 0.65f, 0.65f, 1.0f, -1);
-        gpu->UiTextOverlay(game.format_badge + " • 60 FPS Profile", 475.0f, 218.0f, 14.0f, 0.20f, 0.85f, 0.40f, 1.0f, -1);
+        gpu->UiTextOverlay(game.format_badge + " • 60 FPS Profile • Direct3D 12", 475.0f, 218.0f, 14.0f, 0.20f, 0.85f, 0.40f, 1.0f, -1);
         gpu->UiTextOverlay(game.playtime_str, 475.0f, 240.0f, 14.0f, 0.60f, 0.62f, 0.68f, 1.0f, -1);
     } else {
         UiGeometryBuilder::AddText(out, game.title, 475.0f, 168.0f, 1.5f, UiColor::White());
@@ -2967,8 +2968,8 @@ void XboxFrontend::DrawSwitchGameOptions(std::vector<core::gpu::RasterVertex>& o
 
     const char* opts[] = {
         "1. Launch Software",
-        "2. Graphics Profile: < 1080p Docked • FSR 2.0 >",
-        "3. Save Data Backup: [ Synchronized to Xbox Cloud ]",
+        "2. Graphics Profile: < 1080p/4K Docked • FSR 2.0 >",
+        "3. Save Data Backup: [ Synchronized to Xbox Local Storage ]",
         "4. Scan SDMC / RomFS for Updates",
         "5. Close Options"
     };
