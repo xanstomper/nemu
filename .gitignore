@@ -53,3 +53,6 @@ switch/
 
 # CTest temporary artifacts
 Testing/
+
+# Packaging certs (never commit)
+*.cer
