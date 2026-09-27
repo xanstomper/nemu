@@ -164,6 +164,7 @@ void Emulator::ApplyRuntimeConfig() {
     // Audio: master mute (volume scaling applied per-queue by backends that
     // support it; toggling audio_enabled starts/stops the stream).
     if (audio_backend_) {
+        audio_backend_->SetVolume(cfg.audio_volume);
         if (cfg.audio_enabled) {
             audio_backend_->Start();
         } else {
@@ -181,6 +182,28 @@ void Emulator::ApplyRuntimeConfig() {
         fo.frame_generation = cfg.frame_generation;
         fo.enabled = true;
         gpu_backend_->SetFrameOptimizerSettings(fo);
+
+        // Resolution scale: re-init the backend at the scaled resolution
+        // (live; the guest keeps running — buffers are recreated, next frame
+        // rasterizes at the new size).
+        u32 target_w = cfg.render_width;
+        u32 target_h = cfg.render_height;
+        switch (cfg.resolution_scale) {
+            case config::ResolutionScale::Handheld_0_5x: target_w = 640;  target_h = 360;  break;
+            case config::ResolutionScale::SeriesS_0_75x: target_w = 960;  target_h = 540;  break;
+            case config::ResolutionScale::Native_1_0x:   target_w = 1280; target_h = 720;  break;
+            case config::ResolutionScale::SeriesX_1_5x:  target_w = 1920; target_h = 1080; break;
+            case config::ResolutionScale::Ultra4K_2_0x:  target_w = 2560; target_h = 1440; break;
+        }
+        if ((target_w != cfg.render_width || target_h != cfg.render_height) ||
+            (gpu_backend_->GetStats().frames_presented > 0 &&
+             target_w != current_render_width_)) {
+            gpu_backend_->Shutdown();
+            gpu_backend_->Initialize(target_w, target_h);
+            current_render_width_ = target_w;
+            NEMU_LOG_INFO("System", "Runtime config: render resolution {}x{} (scale {})",
+                          target_w, target_h, static_cast<u32>(cfg.resolution_scale));
+        }
     }
 
     NEMU_LOG_INFO("System", "Runtime config applied: layout={}, deadzone={:.2f}-{:.2f}, audio={}, upscaler={}, aa={}, framegen={}",
@@ -226,6 +249,21 @@ bool Emulator::LoadTitle(const std::string& path) {
     }
     if (loaded->title_id != 0) {
         process_->SetTitleId(loaded->title_id);
+    }
+
+    // Per-game config overrides (Tier-B UI wiring): apply the title's saved
+    // settings on top of the global config, then push everything live.
+    if (loaded->title_id != 0 && config_manager_) {
+        const auto effective = config_manager_->GetEffectiveConfigForTitle(loaded->title_id);
+        auto& mutable_cfg = config_manager_->GetConfig();
+        mutable_cfg.resolution_scale = effective.resolution_scale;
+        mutable_cfg.upscaler = effective.upscaler;
+        mutable_cfg.fsr_sharpness = effective.fsr_sharpness;
+        mutable_cfg.anti_aliasing = effective.anti_aliasing;
+        mutable_cfg.frame_generation = effective.frame_generation;
+        mutable_cfg.cpu_backend = effective.cpu_backend;
+        mutable_cfg.button_layout = effective.button_layout;
+        ApplyRuntimeConfig();
     }
 
     // Create Main Thread

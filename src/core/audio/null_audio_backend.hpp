@@ -2,6 +2,7 @@
 
 #include "audio_interface.hpp"
 #include "audio_ring_buffer.hpp"
+#include <vector>
 
 namespace nemu::core::audio {
 
@@ -30,6 +31,7 @@ private:
     u32 channels_{DEFAULT_CHANNELS};
     u64 total_frames_played_{0};
     AudioRingBuffer<StereoFrame16> ring_buffer_;
+    std::vector<StereoFrame16> volume_scratch_; // inline gain staging
 };
 
 } // namespace nemu::core::audio

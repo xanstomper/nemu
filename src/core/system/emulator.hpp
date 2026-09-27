@@ -137,6 +137,7 @@ private:
     std::shared_ptr<gpu::Maxwell3D> maxwell_;
     std::shared_ptr<gpu::presentation::Nvnflinger> flinger_;
     std::shared_ptr<gpu::nvhost::NvDeviceManager> device_manager_;
+    u32 current_render_width_{1280}; // tracks live backend resolution (scale changes)
 
     std::shared_ptr<audio::IAudioBackend> audio_backend_;
     std::shared_ptr<hid::HidManager> hid_manager_;
