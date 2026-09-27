@@ -130,6 +130,56 @@ void TestBufferCache() {
 }
 
 // ---------------------------------------------------------------------------
+// BufferCache coalescing dedup (Ryujinx CheckModified port): acquiring a
+// sub-range already covered by a larger cached buffer serves from that buffer
+// host-side (dedup_saves++), skipping a redundant GMMU re-upload. This is the
+// key 5-GiB-budget optimization for streaming games that re-bind the same
+// vertex/texture ranges every frame.
+// ---------------------------------------------------------------------------
+void TestBufferCacheDedup() {
+    auto gmmu = std::make_shared<GpuMemoryManager>(nullptr);
+
+    static u8 backing[8192];
+    for (size_t i = 0; i < sizeof(backing); ++i) backing[i] = static_cast<u8>(i & 0xFF);
+    const u64 gpu_addr = 0x3000000ULL;
+    NEMU_TEST_ASSERT(gmmu->Map(gpu_addr, sizeof(backing), backing), "map backing");
+
+    BufferCache cache(gmmu);
+
+    // Acquire the whole 1024 B region once (a game binds the full stream buffer).
+    const u64 big = cache.Acquire(BufferCache::Type::Vertex, gpu_addr, 1024);
+    NEMU_TEST_ASSERT(big != 0, "big vertex buffer acquired");
+    auto st = cache.GetStats();
+    NEMU_TEST_ASSERT(st.full_uploads == 1, "one full upload for the big buffer");
+
+    // Re-bind a smaller prefix of the SAME base -> the covering 1024 B buffer is
+    // hit (no new allocation / no second upload). This is the coalescing win:
+    // sub-views of one stream buffer stay inside one host buffer.
+    const u64 sub = cache.Acquire(BufferCache::Type::Vertex, gpu_addr, 256);
+    NEMU_TEST_ASSERT(sub == big, "sub-range reuses the same covering buffer id");
+    st = cache.GetStats();
+    NEMU_TEST_ASSERT(st.full_uploads == 1, "no redundant upload for sub-view");
+
+    // Dedup path serves the *cached* covering data (no GMMU re-read on a clean
+    // hit) — guest backing changed but the game hasn't signaled a CPU write.
+    u8 check[4];
+    NEMU_TEST_ASSERT(cache.ReadEntry(sub, 0, check, 4), "read sub-view");
+    NEMU_TEST_ASSERT(check[0] == 0x00, "clean hit serves cached (dedup'd) data");
+
+    // Signal a guest write via MarkDirty, then the entry refreshes from guest.
+    backing[0] = 0x5A;
+    cache.MarkDirty(gpu_addr, 4);
+    const u64 sub2 = cache.Acquire(BufferCache::Type::Vertex, gpu_addr, 256);
+    NEMU_TEST_ASSERT(sub2 == big, "same buffer after dirty");
+    st = cache.GetStats();
+    NEMU_TEST_ASSERT(st.partial_updates >= 1, "dirty range refreshed");
+    NEMU_TEST_ASSERT(cache.ReadEntry(sub2, 0, check, 4), "read refreshed sub-view");
+    NEMU_TEST_ASSERT(check[0] == 0x5A, "dirty write visible after refresh");
+
+    std::cout << "  BufferCache dedup PASS\n";
+}
+
+// ---------------------------------------------------------------------------
 // Expanded Maxwell3D: rasterizer state push, compute dispatch, DrawTexture,
 // instanced draws, constant-buffer bind via buffer cache.
 // ---------------------------------------------------------------------------
@@ -717,6 +767,7 @@ int main() {
     std::cout << "== NEMU Tier-A unit tests ==\n";
     TestGmmuBasics();
     TestBufferCache();
+    TestBufferCacheDedup();
     TestExpandedMaxwell3D();
     TestExpandedShaderDecoder();
     TestBc1Encoder();

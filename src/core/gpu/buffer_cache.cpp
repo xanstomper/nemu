@@ -26,6 +26,24 @@ BufferCache::Entry* BufferCache::Find(Type type, u64 gpu_addr, u64 size) {
     return &e;
 }
 
+BufferCache::Entry* BufferCache::FindCovering(Type type, u64 gpu_addr, u64 size,
+                                              const Entry* ignore) {
+    // Coalescing search (Ryujinx CreateBufferAligned/CheckModified overlap):
+    // find any buffer of the same type whose range already fully contains the
+    // requested guest range. Cheap linear scan — the map is bounded by
+    // kMaxEntries and the common case is few covering candidates per bind.
+    for (auto& [key, e] : entries_) {
+        if (&e == ignore) continue;
+        if (e.type != type) continue;
+        if (e.gpu_addr <= gpu_addr && (e.gpu_addr + e.size) >= (gpu_addr + size)) {
+            // Avoid self (exact-address hit is handled by Find already).
+            if (e.gpu_addr == gpu_addr && e.size == size) continue;
+            return &e;
+        }
+    }
+    return nullptr;
+}
+
 BufferCache::Entry& BufferCache::Create(Type type, u64 gpu_addr, u64 size) {
     const u64 key = (static_cast<u64>(type) << 58) ^ gpu_addr;
     Entry e{};
@@ -62,11 +80,24 @@ u64 BufferCache::Acquire(Type type, u64 gpu_addr, u64 size) {
     } else {
         stats_.hits++;
         e->last_used_frame = frame_;
+        // Coalescing fast path (Ryujinx CheckModified): if a sibling buffer
+        // already fully covers this guest range AND it is not dirty, serve the
+        // request from that buffer's data instead of re-uploading. This kills
+        // redundant uploads of the same guest texture/vertex memory when a
+        // larger backing buffer already holds it — a big win under the 5 GiB
+        // cap (streaming games touch the same vertex/texture ranges every frame).
+        Entry* covering = FindCovering(type, gpu_addr, size, e);
+        if (covering && covering->dirty.empty()) {
+            // Copy from the covering buffer (hot host-side, no GMMU re-read).
+            std::memcpy(e->data.data(), covering->data.data() +
+                       (gpu_addr - covering->gpu_addr), size);
+            e->dirty.clear();
+            stats_.dedup_saves++;
+            return (static_cast<u64>(type) << 58) ^ gpu_addr;
+        }
     }
 
     UploadDirty(*e);
-    const u64 key = (static_cast<u64>(type) << 58) ^ gpu_addr;
-    (void)key;
     return (static_cast<u64>(type) << 58) ^ gpu_addr; // stable id == hash key
 }
 

@@ -41,6 +41,7 @@ public:
         u64 full_uploads{0};
         u64 evictions{0};
         u64 bytes_uploaded{0};
+        u64 dedup_saves{0};   // uploads skipped via covering-buffer coalescing
     };
 
     explicit BufferCache(std::shared_ptr<GpuMemoryManager> gmmu);
@@ -78,6 +79,7 @@ private:
     };
 
     Entry* Find(Type type, u64 gpu_addr, u64 size);
+    Entry* FindCovering(Type type, u64 gpu_addr, u64 size, const Entry* ignore);
     Entry& Create(Type type, u64 gpu_addr, u64 size);
     void UploadDirty(Entry& e);
     void EvictFrame(u64 current_frame);
