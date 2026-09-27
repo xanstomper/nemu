@@ -15,6 +15,8 @@
 #include "pl_service.hpp"
 #include "nifm_service.hpp"
 #include "ldn_service.hpp"
+#include "caps_service.hpp"
+#include "bpc_service.hpp"
 #include "core/network/ldn_network.hpp"
 
 #include "core/gpu/gpu_interface.hpp"
@@ -69,6 +71,22 @@ std::shared_ptr<ServiceRegistry> CreateDefaultServiceRegistry(
     registry->Register(std::make_shared<LdnService>(ldn_net, "ldn:u"));
     registry->Register(std::make_shared<LdnService>(ldn_net, "ldn:m"));
     registry->Register(std::make_shared<LdnService>(ldn_net, "ldn:s"));
+
+    // Capture & Album services (caps:u, caps:a, caps:c, caps:ss, caps:su, caps:sc)
+    registry->Register(std::make_shared<CapsService>("caps:u"));
+    registry->Register(std::make_shared<CapsService>("caps:a"));
+    registry->Register(std::make_shared<CapsService>("caps:c"));
+    registry->Register(std::make_shared<CapsService>("caps:ss"));
+    registry->Register(std::make_shared<CapsService>("caps:su"));
+    registry->Register(std::make_shared<CapsService>("caps:sc"));
+
+    // Board Power Control & RTC services (bpc, bpc:r, bpc:c, bpc:b, bpc:w, bpc:ams)
+    registry->Register(std::make_shared<BpcService>("bpc"));
+    registry->Register(std::make_shared<BpcService>("bpc:r"));
+    registry->Register(std::make_shared<BpcService>("bpc:c"));
+    registry->Register(std::make_shared<BpcService>("bpc:b"));
+    registry->Register(std::make_shared<BpcService>("bpc:w"));
+    registry->Register(std::make_shared<BpcService>("bpc:ams"));
 
     // File system service.
     if (vfs) {

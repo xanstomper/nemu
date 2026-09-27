@@ -2,6 +2,7 @@
 
 #include "ipc_service.hpp"
 #include "core/audio/audio_interface.hpp"
+#include "core/audio/adpcm/adpcm.hpp"
 #include "core/kernel/k_event.hpp"
 #include <memory>
 #include <vector>
@@ -61,6 +62,9 @@ public:
         vaddr_t wave_buffer_addr{0};
         size_t wave_buffer_size{0};
         size_t play_offset{0};
+        audio::AudioFormat format{audio::AudioFormat::Pcm16};
+        std::array<s16, 16> adpcm_coefficients{};
+        audio::adpcm::AdpcmContext adpcm_context[2]{};
     };
 
     static constexpr size_t kMaxVoices = 32;

@@ -6,6 +6,8 @@ set(AUDIO_SOURCES
     null_audio_backend.cpp
     audio_factory.hpp
     audio_factory.cpp
+    adpcm/adpcm.hpp
+    adpcm/adpcm.cpp
 )
 
 if(WIN32)

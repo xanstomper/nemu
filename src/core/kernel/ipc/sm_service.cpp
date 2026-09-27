@@ -69,7 +69,8 @@ public:
 static bool IsKnownStubService(std::string_view name) {
     static const std::unordered_set<std::string_view> stubs = {
         "aoc:u", "pctl", "pctl:a", "pctl:s", "bcat:u", "bcat:a", "bcat:m",
-        "prepo:u", "prepo:a", "caps:a", "caps:c", "caps:u", "caps:su",
+        "prepo:u", "prepo:a", "caps:a", "caps:c", "caps:u", "caps:su", "caps:ss", "caps:sc",
+        "bpc", "bpc:r", "bpc:c", "bpc:b", "bpc:w", "bpc:ams",
         "friend:u", "friend:v", "lbl", "apm", "apm:p", "apm:sys",
         "arp:r", "spsm", "bsdcfg", "ssl", "news:u", "nfc:u", "nfc:user",
         "ir:u", "ovln:rcv", "set:cal", "audio"

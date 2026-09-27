@@ -9,8 +9,9 @@ constexpr u32 DEFAULT_SAMPLE_RATE = 48000;
 constexpr u32 DEFAULT_CHANNELS = 2; // Stereo
 
 enum class AudioFormat : u32 {
-    Pcm16,
-    Float32
+    Pcm16 = 0,
+    Float32 = 1,
+    Adpcm = 2
 };
 
 enum class ChannelConfiguration : u32 {

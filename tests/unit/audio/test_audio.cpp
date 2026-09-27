@@ -2,6 +2,7 @@
 #include "core/audio/audio_ring_buffer.hpp"
 #include "core/audio/null_audio_backend.hpp"
 #include "core/audio/audio_factory.hpp"
+#include "core/audio/adpcm/adpcm.hpp"
 #include <iostream>
 #include <vector>
 #include <cmath>
@@ -100,6 +101,72 @@ int main() {
         NEMU_TEST_ASSERT(factory_backend != nullptr, "Factory must create audio backend");
         std::cout << "  - AudioFactory instantiated backend: " << factory_backend->GetBackendName() << std::endl;
         factory_backend->Shutdown();
+    }
+
+    // 4. Test Nintendo DSP ADPCM Codec
+    {
+        using namespace nemu::core::audio::adpcm;
+
+        // Test sign extension
+        NEMU_TEST_ASSERT(SignExtendNibble(0x0) == 0, "SignExtendNibble 0");
+        NEMU_TEST_ASSERT(SignExtendNibble(0x1) == 1, "SignExtendNibble 1");
+        NEMU_TEST_ASSERT(SignExtendNibble(0x7) == 7, "SignExtendNibble 7");
+        NEMU_TEST_ASSERT(SignExtendNibble(0x8) == -8, "SignExtendNibble 8");
+        NEMU_TEST_ASSERT(SignExtendNibble(0xF) == -1, "SignExtendNibble 15");
+
+        // Test frame decode
+        // Coeff index 0: coeff0 = 2048 (1.0 in 11-bit fixed point), coeff1 = 0
+        std::array<s16, 16> coeffs{};
+        coeffs[0] = 2048; // coeff0
+        coeffs[1] = 0;    // coeff1
+
+        AdpcmContext ctx{};
+        u8 test_frame[BytesPerFrame] = {
+            0x00, // Header: scale=0, coeff_index=0
+            0x12, // Samples 0, 1: +1, +2
+            0x78, // Samples 2, 3: +7, -8
+            0xF0, // Samples 4, 5: -1, 0
+            0x11, // Samples 6, 7: +1, +1
+            0x22, // Samples 8, 9: +2, +2
+            0x33, // Samples 10, 11: +3, +3
+            0x44  // Samples 12, 13: +4, +4
+        };
+
+        s16 out_samples[SamplesPerFrame]{};
+        size_t decoded = DecodeFrame(test_frame, out_samples, coeffs.data(), ctx, SamplesPerFrame);
+        NEMU_TEST_ASSERT(decoded == 14, "Decoded 14 samples from single frame");
+        NEMU_TEST_ASSERT(out_samples[0] != 0, "Non-zero output sample 0");
+        NEMU_TEST_ASSERT(ctx.yn0 == out_samples[13], "yn0 must match last decoded sample");
+        NEMU_TEST_ASSERT(ctx.yn1 == out_samples[12], "yn1 must match second-to-last sample");
+
+        // Test multi-frame stream decode
+        std::vector<u8> stream(BytesPerFrame * 4, 0x00);
+        for (size_t f = 0; f < 4; ++f) {
+            std::memcpy(&stream[f * BytesPerFrame], test_frame, BytesPerFrame);
+        }
+        std::vector<s16> stream_out(SamplesPerFrame * 4);
+        AdpcmContext stream_ctx{};
+        size_t total_decoded = DecodeStream(stream, stream_out, coeffs, stream_ctx);
+        NEMU_TEST_ASSERT(total_decoded == SamplesPerFrame * 4, "Stream decoded all 56 samples");
+
+        // Test stereo interleaved stream decode
+        std::vector<u8> stereo_stream(BytesPerFrame * 2);
+        std::memcpy(&stereo_stream[0], test_frame, BytesPerFrame);
+        std::memcpy(&stereo_stream[BytesPerFrame], test_frame, BytesPerFrame);
+
+        std::array<std::array<s16, 16>, 2> stereo_coeffs{};
+        stereo_coeffs[0] = coeffs;
+        stereo_coeffs[1] = coeffs;
+        std::array<AdpcmContext, 2> stereo_ctxs{};
+        std::vector<s16> stereo_out(SamplesPerFrame * 2);
+
+        size_t stereo_decoded = DecodeStreamInterleaved(stereo_stream, stereo_out, 2, stereo_coeffs, stereo_ctxs);
+        NEMU_TEST_ASSERT(stereo_decoded == SamplesPerFrame * 2, "Stereo decoded 28 samples");
+        for (size_t s = 0; s < SamplesPerFrame; ++s) {
+            NEMU_TEST_ASSERT(stereo_out[s * 2 + 0] == stereo_out[s * 2 + 1], "Left and right match on identical source");
+        }
+
+        std::cout << "  - Nintendo DSP ADPCM Codec (frame, stream, stereo): PASSED" << std::endl;
     }
 
     std::cout << "[Test: Audio Subsystem & Ring Buffer Processing PASSED]" << std::endl;

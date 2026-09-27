@@ -25,6 +25,8 @@
 #include "core/kernel/ipc/acc_service.hpp"
 #include "core/kernel/ipc/pl_service.hpp"
 #include "core/kernel/ipc/nifm_service.hpp"
+#include "core/kernel/ipc/caps_service.hpp"
+#include "core/kernel/ipc/bpc_service.hpp"
 #include "core/filesystem/vfs.hpp"
 #include "core/audio/null_audio_backend.hpp"
 #include "core/gpu/null_backend.hpp"
@@ -1137,6 +1139,125 @@ void TestDomainsAndBufferDescriptors() {
     std::cout << "  PASSED.\n";
 }
 
+static void TestCapsAndBpcServices() {
+    std::cout << "[Test: Caps & BPC HLE Services]\n";
+
+    KHandleTable handle_table;
+    IpcContext ctx{
+        .handle_table = &handle_table,
+        .memory = nullptr,
+        .registry = nullptr,
+    };
+
+    // 1. Test caps:u
+    {
+        CapsService caps("caps:u");
+        NEMU_IPC_ASSERT(caps.GetName() == "caps:u");
+
+        // SetShimLibraryVersion
+        u8 req_buf[ipc::IpcBufferSize]{};
+        *reinterpret_cast<u64*>(req_buf + static_cast<size_t>(IpcField::Payload)) = 0x0102030405060708ULL;
+        IpcRequestReader req(req_buf);
+        u8 reply_buf[ipc::IpcBufferSize]{};
+        IpcReplyWriter reply(reply_buf);
+
+        u32 res = caps.HandleRequest(ctx, req, reply, CapsService::SetShimLibraryVersion);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        NEMU_IPC_ASSERT(caps.GetShimLibraryVersion() == 0x0102030405060708ULL);
+
+        // GetAlbumFileList3AaeAruid
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = caps.HandleRequest(ctx, req, reply, CapsService::GetAlbumFileList3AaeAruid);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+
+        // OpenAccessorSessionForApplication -> creates subsession handle
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = caps.HandleRequest(ctx, req, reply, CapsService::OpenAccessorSessionForApplication);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        Handle sub_handle = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(sub_handle != 0);
+
+        auto sub_obj = handle_table.GetObject(sub_handle);
+        NEMU_IPC_ASSERT(sub_obj != nullptr);
+    }
+
+    // 2. Test bpc
+    {
+        BpcService bpc("bpc");
+        NEMU_IPC_ASSERT(bpc.GetName() == "bpc");
+
+        u8 req_buf[ipc::IpcBufferSize]{};
+        IpcRequestReader req(req_buf);
+        u8 reply_buf[ipc::IpcBufferSize]{};
+        IpcReplyWriter reply(reply_buf);
+
+        // GetAcOk -> 1
+        u32 res = bpc.HandleRequest(ctx, req, reply, BpcService::GetAcOk);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        u8 ac_ok = reply_buf[static_cast<size_t>(IpcField::Payload) + 4];
+        NEMU_IPC_ASSERT(ac_ok == 1);
+
+        // GetBoardPowerControlEvent -> returns valid KEvent handle
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = bpc.HandleRequest(ctx, req, reply, BpcService::GetBoardPowerControlEvent);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        Handle evt_handle = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(evt_handle != 0);
+
+        // ShutdownSystem
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = bpc.HandleRequest(ctx, req, reply, BpcService::ShutdownSystem);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        NEMU_IPC_ASSERT(bpc.IsShutdownRequested() == true);
+    }
+
+    // 3. Test bpc:r
+    {
+        BpcService bpc_r("bpc:r");
+        u8 req_buf[ipc::IpcBufferSize]{};
+        IpcRequestReader req(req_buf);
+        u8 reply_buf[ipc::IpcBufferSize]{};
+        IpcReplyWriter reply(reply_buf);
+
+        u32 res = bpc_r.HandleRequest(ctx, req, reply, BpcService::GetRtcTime);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        s64 rtc = *reinterpret_cast<const s64*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 8);
+        NEMU_IPC_ASSERT(rtc > 1600000000LL); // Valid modern epoch timestamp
+    }
+
+    // 4. Test bpc:ams
+    {
+        BpcService bpc_ams("bpc:ams");
+        u8 req_buf[ipc::IpcBufferSize]{};
+        IpcRequestReader req(req_buf);
+        u8 reply_buf[ipc::IpcBufferSize]{};
+        IpcReplyWriter reply(reply_buf);
+
+        u32 res = bpc_ams.HandleRequest(ctx, req, reply, BpcService::RebootToFatalError);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        NEMU_IPC_ASSERT(bpc_ams.IsRebootRequested() == true);
+    }
+
+    // 5. Test Registry has all services
+    {
+        auto reg = CreateDefaultServiceRegistry(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+        NEMU_IPC_ASSERT(reg->CreatePort("caps:u") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("caps:a") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("caps:c") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("caps:ss") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("caps:su") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("caps:sc") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("bpc") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("bpc:r") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("bpc:c") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("bpc:b") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("bpc:w") != std::nullopt);
+        NEMU_IPC_ASSERT(reg->CreatePort("bpc:ams") != std::nullopt);
+    }
+
+    std::cout << "  PASSED.\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "   NEMU HORIZON OS IPC ENGINE TESTS     \n";
@@ -1158,6 +1279,7 @@ int main() {
     TestSetU();
     TestPlService();
     TestNifmService();
+    TestCapsAndBpcServices();
     TestServiceBootstrap();
     TestDomainsAndBufferDescriptors();
 

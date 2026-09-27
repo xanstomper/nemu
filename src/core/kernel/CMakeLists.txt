@@ -56,6 +56,10 @@ add_library(Nemu.Kernel STATIC
     ipc/nifm_service.cpp
     ipc/ldn_service.hpp
     ipc/ldn_service.cpp
+    ipc/caps_service.hpp
+    ipc/caps_service.cpp
+    ipc/bpc_service.hpp
+    ipc/bpc_service.cpp
 )
 
 target_include_directories(Nemu.Kernel PUBLIC
