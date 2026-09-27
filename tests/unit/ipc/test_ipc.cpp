@@ -1405,6 +1405,102 @@ static void TestAocApmPctlPrepoFriendServices() {
     std::cout << "  PASSED.\n";
 }
 
+void TestAppletStorageAndLibraryAppletAccessor() {
+    std::cout << "[TEST] applet:ILibraryAppletCreator, ILibraryAppletAccessor, IStorage ...\n";
+    KHandleTable handle_table;
+    memory::VirtualMemory mem;
+    IpcContext ctx{
+        .handle_table = &handle_table,
+        .memory = &mem,
+        .registry = nullptr,
+    };
+
+    LibraryAppletCreatorService creator;
+
+    // 1. CreateLibraryApplet (AppletId 0x08 = swkbd)
+    {
+        u8 req_buf[ipc::IpcBufferSize]{};
+        *reinterpret_cast<u32*>(req_buf + static_cast<size_t>(IpcField::Payload)) = 0x08; // swkbd
+        *reinterpret_cast<u32*>(req_buf + static_cast<size_t>(IpcField::Payload) + 4) = 0; // mode
+        IpcRequestReader req(req_buf);
+        u8 reply_buf[ipc::IpcBufferSize]{};
+        IpcReplyWriter reply(reply_buf);
+
+        u32 res = creator.HandleRequest(ctx, req, reply, LibraryAppletCreatorService::CreateLibraryApplet);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        Handle accessor_handle = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(accessor_handle != 0);
+
+        auto accessor_session = handle_table.GetObject<KClientSession>(accessor_handle);
+        NEMU_IPC_ASSERT(accessor_session != nullptr);
+
+        // Query state-changed event
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = accessor_session->GetService()->HandleRequest(ctx, req, reply, LibraryAppletAccessorService::GetAppletStateChangedEvent);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        Handle evt_handle = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(evt_handle != 0);
+        auto evt = handle_table.GetObject<KEvent>(evt_handle);
+        NEMU_IPC_ASSERT(evt != nullptr);
+
+        // Start the applet
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = accessor_session->GetService()->HandleRequest(ctx, req, reply, LibraryAppletAccessorService::Start);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        NEMU_IPC_ASSERT(evt->IsSignaled());
+
+        // Check IsCompleted
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = accessor_session->GetService()->HandleRequest(ctx, req, reply, LibraryAppletAccessorService::IsCompleted);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        u32 completed = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(completed == 1);
+
+        // PopOutData should return storage session with default data
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = accessor_session->GetService()->HandleRequest(ctx, req, reply, LibraryAppletAccessorService::PopOutData);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        Handle storage_handle = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(storage_handle != 0);
+        auto storage_session = handle_table.GetObject<KClientSession>(storage_handle);
+        NEMU_IPC_ASSERT(storage_session != nullptr);
+    }
+
+    // 2. CreateStorage & StorageAccessor
+    {
+        u8 req_buf[ipc::IpcBufferSize]{};
+        *reinterpret_cast<u64*>(req_buf + static_cast<size_t>(IpcField::Payload)) = 64; // size 64
+        IpcRequestReader req(req_buf);
+        u8 reply_buf[ipc::IpcBufferSize]{};
+        IpcReplyWriter reply(reply_buf);
+
+        u32 res = creator.HandleRequest(ctx, req, reply, LibraryAppletCreatorService::CreateStorage);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        Handle storage_handle = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(storage_handle != 0);
+        auto storage_session = handle_table.GetObject<KClientSession>(storage_handle);
+        NEMU_IPC_ASSERT(storage_session != nullptr);
+
+        // Open StorageAccessor
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = storage_session->GetService()->HandleRequest(ctx, req, reply, StorageService::Open);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        Handle acc_handle = *reinterpret_cast<const u32*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(acc_handle != 0);
+        auto acc_session = handle_table.GetObject<KClientSession>(acc_handle);
+        NEMU_IPC_ASSERT(acc_session != nullptr);
+
+        // Query size
+        std::memset(reply_buf, 0, sizeof(reply_buf));
+        res = acc_session->GetService()->HandleRequest(ctx, req, reply, StorageAccessorService::GetSize);
+        NEMU_IPC_ASSERT(res == static_cast<u32>(IpcResult::Success));
+        u64 sz = *reinterpret_cast<const u64*>(reply_buf + static_cast<size_t>(IpcField::Payload) + 4);
+        NEMU_IPC_ASSERT(sz == 64);
+    }
+
+    std::cout << "  PASSED.\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "   NEMU HORIZON OS IPC ENGINE TESTS     \n";
@@ -1428,6 +1524,7 @@ int main() {
     TestNifmService();
     TestCapsAndBpcServices();
     TestAocApmPctlPrepoFriendServices();
+    TestAppletStorageAndLibraryAppletAccessor();
     TestServiceBootstrap();
     TestDomainsAndBufferDescriptors();
 

@@ -144,6 +144,12 @@ public:
     [[nodiscard]] u64 GetCacheHits() const noexcept { return cache_hits_; }
     [[nodiscard]] u64 GetCacheMisses() const noexcept { return cache_misses_; }
 
+    /// Set persistent shader disk cache directory (e.g. "shader_cache" or "LOCAL:/shader_cache")
+    void SetDiskCacheDirectory(std::string path);
+    [[nodiscard]] const std::string& GetDiskCacheDirectory() const noexcept { return disk_cache_dir_; }
+    [[nodiscard]] u64 GetDiskCacheHits() const noexcept { return disk_cache_hits_; }
+    [[nodiscard]] u64 GetDiskCacheWrites() const noexcept { return disk_cache_writes_; }
+
 #ifdef _WIN32
     void SetDevice(ID3D12Device* device) noexcept { device_ = device; }
     [[nodiscard]] ID3D12PipelineState* GetPipelineState(const PipelineStateKey& key) const;
@@ -164,9 +170,12 @@ private:
 
     std::unordered_map<PipelineStateKey, CachedPipeline, PipelineStateKeyHash> cache_;
     mutable std::mutex mutex_;
+    std::string disk_cache_dir_{};
     u64 next_id_{1};
     u64 cache_hits_{0};
     u64 cache_misses_{0};
+    u64 disk_cache_hits_{0};
+    u64 disk_cache_writes_{0};
 #ifdef _WIN32
     ID3D12Device* device_{nullptr};
 #endif

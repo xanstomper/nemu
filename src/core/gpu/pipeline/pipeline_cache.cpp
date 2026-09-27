@@ -4,11 +4,20 @@
 #include <vector>
 #include <array>
 #include <algorithm>
-
-#ifdef _WIN32
-#include <d3dcompiler.h>
+#include <fstream>
+#include <filesystem>
+#include <string_view>
 
 namespace {
+
+static uint64_t HashShaderSource(std::string_view source) noexcept {
+    uint64_t hash = 14695981039346656037ULL;
+    for (char c : source) {
+        hash ^= static_cast<uint8_t>(c);
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
 
 static const char* kDefaultVertexShader = R"(
 struct VSOut {
@@ -32,6 +41,38 @@ float4 main(PSIn input) : SV_Target {
     return input.color;
 }
 )";
+
+} // anonymous namespace
+
+#ifdef _WIN32
+#include <d3dcompiler.h>
+
+namespace {
+
+static Microsoft::WRL::ComPtr<ID3DBlob> LoadShaderFromDisk(const std::string& filepath) {
+    std::ifstream file(filepath, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) return nullptr;
+    const std::streamsize size = file.tellg();
+    if (size <= 0) return nullptr;
+    file.seekg(0, std::ios::beg);
+
+    Microsoft::WRL::ComPtr<ID3DBlob> blob;
+    HRESULT hr = D3DCreateBlob(static_cast<SIZE_T>(size), &blob);
+    if (FAILED(hr) || !blob) return nullptr;
+
+    if (!file.read(reinterpret_cast<char*>(blob->GetBufferPointer()), size)) {
+        return nullptr;
+    }
+    return blob;
+}
+
+static bool SaveShaderToDisk(const std::string& filepath, ID3DBlob* blob) {
+    if (!blob || blob->GetBufferSize() == 0) return false;
+    std::ofstream file(filepath, std::ios::binary);
+    if (!file.is_open()) return false;
+    file.write(reinterpret_cast<const char*>(blob->GetBufferPointer()), static_cast<std::streamsize>(blob->GetBufferSize()));
+    return file.good();
+}
 
 D3D12_CULL_MODE ConvertCullMode(nemu::core::gpu::pipeline::CullMode mode) noexcept {
     using nemu::core::gpu::pipeline::CullMode;
@@ -144,20 +185,46 @@ bool PipelineCache::GetOrCreatePipeline(
     const char* vs_code = vs_hlsl.empty() ? kDefaultVertexShader : vs_hlsl.c_str();
     const char* ps_code = ps_hlsl.empty() ? kDefaultPixelShader : ps_hlsl.c_str();
 
-    Microsoft::WRL::ComPtr<ID3DBlob> vs_blob, vs_err;
-    HRESULT hr = D3DCompile(vs_code, std::strlen(vs_code), "MaxwellVS", nullptr, nullptr,
-                            "main", "vs_5_0", 0, 0, &vs_blob, &vs_err);
-    if (FAILED(hr)) {
-        NEMU_LOG_WARN("D3D12", "PipelineCache: VS compile error 0x{:08X}", static_cast<u32>(hr));
-        return false;
+    const u64 vs_hash = HashShaderSource(vs_code);
+    const u64 ps_hash = HashShaderSource(ps_code);
+
+    Microsoft::WRL::ComPtr<ID3DBlob> vs_blob, ps_blob;
+    bool loaded_from_disk = false;
+
+    if (!disk_cache_dir_.empty()) {
+        const std::string vs_path = disk_cache_dir_ + "/" + std::to_string(vs_hash) + "_vs.dxbc";
+        const std::string ps_path = disk_cache_dir_ + "/" + std::to_string(ps_hash) + "_ps.dxbc";
+        vs_blob = LoadShaderFromDisk(vs_path);
+        ps_blob = LoadShaderFromDisk(ps_path);
+        if (vs_blob && ps_blob) {
+            loaded_from_disk = true;
+            disk_cache_hits_++;
+        }
     }
 
-    Microsoft::WRL::ComPtr<ID3DBlob> ps_blob, ps_err;
-    hr = D3DCompile(ps_code, std::strlen(ps_code), "MaxwellPS", nullptr, nullptr,
-                    "main", "ps_5_0", 0, 0, &ps_blob, &ps_err);
-    if (FAILED(hr)) {
-        NEMU_LOG_WARN("D3D12", "PipelineCache: PS compile error 0x{:08X}", static_cast<u32>(hr));
-        return false;
+    if (!loaded_from_disk) {
+        Microsoft::WRL::ComPtr<ID3DBlob> vs_err, ps_err;
+        HRESULT hr = D3DCompile(vs_code, std::strlen(vs_code), "MaxwellVS", nullptr, nullptr,
+                                "main", "vs_5_0", 0, 0, &vs_blob, &vs_err);
+        if (FAILED(hr)) {
+            NEMU_LOG_WARN("D3D12", "PipelineCache: VS compile error 0x{:08X}", static_cast<u32>(hr));
+            return false;
+        }
+
+        hr = D3DCompile(ps_code, std::strlen(ps_code), "MaxwellPS", nullptr, nullptr,
+                        "main", "ps_5_0", 0, 0, &ps_blob, &ps_err);
+        if (FAILED(hr)) {
+            NEMU_LOG_WARN("D3D12", "PipelineCache: PS compile error 0x{:08X}", static_cast<u32>(hr));
+            return false;
+        }
+
+        if (!disk_cache_dir_.empty()) {
+            const std::string vs_path = disk_cache_dir_ + "/" + std::to_string(vs_hash) + "_vs.dxbc";
+            const std::string ps_path = disk_cache_dir_ + "/" + std::to_string(ps_hash) + "_ps.dxbc";
+            if (SaveShaderToDisk(vs_path, vs_blob.Get()) && SaveShaderToDisk(ps_path, ps_blob.Get())) {
+                disk_cache_writes_++;
+            }
+        }
     }
 
     // 2. Build Root Signature with CBVs and SRVs
@@ -209,7 +276,7 @@ bool PipelineCache::GetOrCreatePipeline(
     root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
     Microsoft::WRL::ComPtr<ID3DBlob> sig_blob, sig_err;
-    hr = D3D12SerializeRootSignature(&root_desc, D3D_ROOT_SIGNATURE_VERSION_1, &sig_blob, &sig_err);
+    HRESULT hr = D3D12SerializeRootSignature(&root_desc, D3D_ROOT_SIGNATURE_VERSION_1, &sig_blob, &sig_err);
     if (FAILED(hr)) {
         NEMU_LOG_WARN("D3D12", "PipelineCache: SerializeRootSignature error 0x{:08X}", static_cast<u32>(hr));
         return false;
@@ -328,14 +395,37 @@ bool PipelineCache::GetOrCreatePipeline(
     return true;
 #else
     // Headless/POSIX pipeline caching simulation
-    (void)vs_hlsl;
-    (void)ps_hlsl;
+    if (!disk_cache_dir_.empty()) {
+        const uint64_t vs_hash = HashShaderSource(vs_hlsl.empty() ? kDefaultVertexShader : vs_hlsl);
+        const uint64_t ps_hash = HashShaderSource(ps_hlsl.empty() ? kDefaultPixelShader : ps_hlsl);
+        const std::string vs_path = disk_cache_dir_ + "/" + std::to_string(vs_hash) + "_vs.dxbc";
+        const std::string ps_path = disk_cache_dir_ + "/" + std::to_string(ps_hash) + "_ps.dxbc";
+        std::error_code ec;
+        if (std::filesystem::exists(vs_path, ec) && std::filesystem::exists(ps_path, ec)) {
+            disk_cache_hits_++;
+        } else {
+            std::ofstream fvs(vs_path, std::ios::binary);
+            if (fvs.is_open()) fvs << vs_hlsl;
+            std::ofstream fps(ps_path, std::ios::binary);
+            if (fps.is_open()) fps << ps_hlsl;
+            disk_cache_writes_++;
+        }
+    }
     CachedPipeline cp;
     cp.id = next_id_++;
     cp.valid = true;
     cache_.emplace(key, std::move(cp));
     return true;
 #endif
+}
+
+void PipelineCache::SetDiskCacheDirectory(std::string path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    disk_cache_dir_ = std::move(path);
+    if (!disk_cache_dir_.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(disk_cache_dir_, ec);
+    }
 }
 
 #ifdef _WIN32

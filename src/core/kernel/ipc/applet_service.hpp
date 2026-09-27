@@ -4,6 +4,8 @@
 #include "core/kernel/k_event.hpp"
 #include <memory>
 #include <string>
+#include <vector>
+#include <deque>
 
 namespace nemu::core::kernel::ipc {
 
@@ -120,10 +122,94 @@ public:
                       IpcReplyWriter& reply, u32 x_id) override;
 };
 
+class StorageService;
+
+class StorageAccessorService final : public IIpcService {
+public:
+    explicit StorageAccessorService(std::shared_ptr<StorageService> storage);
+    ~StorageAccessorService() override = default;
+
+    enum : u32 {
+        GetSize = 0x0,
+        Write = 0xA,    // 10
+        Read = 0xB,     // 11
+    };
+
+    u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
+                      IpcReplyWriter& reply, u32 x_id) override;
+
+private:
+    std::shared_ptr<StorageService> storage_;
+};
+
+class StorageService final : public IIpcService, public std::enable_shared_from_this<StorageService> {
+public:
+    explicit StorageService(size_t size = 0);
+    explicit StorageService(std::vector<u8> data);
+    ~StorageService() override = default;
+
+    enum : u32 {
+        Open = 0x0,
+        OpenTransferStorage = 0x1,
+    };
+
+    u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
+                      IpcReplyWriter& reply, u32 x_id) override;
+
+    [[nodiscard]] std::vector<u8>& GetData() noexcept { return data_; }
+    [[nodiscard]] const std::vector<u8>& GetData() const noexcept { return data_; }
+
+private:
+    std::vector<u8> data_;
+};
+
+class LibraryAppletAccessorService final : public IIpcService {
+public:
+    explicit LibraryAppletAccessorService(u32 applet_id, u32 applet_mode = 0);
+    ~LibraryAppletAccessorService() override = default;
+
+    enum : u32 {
+        GetAppletStateChangedEvent = 0x0,
+        IsCompleted = 0x1,
+        Start = 0xA,                          // 10
+        RequestExit = 0x14,                   // 20
+        Terminate = 0x19,                     // 25
+        GetResult = 0x1E,                     // 30
+        PushInData = 0x64,                    // 100
+        PopOutData = 0x65,                    // 101
+        PushInteractiveInData = 0x67,         // 103
+        PopInteractiveOutData = 0x68,         // 104
+        GetPopOutDataEvent = 0x69,            // 105
+        GetPopInteractiveOutDataEvent = 0x6A, // 106
+    };
+
+    u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
+                      IpcReplyWriter& reply, u32 x_id) override;
+
+    void PushOutputData(std::shared_ptr<StorageService> storage);
+
+private:
+    u32 applet_id_{0};
+    u32 applet_mode_{0};
+    bool is_completed_{false};
+    std::shared_ptr<KEvent> state_changed_event_;
+    std::shared_ptr<KEvent> pop_out_data_event_;
+    std::deque<std::shared_ptr<StorageService>> in_queue_;
+    std::deque<std::shared_ptr<StorageService>> out_queue_;
+};
+
 class LibraryAppletCreatorService final : public IIpcService {
 public:
     LibraryAppletCreatorService();
     ~LibraryAppletCreatorService() override = default;
+
+    enum : u32 {
+        CreateLibraryApplet = 0x0,
+        CreateLibraryAppletEx = 0x3,
+        CreateStorage = 0xA,                  // 10
+        CreateTransferMemoryStorage = 0xB,    // 11
+        CreateHandleStorage = 0xC,            // 12
+    };
 
     u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
                       IpcReplyWriter& reply, u32 x_id) override;

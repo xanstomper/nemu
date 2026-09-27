@@ -7,6 +7,7 @@
 #include <vector>
 #include <cstring>
 #include <cstdlib>
+#include <filesystem>
 #include <span>
 
 using namespace nemu;
@@ -92,7 +93,35 @@ int main() {
         PB_ASSERT(cache.GetCachedPipelineCount() == 1, "no duplicate entry");
         PB_ASSERT(cache.GetCacheHits() >= 1, "cache hits counted");
     }
-    std::cout << "  - PipelineCache (headless): PASSED" << std::endl;
+
+    // -- PipelineCache persistent disk cache --
+    {
+        const std::string test_cache_dir = "./test_shader_cache";
+        std::error_code ec;
+        std::filesystem::remove_all(test_cache_dir, ec);
+
+        pipeline::PipelineCache cache;
+        cache.SetDiskCacheDirectory(test_cache_dir);
+        PB_ASSERT(cache.GetDiskCacheDirectory() == test_cache_dir, "cache dir set");
+
+        pipeline::PipelineStateKey key{};
+        key.num_cbufs = 1;
+        bool created = cache.GetOrCreatePipeline(key, tv.hlsl_source, tp.hlsl_source);
+        PB_ASSERT(created, "pipeline created with disk cache enabled");
+        PB_ASSERT(cache.GetDiskCacheWrites() >= 1, "disk cache write recorded");
+
+        // Create second cache instance pointing to same directory
+        pipeline::PipelineCache cache2;
+        cache2.SetDiskCacheDirectory(test_cache_dir);
+        pipeline::PipelineStateKey key2{};
+        key2.num_cbufs = 2; // different key so memory cache misses
+        bool loaded = cache2.GetOrCreatePipeline(key2, tv.hlsl_source, tp.hlsl_source);
+        PB_ASSERT(loaded, "pipeline loaded from disk cache");
+        PB_ASSERT(cache2.GetDiskCacheHits() >= 1, "disk cache hit recorded");
+
+        std::filesystem::remove_all(test_cache_dir, ec);
+    }
+    std::cout << "  - PipelineCache (headless + persistent disk cache): PASSED" << std::endl;
 
     // -- PipelineBridge full chain --
     {
