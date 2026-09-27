@@ -179,11 +179,14 @@ void XboxFrontend::ScanDirectory(std::string_view dir_path) {
     if (dir_path.starts_with("sdmc:/") || dir_path.starts_with("save:/") || dir_path.starts_with("romfs:/")) {
         host_path = vfs_.ResolvePath(dir_path);
     } else if (dir_path == "ROOT:/") {
-        std::vector<std::string> roots = {"sdmc:/", "save:/", "D:/", "E:/"};
+        std::vector<std::string> roots = {"sdmc:/", "save:/", "LOCAL:/", "D:/", "E:/", "F:/", "G:/"};
         for (const auto& r : roots) {
             ScanDirectory(r);
         }
         return;
+    } else if (dir_path.starts_with("LOCAL:/")) {
+        std::string rel = std::string(dir_path.substr(7));
+        host_path = std::filesystem::path("./") / rel;
     } else {
         host_path = std::filesystem::path(dir_path);
     }
@@ -278,10 +281,38 @@ void XboxFrontend::RefreshLibrary() {
     library_.clear();
     LoadPlaylist();
 
-    auto sdmc_host = vfs_.ResolvePath("sdmc:/");
-    if (sdmc_host && std::filesystem::exists(*sdmc_host)) {
-        std::error_code ec;
-        for (const auto& entry : std::filesystem::directory_iterator(*sdmc_host, ec)) {
+    // Multi-Storage Discovery: scan virtual SD, saves, local app folders, and external USB drive letters (D:, E:, F:, G:)
+    const std::vector<std::pair<std::string, std::optional<std::filesystem::path>>> search_locations = {
+        {"sdmc:/", vfs_.ResolvePath("sdmc:/")},
+        {"sdmc:/games", vfs_.ResolvePath("sdmc:/games")},
+        {"sdmc:/switch", vfs_.ResolvePath("sdmc:/switch")},
+        {"save:/", vfs_.ResolvePath("save:/")},
+        {"LOCAL:/games", std::filesystem::path("./games")},
+        {"LOCAL:/roms", std::filesystem::path("./roms")},
+        {"D:/", std::filesystem::path("D:/")},
+        {"D:/games", std::filesystem::path("D:/games")},
+        {"D:/roms", std::filesystem::path("D:/roms")},
+        {"D:/roms/switch", std::filesystem::path("D:/roms/switch")},
+        {"D:/switch", std::filesystem::path("D:/switch")},
+        {"E:/", std::filesystem::path("E:/")},
+        {"E:/games", std::filesystem::path("E:/games")},
+        {"E:/roms", std::filesystem::path("E:/roms")},
+        {"E:/roms/switch", std::filesystem::path("E:/roms/switch")},
+        {"E:/switch", std::filesystem::path("E:/switch")},
+        {"F:/", std::filesystem::path("F:/")},
+        {"F:/games", std::filesystem::path("F:/games")},
+        {"F:/roms", std::filesystem::path("F:/roms")},
+        {"G:/", std::filesystem::path("G:/")},
+        {"G:/games", std::filesystem::path("G:/games")},
+    };
+
+    std::error_code ec;
+    for (const auto& [vprefix, host_p] : search_locations) {
+        if (!host_p || !std::filesystem::exists(*host_p, ec)) {
+            continue;
+        }
+
+        for (const auto& entry : std::filesystem::directory_iterator(*host_p, ec)) {
             if (entry.is_regular_file(ec)) {
                 auto ext = entry.path().extension().string();
                 std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -293,7 +324,10 @@ void XboxFrontend::RefreshLibrary() {
                     else if (ext == ".nca") badge = "[NCA]";
                     else if (ext == ".nso") badge = "[NSO]";
 
-                    std::string vpath = "sdmc:/" + entry.path().filename().string();
+                    std::string vpath = vprefix;
+                    if (vpath.back() != '/') vpath += '/';
+                    vpath += entry.path().filename().string();
+
                     bool exists = false;
                     for (const auto& g : library_) {
                         if (g.virtual_path == vpath) {
@@ -367,6 +401,20 @@ void XboxFrontend::RefreshFileManager(std::string_view dir_path) {
     if (current_dir_path_ == "ROOT:/" || current_dir_path_.empty()) {
         current_dir_path_ = "ROOT:/";
         // RetroArch Multi-Storage Roots: USB Flash Drives & Internal Partitions
+        auto make_drive_entry = [](std::string drive_name, std::string drive_path, std::string badge) {
+            std::error_code ec;
+            bool exists = std::filesystem::exists(drive_path, ec);
+            std::string label = drive_name + (exists ? " [Online]" : " [Not Attached]");
+            return FileEntry{
+                .name = std::move(label),
+                .full_path = std::move(drive_path),
+                .is_directory = true,
+                .is_rom = false,
+                .format_badge = std::move(badge),
+                .file_size = 0
+            };
+        };
+
         dir_entries_.push_back(FileEntry{
             .name = "sdmc:/ [Virtual SD Card]",
             .full_path = "sdmc:/",
@@ -384,22 +432,6 @@ void XboxFrontend::RefreshFileManager(std::string_view dir_path) {
             .file_size = 0
         });
         dir_entries_.push_back(FileEntry{
-            .name = "D:/ [External USB Drive 1]",
-            .full_path = "D:/",
-            .is_directory = true,
-            .is_rom = false,
-            .format_badge = "[USB]",
-            .file_size = 0
-        });
-        dir_entries_.push_back(FileEntry{
-            .name = "E:/ [External USB Drive 2]",
-            .full_path = "E:/",
-            .is_directory = true,
-            .is_rom = false,
-            .format_badge = "[USB]",
-            .file_size = 0
-        });
-        dir_entries_.push_back(FileEntry{
             .name = "LOCAL:/ [Xbox Local App Storage]",
             .full_path = "LOCAL:/",
             .is_directory = true,
@@ -407,6 +439,10 @@ void XboxFrontend::RefreshFileManager(std::string_view dir_path) {
             .format_badge = "[LOCAL]",
             .file_size = 0
         });
+        dir_entries_.push_back(make_drive_entry("D:/ [USB Drive 1]", "D:/", "[USB]"));
+        dir_entries_.push_back(make_drive_entry("E:/ [USB Drive 2]", "E:/", "[USB]"));
+        dir_entries_.push_back(make_drive_entry("F:/ [USB Drive 3]", "F:/", "[USB]"));
+        dir_entries_.push_back(make_drive_entry("G:/ [USB Drive 4]", "G:/", "[USB]"));
         selected_file_index_ = 0;
         NEMU_LOG_INFO("Frontend", "FileManager: Listed {} storage roots in ROOT:/", dir_entries_.size());
         return;
@@ -414,7 +450,10 @@ void XboxFrontend::RefreshFileManager(std::string_view dir_path) {
 
     // If not ROOT:/, add parent directory entry
     std::string parent = "ROOT:/";
-    if (current_dir_path_ != "sdmc:/" && current_dir_path_ != "save:/" && current_dir_path_ != "D:/" && current_dir_path_ != "E:/" && current_dir_path_ != "LOCAL:/") {
+    if (current_dir_path_ != "sdmc:/" && current_dir_path_ != "save:/" &&
+        current_dir_path_ != "D:/" && current_dir_path_ != "E:/" &&
+        current_dir_path_ != "F:/" && current_dir_path_ != "G:/" &&
+        current_dir_path_ != "LOCAL:/") {
         std::string p = current_dir_path_;
         if (p.back() == '/') p.pop_back();
         auto slash = p.find_last_of('/');
@@ -435,6 +474,9 @@ void XboxFrontend::RefreshFileManager(std::string_view dir_path) {
     std::optional<std::filesystem::path> host_dir;
     if (current_dir_path_.starts_with("sdmc:/") || current_dir_path_.starts_with("save:/") || current_dir_path_.starts_with("romfs:/")) {
         host_dir = vfs_.ResolvePath(current_dir_path_);
+    } else if (current_dir_path_.starts_with("LOCAL:/")) {
+        std::string rel = current_dir_path_.substr(7);
+        host_dir = std::filesystem::path("./") / rel;
     } else {
         host_dir = std::filesystem::path(current_dir_path_);
     }
@@ -830,7 +872,7 @@ void XboxFrontend::HandleFileManagerInput(const core::hid::XboxGamepadState& inp
     if (pressed_b) {
         if (current_dir_path_ != "sdmc:/" && current_dir_path_ != "/" && current_dir_path_ != "ROOT:/") {
             std::string parent = "ROOT:/";
-            if (current_dir_path_ != "save:/" && current_dir_path_ != "D:/" && current_dir_path_ != "E:/" && current_dir_path_ != "LOCAL:/") {
+            if (current_dir_path_ != "save:/" && current_dir_path_ != "D:/" && current_dir_path_ != "E:/" && current_dir_path_ != "F:/" && current_dir_path_ != "G:/" && current_dir_path_ != "LOCAL:/") {
                 std::string p = current_dir_path_;
                 if (p.back() == '/') p.pop_back();
                 auto slash = p.find_last_of('/');
@@ -1425,7 +1467,6 @@ std::vector<std::pair<std::string, std::string>> XboxFrontend::ListCaptureFiles(
         auto ext = e.path().extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
         if (ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".ppm") continue;
-        auto ftime = std::filesystem::last_write_time(e.path(), ec);
         out.emplace_back(e.path().string(), e.path().filename().string());
         if (out.size() >= max) break;
     }
@@ -2550,8 +2591,8 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
         const auto& d = live_diag_;
         auto kfmt = [](u64 v) {
             char b[32];
-            if (v >= 1000000ULL) std::snprintf(b, sizeof(b), "%.1fM", v / 1e6);
-            else if (v >= 1000ULL) std::snprintf(b, sizeof(b), "%.1fK", v / 1e3);
+            if (v >= 1000000ULL) std::snprintf(b, sizeof(b), "%.1fM", static_cast<double>(v) / 1e6);
+            else if (v >= 1000ULL) std::snprintf(b, sizeof(b), "%.1fK", static_cast<double>(v) / 1e3);
             else std::snprintf(b, sizeof(b), "%llu", static_cast<unsigned long long>(v));
             return std::string(b);
         };
@@ -3082,7 +3123,7 @@ void XboxFrontend::DrawSwitchEShop(std::vector<core::gpu::RasterVertex>& out, co
     // Live file browser: real dir_entries_ from the FileManager backend + action rows
     // (A) on dir = open, on ROM = launch, (X) on ROM = add to library, (Y) = scan here
     size_t browsable = std::min<size_t>(dir_entries_.size(), 4);
-    size_t row_count = 1 /*Install/Scan*/ + 1 /*Installed list*/ + browsable;
+    (void)browsable;
 
     auto draw_row = [&](size_t idx, const std::string& t1, const std::string& t2, bool highlight) {
         float ay = 205.0f + static_cast<float>(idx) * 102.0f;

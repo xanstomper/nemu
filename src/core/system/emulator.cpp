@@ -43,6 +43,7 @@ bool Emulator::Initialize() {
 
     vfs_->Mount("sdmc:/", sdmc_p, false);
     vfs_->Mount("save:/", save_p, false);
+    vfs_->Mount("LOCAL:/", std::filesystem::path("."), false);
 
     // 2. Configuration Manager
     config_manager_ = std::make_shared<config::ConfigManager>(*vfs_);
