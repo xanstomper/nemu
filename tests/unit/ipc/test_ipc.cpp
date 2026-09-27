@@ -371,9 +371,21 @@ void TestHidService() {
     NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *hid_session, reg) ==
                     static_cast<u32>(IpcResult::Success));
 
-    // Guest should observe the shared pad entry.
+    // Guest should observe BOTH shared layouts:
+    // (1) real RingLifo<NpadCommonState> at page offset 0 (libnx protocol)
+    hid::NpadCommonLifo lifo{};
+    NEMU_IPC_ASSERT(proc->GetVirtualMemory().ReadBlock(shmem_addr, &lifo, sizeof(lifo)));
+    NEMU_IPC_ASSERT(lifo.buffer_count == 17);
+    NEMU_IPC_ASSERT(lifo.count >= 1 && lifo.count <= 17);
+    // Newest entry holds the injected state.
+    const u64 newest = (lifo.index + 16) % 17;
+    NEMU_IPC_ASSERT(lifo.entries[newest].state.buttons == buttons);
+    NEMU_IPC_ASSERT(lifo.entries[newest].state.sampling_number >= 1);
+
+    // (2) legacy HLE header at kLegacyOffset (bridge/tests)
     hid::SharedPadHeader header{};
-    NEMU_IPC_ASSERT(proc->GetVirtualMemory().ReadBlock(shmem_addr, &header, sizeof(header)));
+    NEMU_IPC_ASSERT(proc->GetVirtualMemory().ReadBlock(
+        shmem_addr + hid::kLegacyHeaderOffset, &header, sizeof(header)));
     NEMU_IPC_ASSERT(header.entry_count == 2);
     NEMU_IPC_ASSERT(header.local.buttons == buttons);
     NEMU_IPC_ASSERT(header.global.buttons == buttons);

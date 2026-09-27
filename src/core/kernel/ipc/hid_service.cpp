@@ -142,6 +142,21 @@ u32 HidService::HandleUpdateTimestamp(IpcReplyWriter& reply) {
 }
 
 void HidService::CommitSharedImage(memory::VirtualMemory& mem) const {
+    // 1) Real-protocol layout at page offset 0: RingLifo<NpadCommonState>.
+    //    This is what real libnx homebrew (hidGetNpadStates) reads.
+    hid::NpadCommonLifo lifo{};
+    hid::NpadCommonState st{};
+    st.sampling_number = sample_counter_;
+    st.buttons = debug_buttons_;
+    // libnx sticks are s32 in [-0x8000, 0x7FFF] for full deflection.
+    st.stick_l.x = static_cast<s32>(debug_lx_) * 256;
+    st.stick_l.y = static_cast<s32>(debug_ly_) * 256;
+    st.stick_r.x = static_cast<s32>(debug_rx_) * 256;
+    st.stick_r.y = static_cast<s32>(debug_ry_) * 256;
+    hid::RingLifoPush(lifo, sample_counter_, st);
+    mem.WriteBlock(shared_addr_, &lifo, sizeof(lifo));
+
+    // 2) Legacy HLE header (bridge/tests/frontend injection) at kLegacyOffset.
     hid::SharedPadHeader header{};
     header.entry_count = hid::SharedPadHeader::kEntryCount;
     header.entry_size = sizeof(hid::SharedPadEntry);
@@ -156,7 +171,7 @@ void HidService::CommitSharedImage(memory::VirtualMemory& mem) const {
     header.global.buttons = debug_buttons_;
     header.global.timestamp = sample_counter_;
 
-    mem.WriteBlock(shared_addr_, &header, sizeof(header));
+    mem.WriteBlock(shared_addr_ + hid::kLegacyHeaderOffset, &header, sizeof(header));
 }
 
 void HidService::UpdatePadState(memory::VirtualMemory& mem, u32 buttons, s16 lx, s16 ly, s16 rx, s16 ry) {
