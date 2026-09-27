@@ -27,11 +27,13 @@ work: nothing left in the load path is a stubbed dead-end.
 
 ## 2. Boot-time IPC services (all implemented)
 
-hid real protocol + RingLifo shared mem · applet NotifyRunning · time
+hid real protocol + RingLifo shared mem · applet NotifyRunning + **ILibraryAppletAccessor / IStorage / IStorageAccessor (swkbd, ProfileSelect, AppletStateChanged events)** · time
 GetCurrentTimePoint · fsp-srv RomFS-root storage · **bpc:r RTC/power** ·
-**caps:s/c screen-capture** · audren · acc · nifm · sm bootstrap.
+**caps:s/c screen-capture** · **aoc:u/s DLC** · **apm performance mode** · **pctl parental control** · **prepo telemetry** · **friend:u/v** · audren (DSP ADPCM + 5.1 downmixing) · acc · nifm · sm bootstrap.
 
 ## 3. GPU / shader translation stack (all implemented)
+
+- **Persistent Shader Disk Cache**: 64-bit FNV-1a hashing + DXBC disk persistence (`<disk_cache_dir>/<hash>_vs.dxbc` & `_ps.dxbc`) to eliminate runtime shader compilation stutter.
 
 - **SASS decode**: 166 opcode cases covering all 162 `maxwell.inc` families;
   predicated `BRA` (P0-P6 + invert), branch targets, `[untranslated]`
