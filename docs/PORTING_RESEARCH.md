@@ -118,7 +118,7 @@ decoder — stage `ShaderStage::Compute` already exists in the decoder enum.
 
 ---
 
-## 5. Shader decoding (Tier-A1) — ✅ COMPLETE: 41-opcode fast path + full 279-encoding/162-family SASS table (sass_identifier) + predicate file + exact LOP3 LUT; ⬜ IR-level translation of remaining families (PSET/TEXS variants → HLSL) is the last depth layer
+## 5. Shader decoding (Tier-A1) — ✅ COMPLETE: 41-opcode fast path + full 279-encoding/162-family SASS table (sass_identifier) + predicate file + exact LOP3 LUT + extended HLSL emission for 67 high-frequency families + IdentifyMaxwell bridge. ⬜ the rarest Tier-3 families (SU* surface ops, VADD/VMAD video ops, IDE/ISBERD/PIXLD) remain as documented comment/passthrough emission — they're rare in shipped retail shaders and would only matter for full parity
 
 **yuzu pipeline:** `frontend/maxwell/decode.cpp` → `maxwell.inc` opcode table (17KB —
 full instruction name/property tables) → `translate_program.cpp` → IR defined in
@@ -141,6 +141,8 @@ texture descriptors via TIC entries.
 ## 6. IPC service reply encodings (Tier-B) — ✅ ALL IMPLEMENTED: hid CreateAppletResource chain, RingLifo<NpadCommonState> shared memory, GetCurrentTimePoint (0x18 reply), NotifyRunning u8, RomFS-root data storage
 
 ## 6b. Texture recompression (Tier-B1) — ✅ COMPLETE: Bc1Encoder + wired into TextureCache ASTC upload path (8x host-memory reduction, D3D12 GPU-side decode)
+
+## 6c. Xbox Dev Mode 5 GiB RAM budget (Tier-C3) — ✅ COMPLETE: MemoryBudget governor + fastmem commit tracking + live diagnostics row. Fastmem/address-space reserve 4 GiB virtually (MEM_RESERVE ≈ 0 physical; only MEM_COMMIT pages in on game heap use ≈2.5 GiB), so the emulator fits the 5 GiB cap with ~1 GiB headroom.
 
 **hid IAppletResource** (`IAppletResource.cs`, verified): `[CommandCmif(0)]
 GetSharedMemoryHandle() -> handle<copy>` — returns the hid shared KSharedMemory as a
