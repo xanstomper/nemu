@@ -1,5 +1,8 @@
 # NEMU Porting Research — Verified Upstream Architecture Reference
 
+**IMPLEMENTATION STATUS (2026-09-27):** most of this document is now IMPLEMENTED in
+NEMU. See the ✅ markers per section. Remaining unported items are marked ⬜.
+
 **Sources:** ~60 files downloaded from GitHub mirrors of Ryujinx (MIT) and yuzu
 (GPL-2.0/3.0-or-later), verified on disk under `/tmp/nemu-research/`. Mirrors used:
 `NextendoNetwork/Ryujinx-Nextendo`, `alula/Ryujinx` (Ryujinx MIT);
@@ -15,7 +18,7 @@ Note: `Ryujinx/Ryujinx` and `Ryubing/Ryujinx` 404 on GitHub raw; `git.ryujinx.ap
 
 ---
 
-## 1. Maxwell 3D method surface (Tier-A2)
+## 1. Maxwell 3D method surface (Tier-A2) — ✅ implemented (boot defaults + expanded surface; ⬜ full 0xE00-table port remains)
 
 **yuzu** (`maxwell_3d.h/.cpp`): `NUM_REGS = 0xE00`; register offsets are asserted via
 `ASSERT_REG_POSITION(field, byte_offset)` — **345 asserted offsets captured** in the
@@ -59,7 +62,7 @@ above; port `InitializeRegisterDefaults()` first — real games expect these def
 
 ---
 
-## 2. Buffer cache (Tier-A4)
+## 2. Buffer cache (Tier-A4) — ✅ implemented (dirty-range merge + partial uploads; ⬜ 64B-page tracker upgrade + selective readback)
 
 **yuzu** (`buffer_cache.h`, 73KB, GPL-3.0+): dirty tracking is a per-buffer
 **memory_tracker** (CPU/GPU write bits per 64B page) plus per-channel
@@ -79,7 +82,7 @@ readback (needed for transform feedback / render-to-texture readback later).
 
 ---
 
-## 3. GMMU (Tier-A5)
+## 3. GMMU (Tier-A5) — ✅ implemented (uniform 64KiB pages; ⬜ big/small split at 1<<34 if PTE kinds needed)
 
 **yuzu** `memory_manager.{h,cpp}`: 40-bit VA, **big-page bits = 16 (64 KiB)** +
 small-page bits = 12 (4 KiB), split at 1<<34 (`split_address`). Page-table walk
@@ -96,7 +99,7 @@ yuzu's big/small split at 1<<34.
 
 ---
 
-## 4. Compute dispatch (Tier-A3)
+## 4. Compute dispatch (Tier-A3) — ✅ registers + backend hook; ⬜ real 0xAF/QMD layout + compute PSO translation
 
 **yuzu** `kepler_compute.{h,cpp}`: `launch_description` register block with
 `launch_desc_loc` + `launch` method at **0xAF** (also upload 0x60, exec_upload 0x6C,
@@ -115,7 +118,7 @@ decoder — stage `ShaderStage::Compute` already exists in the decoder enum.
 
 ---
 
-## 5. Shader decoding (Tier-A1)
+## 5. Shader decoding (Tier-A1) — ✅ 41 opcodes + predicate file + exact LOP3 LUT; ⬜ maxwell.inc full table, PSET/TEXS variants, bindless TIC
 
 **yuzu pipeline:** `frontend/maxwell/decode.cpp` → `maxwell.inc` opcode table (17KB —
 full instruction name/property tables) → `translate_program.cpp` → IR defined in
@@ -135,7 +138,9 @@ texture descriptors via TIC entries.
 
 ---
 
-## 6. IPC service reply encodings (Tier-B) — verified against Ryujinx sources
+## 6. IPC service reply encodings (Tier-B) — ✅ ALL IMPLEMENTED: hid CreateAppletResource chain, RingLifo<NpadCommonState> shared memory, GetCurrentTimePoint (0x18 reply), NotifyRunning u8, RomFS-root data storage
+
+## 6b. Texture recompression (Tier-B1) — ✅ Bc1Encoder shipped (luminance-extreme endpoints, 0.5B/px); ⬜ wire into TextureCache upload path
 
 **hid IAppletResource** (`IAppletResource.cs`, verified): `[CommandCmif(0)]
 GetSharedMemoryHandle() -> handle<copy>` — returns the hid shared KSharedMemory as a
