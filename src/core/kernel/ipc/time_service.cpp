@@ -70,6 +70,55 @@ u32 TimeClockService::HandleRequest(const IpcContext& ctx, const IpcRequestReade
     }
 }
 
+// ---------------------------------------------------------------------------
+// TimeZoneService
+// ---------------------------------------------------------------------------
+
+TimeZoneService::TimeZoneService()
+    : IIpcService("time:ITimeZoneService") {}
+
+u32 TimeZoneService::HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
+                                   IpcReplyWriter& reply, u32 x_id) {
+    (void)ctx;
+    (void)request;
+    switch (x_id) {
+        case GetDeviceLocationName: {
+            reply.Begin(static_cast<u32>(IpcCommandType::Request), 0x24);
+            (void)reply.WriteString(0, "UTC");
+            return static_cast<u32>(IpcResult::Success);
+        }
+        case GetTotalLocationNameCount: {
+            reply.Begin(static_cast<u32>(IpcCommandType::Request), sizeof(u32));
+            reply.Payload<u32>(0, 1);
+            return static_cast<u32>(IpcResult::Success);
+        }
+        case ToCalendarTime:
+        case ToCalendarTimeWithMyRule: {
+            reply.Begin(static_cast<u32>(IpcCommandType::Request), 0x18);
+            reply.Payload<u16>(0, 2026);
+            reply.Payload<u8>(2, 9);
+            reply.Payload<u8>(3, 27);
+            reply.Payload<u8>(4, 12);
+            reply.Payload<u8>(5, 0);
+            reply.Payload<u8>(6, 0);
+            return static_cast<u32>(IpcResult::Success);
+        }
+        case ToPosixTime:
+        case ToPosixTimeWithMyRule: {
+            reply.Begin(static_cast<u32>(IpcCommandType::Request), sizeof(u64));
+            reply.Payload<u64>(0, 1790500000ULL);
+            return static_cast<u32>(IpcResult::Success);
+        }
+        default:
+            reply.Begin(static_cast<u32>(IpcCommandType::Request), 0);
+            return static_cast<u32>(IpcResult::Success);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TimeService
+// ---------------------------------------------------------------------------
+
 TimeService::TimeService()
     : IIpcService("time:u") {}
 
@@ -85,9 +134,20 @@ u32 TimeService::HandleRequest(const IpcContext& ctx, const IpcRequestReader& re
         }
         case GetStandardSteadyClock:
             return SpawnClock(ctx, reply, /*steady=*/true);
+        case GetTimeZoneService:
+            return SpawnTimeZone(ctx, reply);
         case IsStandardNetworkSystemClockAccuracySufficient: {
             reply.Begin(static_cast<u32>(IpcCommandType::Request), sizeof(u8));
             reply.Payload<u8>(0, 1); // sufficient
+            return static_cast<u32>(IpcResult::Success);
+        }
+        case CalculateMonotonicSystemClockToBaseTimePoint: {
+            reply.Begin(static_cast<u32>(IpcCommandType::Request), sizeof(u64));
+            reply.Payload<u64>(0, SteadyNs());
+            return static_cast<u32>(IpcResult::Success);
+        }
+        case GetSharedMemoryNativeHandle: {
+            reply.Begin(static_cast<u32>(IpcCommandType::Request), 0);
             return static_cast<u32>(IpcResult::Success);
         }
         default:
@@ -103,6 +163,24 @@ u32 TimeService::SpawnClock(const IpcContext& ctx, IpcReplyWriter& reply, bool s
     auto clock = std::make_shared<TimeClockService>(steady);
     auto session = std::make_shared<KClientSession>();
     session->SetService(std::move(clock));
+
+    const kernel::Handle handle = ctx.handle_table->CreateHandle(session);
+    if (handle == kernel::InvalidHandle) {
+        return static_cast<u32>(IpcResult::OutOfMemory);
+    }
+
+    reply.Begin(static_cast<u32>(IpcCommandType::Request), sizeof(u32));
+    reply.Payload<u32>(0, handle);
+    return static_cast<u32>(IpcResult::Success);
+}
+
+u32 TimeService::SpawnTimeZone(const IpcContext& ctx, IpcReplyWriter& reply) {
+    if (!ctx.handle_table) {
+        return static_cast<u32>(IpcResult::InvalidBuffer);
+    }
+    auto tz = std::make_shared<TimeZoneService>();
+    auto session = std::make_shared<KClientSession>();
+    session->SetService(std::move(tz));
 
     const kernel::Handle handle = ctx.handle_table->CreateHandle(session);
     if (handle == kernel::InvalidHandle) {

@@ -206,6 +206,137 @@ u32 WindowControllerService::HandleRequest(
 }
 
 // ---------------------------------------------------------------------------
+// SelfControllerService
+// ---------------------------------------------------------------------------
+
+SelfControllerService::SelfControllerService()
+    : IIpcService("applet:ISelfController") {
+    launchable_event_ = std::make_shared<KEvent>(true);
+    launchable_event_->Signal();
+}
+
+u32 SelfControllerService::HandleRequest(
+    const IpcContext& ctx,
+    const IpcRequestReader& request,
+    IpcReplyWriter& reply,
+    u32 x_id
+) {
+    (void)request;
+    switch (x_id) {
+        case GetLibraryAppletLaunchableEvent: {
+            Handle event_h = 0;
+            if (ctx.handle_table && launchable_event_) {
+                event_h = ctx.handle_table->CreateHandle(launchable_event_);
+            }
+            reply.Begin(0, 8);
+            reply.Payload<u32>(0, 0);
+            reply.Payload<u32>(4, event_h);
+            return static_cast<u32>(IpcResult::Success);
+        }
+        case CreateManagedDisplayLayer: {
+            reply.Begin(0, 12);
+            reply.Payload<u32>(0, 0);
+            reply.Payload<u64>(4, 1); // LayerId = 1
+            return static_cast<u32>(IpcResult::Success);
+        }
+        case IsSystemBufferSharingEnabled: {
+            reply.Begin(0, 5);
+            reply.Payload<u32>(0, 0);
+            reply.Payload<u8>(4, 0);
+            return static_cast<u32>(IpcResult::Success);
+        }
+        case GetTotalMemoryAllocated: {
+            reply.Begin(0, 12);
+            reply.Payload<u32>(0, 0);
+            reply.Payload<u64>(4, 0);
+            return static_cast<u32>(IpcResult::Success);
+        }
+        case SetFocusHandlingMode:
+        case SetRestartMessageEnabled:
+        case SetScreenShotPermission:
+        case SetOperationModeChangedNotification:
+        case SetPerformanceModeChangedNotification:
+        case SetScreenShotImageOrientation:
+        case SetAlbumImageOrientation:
+        case SetIdleTimeDetectionExtension:
+        case SetMediaPlaybackState:
+        case EnterFatalSection:
+        case LeaveFatalSection:
+        case LockExit:
+        case UnlockExit:
+        case Exit:
+        default: {
+            reply.Begin(0, 4);
+            reply.Payload<u32>(0, 0);
+            return static_cast<u32>(IpcResult::Success);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AudioControllerService
+// ---------------------------------------------------------------------------
+
+AudioControllerService::AudioControllerService()
+    : IIpcService("applet:IAudioController") {}
+
+u32 AudioControllerService::HandleRequest(
+    const IpcContext& ctx,
+    const IpcRequestReader& request,
+    IpcReplyWriter& reply,
+    u32 x_id
+) {
+    (void)ctx;
+    (void)request;
+    (void)x_id;
+    reply.Begin(0, 4);
+    reply.Payload<u32>(0, 0);
+    return static_cast<u32>(IpcResult::Success);
+}
+
+// ---------------------------------------------------------------------------
+// DisplayControllerService
+// ---------------------------------------------------------------------------
+
+DisplayControllerService::DisplayControllerService()
+    : IIpcService("applet:IDisplayController") {}
+
+u32 DisplayControllerService::HandleRequest(
+    const IpcContext& ctx,
+    const IpcRequestReader& request,
+    IpcReplyWriter& reply,
+    u32 x_id
+) {
+    (void)ctx;
+    (void)request;
+    (void)x_id;
+    reply.Begin(0, 4);
+    reply.Payload<u32>(0, 0);
+    return static_cast<u32>(IpcResult::Success);
+}
+
+// ---------------------------------------------------------------------------
+// LibraryAppletCreatorService
+// ---------------------------------------------------------------------------
+
+LibraryAppletCreatorService::LibraryAppletCreatorService()
+    : IIpcService("applet:ILibraryAppletCreator") {}
+
+u32 LibraryAppletCreatorService::HandleRequest(
+    const IpcContext& ctx,
+    const IpcRequestReader& request,
+    IpcReplyWriter& reply,
+    u32 x_id
+) {
+    (void)ctx;
+    (void)request;
+    (void)x_id;
+    reply.Begin(0, 4);
+    reply.Payload<u32>(0, 0);
+    return static_cast<u32>(IpcResult::Success);
+}
+
+// ---------------------------------------------------------------------------
 // AppletSessionService
 // ---------------------------------------------------------------------------
 
@@ -237,10 +368,10 @@ u32 AppletSessionService::HandleRequest(
             return static_cast<u32>(IpcResult::Success);
         }
 
-        case OpenApplicationFunctions: {
-            auto funcs = std::make_shared<ApplicationFunctionsService>();
+        case OpenSelfController: {
+            auto self_ctrl = std::make_shared<SelfControllerService>();
             auto session = std::make_shared<KClientSession>();
-            session->SetService(funcs);
+            session->SetService(self_ctrl);
 
             Handle h = 0;
             if (ctx.handle_table) {
@@ -253,10 +384,75 @@ u32 AppletSessionService::HandleRequest(
             return static_cast<u32>(IpcResult::Success);
         }
 
-        case OpenWindowController: {
+        case OpenWindowController:
+        case OpenWindowControllerLegacy: {
             auto win = std::make_shared<WindowControllerService>();
             auto session = std::make_shared<KClientSession>();
             session->SetService(win);
+
+            Handle h = 0;
+            if (ctx.handle_table) {
+                h = ctx.handle_table->CreateHandle(session);
+            }
+
+            reply.Begin(0, 8);
+            reply.Payload<u32>(0, 0);
+            reply.Payload<u32>(4, h);
+            return static_cast<u32>(IpcResult::Success);
+        }
+
+        case OpenAudioController: {
+            auto audio_ctrl = std::make_shared<AudioControllerService>();
+            auto session = std::make_shared<KClientSession>();
+            session->SetService(audio_ctrl);
+
+            Handle h = 0;
+            if (ctx.handle_table) {
+                h = ctx.handle_table->CreateHandle(session);
+            }
+
+            reply.Begin(0, 8);
+            reply.Payload<u32>(0, 0);
+            reply.Payload<u32>(4, h);
+            return static_cast<u32>(IpcResult::Success);
+        }
+
+        case OpenDisplayController: {
+            auto disp_ctrl = std::make_shared<DisplayControllerService>();
+            auto session = std::make_shared<KClientSession>();
+            session->SetService(disp_ctrl);
+
+            Handle h = 0;
+            if (ctx.handle_table) {
+                h = ctx.handle_table->CreateHandle(session);
+            }
+
+            reply.Begin(0, 8);
+            reply.Payload<u32>(0, 0);
+            reply.Payload<u32>(4, h);
+            return static_cast<u32>(IpcResult::Success);
+        }
+
+        case OpenLibraryAppletCreator: {
+            auto creator = std::make_shared<LibraryAppletCreatorService>();
+            auto session = std::make_shared<KClientSession>();
+            session->SetService(creator);
+
+            Handle h = 0;
+            if (ctx.handle_table) {
+                h = ctx.handle_table->CreateHandle(session);
+            }
+
+            reply.Begin(0, 8);
+            reply.Payload<u32>(0, 0);
+            reply.Payload<u32>(4, h);
+            return static_cast<u32>(IpcResult::Success);
+        }
+
+        case OpenApplicationFunctions: {
+            auto funcs = std::make_shared<ApplicationFunctionsService>();
+            auto session = std::make_shared<KClientSession>();
+            session->SetService(funcs);
 
             Handle h = 0;
             if (ctx.handle_table) {

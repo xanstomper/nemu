@@ -486,6 +486,30 @@ void TestExtendedSassEmission() {
 }
 
 // ---------------------------------------------------------------------------
+// Rare/unsupported SASS family diagnostic: an identified-but-not-emitted
+// family (e.g. SUATOM surface-atomic) yields an auditable [untranslated]
+// comment instead of silently vanishing.
+// ---------------------------------------------------------------------------
+void TestRareSassDiagnostic() {
+    using namespace nemu::core::gpu::shader;
+
+    // SUATOM surface atomic: mask/val top16 = 1110 1010 0--- (from table).
+    const u64 suatom = 0xEA00000000000000ULL;
+    std::vector<u8> code;
+    for (int b = 7; b >= 0; --b) code.push_back(static_cast<u8>((suatom >> (b * 8)) & 0xFF));
+
+    NEMU_TEST_ASSERT(IdentifySass(suatom).encoding_index != SIZE_MAX, "SUATOM identified");
+
+    const auto prog = MaxwellShaderDecoder::DecodeAndDecompile(code, ShaderStage::Fragment, false);
+    NEMU_TEST_ASSERT(!prog.instructions.empty(), "rare family decoded");
+    // The [untranslated] diagnostic comment must be present in the emitted HLSL.
+    NEMU_TEST_ASSERT(prog.hlsl_source.find("[untranslated]") != std::string::npos,
+                     "rare family leaves auditable diagnostic");
+
+    std::cout << "  Rare SASS diagnostic PASS\n";
+}
+
+// ---------------------------------------------------------------------------
 // ComputeQmd & Hardware ComputeLaunch (Tier-A3)
 // ---------------------------------------------------------------------------
 void TestComputeQmd() {
@@ -606,6 +630,7 @@ int main() {
     TestPresentOptimizerPipeline();
     TestSassIdentifier();
     TestExtendedSassEmission();
+    TestRareSassDiagnostic();
     TestComputeQmd();
     TestComputeShaderEmission();
     std::cout << "ALL TIER-A TESTS PASSED\n";

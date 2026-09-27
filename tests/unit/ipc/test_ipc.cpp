@@ -269,6 +269,20 @@ void TestTimeService() {
     const u64 now_ns = ReadReply<u64>(proc->GetVirtualMemory());
     NEMU_IPC_ASSERT(now_ns > 0 && "clock must return a nonzero timestamp");
 
+    // 5. GetTimeZoneService (cmd 3 on time_session)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request),
+                 TimeService::GetTimeZoneService, nullptr, 0);
+    NEMU_IPC_ASSERT(SendSync(*proc, thread, time_session) == static_cast<u32>(IpcResult::Success));
+    const Handle tz_session = ReadReply<Handle>(proc->GetVirtualMemory());
+    NEMU_IPC_ASSERT(tz_session != InvalidHandle);
+    auto tz = proc->GetHandleTable().GetObject<KClientSession>(tz_session);
+    NEMU_IPC_ASSERT(tz != nullptr);
+
+    // 6. GetDeviceLocationName (cmd 0 on tz)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request),
+                 TimeZoneService::GetDeviceLocationName, nullptr, 0);
+    NEMU_IPC_ASSERT(SendSync(*proc, thread, tz_session) == static_cast<u32>(IpcResult::Success));
+
     std::cout << "  PASSED.\n";
 }
 
@@ -748,6 +762,26 @@ void TestAppletService() {
     NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *common_sess, reg) == static_cast<u32>(IpcResult::Success));
     const u8 focus = ReadReply<u8>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
     NEMU_IPC_ASSERT(focus == 1); // InFocus
+
+    // 9. OpenSelfController (cmd 1 on applet_sess)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 1, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *applet_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle self_h = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(self_h != InvalidHandle);
+    auto self_sess = std::dynamic_pointer_cast<KClientSession>(proc->GetHandleTable().GetObject(self_h));
+    NEMU_IPC_ASSERT(self_sess != nullptr);
+
+    // 10. CreateManagedDisplayLayer (cmd 40 on self_sess)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 40, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *self_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const u64 layer_id = ReadReply<u64>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(layer_id == 1);
+
+    // 11. OpenWindowController (cmd 2 on applet_sess)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request), 2, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *applet_sess, reg) == static_cast<u32>(IpcResult::Success));
+    const Handle win_h = ReadReply<Handle>(proc->GetVirtualMemory(), static_cast<size_t>(ipc::IpcField::Payload) + 4);
+    NEMU_IPC_ASSERT(win_h != InvalidHandle);
 
     std::cout << "  PASSED.\n";
 }

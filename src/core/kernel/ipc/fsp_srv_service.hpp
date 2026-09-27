@@ -85,12 +85,20 @@ public:
     enum : u32 {
         OpenFileSystem = 0x0,
         SetCurrentProcess = 0x1,
+        OpenFileSystemWithPatch = 0xB,            // 11
+        OpenFileSystemWithId = 0xC,               // 12
         OpenDataStorageByCurrentProcess = 0x12,   // 18
+        OpenDataStorageByDataId = 0x13,           // 19
         OpenDataStorageByProgramId = 0x14,        // 20
+        OpenDataStorageByCurrentProcessWithPatch = 0x16, // 22
         OpenSaveDataFileSystem = 0x33,            // 51
         OpenDirectorySaveDataFileSystem = 0x34,   // 52
         OpenSaveDataInfoReader = 0x35,            // 53
         OpenSdCardFileSystem = 0x65,              // 101
+        OpenDataFileSystemByCurrentProcess = 0xC8,// 200
+        OpenDataFileSystemByProgramId = 0xC9,     // 201
+        GetGlobalAccessLogMode = 0x3ED,           // 1005
+        SetGlobalAccessLogMode = 0x3EE,           // 1006
     };
 
     u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,

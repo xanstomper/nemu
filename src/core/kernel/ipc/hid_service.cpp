@@ -18,6 +18,10 @@ u32 HidService::HandleRequest(const IpcContext& ctx, const IpcRequestReader& req
     (void)request;
     switch (x_id) {
         case Initialize: {
+            if (request.GetDataSize() >= 8) {
+                // Real Horizon OS protocol: CreateAppletResource(applet_resource_user_id)
+                return HandleCreateAppletResource(ctx, reply);
+            }
             reply.Begin(static_cast<u32>(IpcCommandType::Request), 0);
             return static_cast<u32>(IpcResult::Success);
         }
@@ -33,7 +37,8 @@ u32 HidService::HandleRequest(const IpcContext& ctx, const IpcRequestReader& req
             return HandleUpdateTimestamp(reply);
         default:
             NEMU_LOG_WARN("hid", "Unhandled hid command id 0x{:X}", x_id);
-            return static_cast<u32>(IpcResult::Unimplemented);
+            reply.Begin(static_cast<u32>(IpcCommandType::Request), 0);
+            return static_cast<u32>(IpcResult::Success);
     }
 }
 
@@ -71,10 +76,9 @@ u32 HidAppletResourceService::HandleRequest(const IpcContext& ctx,
             }
             return static_cast<u32>(IpcResult::InvalidBuffer);
         default:
-            NEMU_LOG_DEBUG("hid", "IAppletResource: Unhandled command 0x{:X}", x_id);
-            reply.Begin(static_cast<u32>(IpcCommandType::Request), 4);
-            reply.Payload<u32>(0, static_cast<u32>(IpcResult::Unimplemented));
-            return static_cast<u32>(IpcResult::Unimplemented);
+            NEMU_LOG_DEBUG("hid", "IAppletResource: Stubbing command 0x{:X}", x_id);
+            reply.Begin(static_cast<u32>(IpcCommandType::Request), 0);
+            return static_cast<u32>(IpcResult::Success);
     }
 }
 

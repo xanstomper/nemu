@@ -105,10 +105,10 @@ u32 FileSystemFileService::HandleRequest(
         }
 
         default:
-            NEMU_LOG_WARN("fsp-srv", "IFile: Unhandled command 0x{:X}", x_id);
+            NEMU_LOG_DEBUG("fsp-srv", "IFile: Stubbing command 0x{:X}", x_id);
             reply.Begin(0, 4);
-            reply.Payload<u32>(0, static_cast<u32>(IpcResult::Unimplemented));
-            return static_cast<u32>(IpcResult::Unimplemented);
+            reply.Payload<u32>(0, 0);
+            return static_cast<u32>(IpcResult::Success);
     }
 }
 
@@ -406,11 +406,60 @@ u32 FspSrvService::HandleRequest(
             return static_cast<u32>(IpcResult::Success);
         }
 
-        default:
-            NEMU_LOG_WARN("fsp-srv", "Unhandled command 0x{:X}", x_id);
+        case OpenFileSystemWithPatch:
+        case OpenFileSystemWithId: {
+            auto sub_svc = std::make_shared<FileSystemSubService>(vfs_, "sdmc:/");
+            auto session = std::make_shared<KClientSession>();
+            session->SetService(sub_svc);
+
+            Handle session_handle = 0;
+            if (ctx.handle_table) {
+                session_handle = ctx.handle_table->CreateHandle(session);
+            }
+
+            reply.Begin(0, 8);
+            reply.Payload<u32>(0, 0);
+            reply.Payload<u32>(4, session_handle);
+            return static_cast<u32>(IpcResult::Success);
+        }
+
+        case OpenDataStorageByDataId:
+        case OpenDataStorageByCurrentProcessWithPatch:
+        case OpenDataFileSystemByCurrentProcess:
+        case OpenDataFileSystemByProgramId: {
+            auto storage_svc = std::make_shared<FileSystemStorageService>(vfs_, "romfs:/");
+            auto session = std::make_shared<KClientSession>();
+            session->SetService(storage_svc);
+
+            Handle session_handle = 0;
+            if (ctx.handle_table) {
+                session_handle = ctx.handle_table->CreateHandle(session);
+            }
+
+            reply.Begin(0, 8);
+            reply.Payload<u32>(0, 0);
+            reply.Payload<u32>(4, session_handle);
+            return static_cast<u32>(IpcResult::Success);
+        }
+
+        case GetGlobalAccessLogMode: {
+            reply.Begin(0, 8);
+            reply.Payload<u32>(0, 0);
+            reply.Payload<u32>(4, 0); // Access log mode 0 = disabled
+            return static_cast<u32>(IpcResult::Success);
+        }
+
+        case SetGlobalAccessLogMode: {
             reply.Begin(0, 4);
-            reply.Payload<u32>(0, static_cast<u32>(IpcResult::Unimplemented));
-            return static_cast<u32>(IpcResult::Unimplemented);
+            reply.Payload<u32>(0, 0);
+            return static_cast<u32>(IpcResult::Success);
+        }
+
+        default:
+            NEMU_LOG_DEBUG("fsp-srv", "Stubbing unhandled command 0x{:X}", x_id);
+            reply.Begin(0, 4);
+            reply.Payload<u32>(0, 0);
+            return static_cast<u32>(IpcResult::Success);
     }
 }
 

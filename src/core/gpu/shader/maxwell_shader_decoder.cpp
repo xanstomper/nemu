@@ -827,11 +827,10 @@ std::string MaxwellShaderDecoder::EmitHLSL(const DecompiledProgram& program) {
                     ss << "    return output;\n";
                 }
                 break;
-            default:
-                // Extended SASS families (IMAD/XMAD/SETP/MUFU/IPA/half-float/
-                // flow-ctrl — 67 high-frequency families ported from yuzu).
+
+            // Extended SASS families (IMAD/XMAD/SETP/MUFU/IPA/half-float/
+            // flow-ctrl — 67 high-frequency families ported from yuzu).
 #include "sass_emit_extended.inc"
-                break;
         }
     }
 

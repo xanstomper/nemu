@@ -69,6 +69,66 @@ public:
                       IpcReplyWriter& reply, u32 x_id) override;
 };
 
+class SelfControllerService final : public IIpcService {
+public:
+    SelfControllerService();
+    ~SelfControllerService() override = default;
+
+    enum : u32 {
+        Exit = 0x0,
+        LockExit = 0x1,
+        UnlockExit = 0x2,
+        EnterFatalSection = 0x9,
+        LeaveFatalSection = 0xA,
+        GetLibraryAppletLaunchableEvent = 0xB, // 11
+        SetScreenShotPermission = 0xC,         // 12
+        SetOperationModeChangedNotification = 0xD,
+        SetPerformanceModeChangedNotification = 0xE,
+        SetFocusHandlingMode = 0xF,           // 15
+        SetRestartMessageEnabled = 0x10,       // 16
+        SetScreenShotImageOrientation = 0x11,
+        CreateManagedDisplayLayer = 0x28,     // 40
+        IsSystemBufferSharingEnabled = 0x29,   // 41
+        GetTotalMemoryAllocated = 0x2A,       // 42
+        SetAlbumImageOrientation = 0x2C,      // 44
+        SetIdleTimeDetectionExtension = 0x3C, // 60
+        SetMediaPlaybackState = 0x3E,         // 62
+    };
+
+    u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
+                      IpcReplyWriter& reply, u32 x_id) override;
+
+private:
+    std::shared_ptr<KEvent> launchable_event_;
+};
+
+class AudioControllerService final : public IIpcService {
+public:
+    AudioControllerService();
+    ~AudioControllerService() override = default;
+
+    u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
+                      IpcReplyWriter& reply, u32 x_id) override;
+};
+
+class DisplayControllerService final : public IIpcService {
+public:
+    DisplayControllerService();
+    ~DisplayControllerService() override = default;
+
+    u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
+                      IpcReplyWriter& reply, u32 x_id) override;
+};
+
+class LibraryAppletCreatorService final : public IIpcService {
+public:
+    LibraryAppletCreatorService();
+    ~LibraryAppletCreatorService() override = default;
+
+    u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
+                      IpcReplyWriter& reply, u32 x_id) override;
+};
+
 class AppletSessionService final : public IIpcService {
 public:
     AppletSessionService();
@@ -76,8 +136,13 @@ public:
 
     enum : u32 {
         OpenCommonStateGetter = 0x0,
-        OpenApplicationFunctions = 0x14, // 20
-        OpenWindowController = 0x15,     // 21
+        OpenSelfController = 0x1,
+        OpenWindowController = 0x2,
+        OpenAudioController = 0x3,
+        OpenDisplayController = 0x4,
+        OpenLibraryAppletCreator = 0xB,    // 11
+        OpenApplicationFunctions = 0x14,  // 20
+        OpenWindowControllerLegacy = 0x15,// 21
     };
 
     u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,

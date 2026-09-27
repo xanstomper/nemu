@@ -53,7 +53,7 @@ static void SignalHandler(int) {
     g_app_running = false;
 }
 
-int main(int argc, char** argv) {
+static int MainInternal(int argc, char** argv) {
     platform::Logger::Instance().SetMinLevel(platform::LogLevel::Info);
     std::signal(SIGINT, SignalHandler);
     std::signal(SIGTERM, SignalHandler);
@@ -474,9 +474,13 @@ int main(int argc, char** argv) {
     return 0;
 }
 
+int main(int argc, char** argv) {
+    return MainInternal(argc, argv);
+}
+
 #ifdef _WIN32
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
-    return main(__argc, __argv);
+    return MainInternal(__argc, __argv);
 }
 #endif
 

@@ -273,6 +273,14 @@ case MaxwellOpcode::LEA_hi:
 case MaxwellOpcode::LEA_lo:
     break;
 
+// ---- Rare / unsupported families (visibility, not silent drop) --------------
+case MaxwellOpcode::UNKNOWN:
+default:
+    if (!inst.disassembly.empty()) {
+        ss << "    // [untranslated] " << inst.disassembly << "\n";
+    }
+    break;
+
 #undef NEMU_EMIT_WR
 #undef NEMU_EMIT_WR_ATTR
 #undef NEMU_SRC
