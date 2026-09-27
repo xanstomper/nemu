@@ -357,6 +357,49 @@ void TestTextureCacheBc1Integration() {
     std::cout << "  TextureCache BC1 integration PASS\n";
 }
 
+// ---------------------------------------------------------------------------
+// Present-path optimizer pipeline (Tier-B UI wiring): settings -> Present()
+// ---------------------------------------------------------------------------
+void TestPresentOptimizerPipeline() {
+    NullGpuBackend gpu;
+    NEMU_TEST_ASSERT(gpu.Initialize(64, 64), "init 64x64");
+
+    // Clear to solid red.
+    gpu.BeginFrame();
+    gpu.ClearRenderTarget(ClearColor{.r = 1.0f, .g = 0.0f, .b = 0.0f, .a = 1.0f});
+    gpu.EndFrame();
+
+    // With optimizers disabled, Present leaves the framebuffer at 64x64.
+    gpu.Present();
+    NEMU_TEST_ASSERT(gpu.FramebufferSize() == 64u * 64u * 4u, "untouched present size");
+
+    // Enable FSR_1_0 (2x target) + FXAA + framegen.
+    FrameOptimizerSettings fo{};
+    fo.upscaler = pipeline::UpscalerMode::FSR_1_0;
+    fo.anti_aliasing = pipeline::AntiAliasingMode::FXAA;
+    fo.frame_generation = pipeline::FrameGenMode::AFMF_Extrapolation_2x;
+    fo.enabled = true;
+    gpu.SetFrameOptimizerSettings(fo);
+
+    gpu.BeginFrame();
+    gpu.ClearRenderTarget(ClearColor{.r = 1.0f, .g = 0.0f, .b = 0.0f, .a = 1.0f});
+    gpu.EndFrame();
+    gpu.Present();
+
+    // Frame was upscaled 2x: 128x128 framebuffer.
+    NEMU_TEST_ASSERT(gpu.FramebufferSize() == 128u * 128u * 4u, "2x upscaled present");
+    const auto st = gpu.GetStats();
+    NEMU_TEST_ASSERT(st.frames_upscaled >= 1, "upscale counted");
+    NEMU_TEST_ASSERT(st.frames_generated >= 1, "framegen counted");
+
+    // Content check: solid red in, solid red out (FSR preserves flat color).
+    const u8* fb = gpu.Framebuffer();
+    NEMU_TEST_ASSERT(fb[0] == 255 && fb[1] == 0 && fb[2] == 0 && fb[3] == 255,
+                     "solid red preserved through upscale+AA");
+
+    std::cout << "  Present optimizer pipeline PASS\n";
+}
+
 int main() {
     std::cout << "== NEMU Tier-A unit tests ==\n";
     TestGmmuBasics();
@@ -365,6 +408,7 @@ int main() {
     TestExpandedShaderDecoder();
     TestBc1Encoder();
     TestTextureCacheBc1Integration();
+    TestPresentOptimizerPipeline();
     std::cout << "ALL TIER-A TESTS PASSED\n";
     return 0;
 }

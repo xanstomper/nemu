@@ -7,6 +7,7 @@
 
 namespace nemu::core::memory { class VirtualMemory; }
 namespace nemu::core::gpu::texture { struct TextureDescriptor; struct SamplerDescriptor; }
+#include "pipeline/graphics_optimizer.hpp"
 
 namespace nemu::core::gpu {
 
@@ -54,6 +55,8 @@ struct GpuStats {
     u64 frames_presented{0};
     u64 draw_calls{0};
     u64 vertices_submitted{0};
+    u64 frames_upscaled{0};   // Tier-B1 optimizer pipeline
+    u64 frames_generated{0};  // framegen interpolated frames
 };
 
 /// Guest rasterizer state block (Tier-A2). Games push these every frame;
@@ -72,6 +75,17 @@ struct RasterizerState {
     u32 msaa_samples{1};
     bool blend_enable_0{false};
     u32 blend_equation_rgb{1}; // GL func enum (1 = Add)
+};
+
+/// Live graphics-optimizer settings (Tier-B UI wiring). The frontend Settings
+/// UI mutates config → Emulator::ApplyRuntimeConfig pushes this into the
+/// backend → Present() applies upscaling/AA/framegen on the presented frame.
+struct FrameOptimizerSettings {
+    pipeline::UpscalerMode upscaler{pipeline::UpscalerMode::Bilinear};
+    float fsr_sharpness{0.8f};
+    pipeline::AntiAliasingMode anti_aliasing{pipeline::AntiAliasingMode::None};
+    pipeline::FrameGenMode frame_generation{pipeline::FrameGenMode::Disabled};
+    bool enabled{false}; // master switch: false = present frames untouched
 };
 
 // A rasterizer vertex: 2D normalized-device position (x,y in [-1,1]) plus an
@@ -124,6 +138,11 @@ public:
     // Dispatch a compute shader launch (Tier-A3). block_x/y are the guest
     // workgroup dims. Default no-op; D3D12 builds a compute PSO, Null counts.
     virtual void DispatchCompute(u32 /*block_x*/, u32 /*block_y*/, u32 /*block_z*/) {}
+
+    // --- Live frame-optimizer settings (Tier-B UI wiring) -------------------
+    // Push upscaler/AA/framegen config so Present() applies the optimization
+    // pipeline. Live: the Switch Settings UI can change it every frame.
+    virtual void SetFrameOptimizerSettings(const FrameOptimizerSettings& /*settings*/) {}
 
     // --- Guest draw state (translation-layer input) -----------------------
     // These carry the real guest graphics state that the D3D12 backend feeds

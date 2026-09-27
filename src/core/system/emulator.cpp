@@ -171,9 +171,23 @@ void Emulator::ApplyRuntimeConfig() {
         }
     }
 
-    NEMU_LOG_INFO("System", "Runtime config applied: layout={}, deadzone={:.2f}-{:.2f}, audio={}",
+    // Graphics optimizers (Tier-B UI wiring): push upscaler/AA/framegen live
+    // so Present() applies the pipeline on the next frame — no restart.
+    if (gpu_backend_) {
+        gpu::FrameOptimizerSettings fo{};
+        fo.upscaler = cfg.upscaler;
+        fo.fsr_sharpness = cfg.fsr_sharpness;
+        fo.anti_aliasing = cfg.anti_aliasing;
+        fo.frame_generation = cfg.frame_generation;
+        fo.enabled = true;
+        gpu_backend_->SetFrameOptimizerSettings(fo);
+    }
+
+    NEMU_LOG_INFO("System", "Runtime config applied: layout={}, deadzone={:.2f}-{:.2f}, audio={}, upscaler={}, aa={}, framegen={}",
                   static_cast<u32>(cfg.button_layout), cfg.inner_deadzone, cfg.outer_deadzone,
-                  cfg.audio_enabled ? "on" : "off");
+                  cfg.audio_enabled ? "on" : "off",
+                  static_cast<u32>(cfg.upscaler), static_cast<u32>(cfg.anti_aliasing),
+                  static_cast<u32>(cfg.frame_generation));
 }
 
 void Emulator::Shutdown() {

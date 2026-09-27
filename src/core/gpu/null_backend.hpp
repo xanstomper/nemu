@@ -33,6 +33,12 @@ public:
     void SetRasterIndices(std::span<const u32> indices) override;
     bool DumpFramePPM(const char* path) override;
 
+    void SetRasterizerState(const RasterizerState& state) override { raster_state_ = state; }
+    void DispatchCompute(u32 block_x, u32 block_y, u32 block_z) override;
+    void SetFrameOptimizerSettings(const FrameOptimizerSettings& settings) override {
+        optimizer_settings_ = settings;
+    }
+
     [[nodiscard]] GpuStats GetStats() const noexcept override { return stats_; }
     [[nodiscard]] std::string_view GetBackendName() const noexcept override { return "Null / Software Rasterizer"; }
 
@@ -50,6 +56,9 @@ private:
     int NdcToPixelY(float ndc) const noexcept;
     void RasterizeTriangle(const RasterVertex& a, const RasterVertex& b, const RasterVertex& c);
     void PutPixel(int x, int y, const RasterVertex& v);
+    /// Present-path optimizer pipeline: upscale + AA + framegen on the raw
+    /// rasterized frame (Tier-B1 UI wiring). No-op when master switch is off.
+    void ApplyOptimizerPipeline();
 
     bool initialized_{false};
     bool in_frame_{false};
@@ -58,6 +67,11 @@ private:
     Viewport current_viewport_{};
     ScissorRect current_scissor_{};
     ClearColor last_clear_color_{};
+    RasterizerState raster_state_{};
+    FrameOptimizerSettings optimizer_settings_{};
+    // Framegen state: previous raw frame for motion interpolation.
+    std::vector<u8> prev_frame_raw_;
+    bool has_prev_frame_{false};
 
     std::vector<RasterVertex> vertices_;
     std::vector<u32> indices_;
