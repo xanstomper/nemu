@@ -58,6 +58,17 @@ the present path, live from the Settings UI. 5 GiB RAM budget governor with
 live Diagnostics display.
 
 ---
+> **Verified this session (input + saves — the last two commercial-gaming
+> essentials):**
+> - **Controller input**: `XboxControllerDriver` polled in `Emulator::RunFrame`
+>   (controllers 0..N), Xbox A/B/X/Y/LB/RB/Start/Back/D-pad mapped to Switch
+>   button masks, fed to the guest via `HidService::UpdatePadState` → real
+>   `RingLifo<NpadCommonState>`. Physical pads drive games on the console.
+> - **Save data**: `fsp-srv` implements the real game-facing API —
+>   `OpenSaveDataFileSystem` / `OpenDirectorySaveDataFileSystem` create a
+>   per-title `save:/%016llx/` directory and return a real `IFileSystem` with
+>   working `IFile` CreateFile/Read/Write. Games create/load saves instead of
+>   crashing on save init.
 
 ## 5. On-hardware bring-up (THE remaining gate)
 
