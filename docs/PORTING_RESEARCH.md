@@ -140,7 +140,7 @@ texture descriptors via TIC entries.
 
 ## 6. IPC service reply encodings (Tier-B) — ✅ ALL IMPLEMENTED: hid CreateAppletResource chain, RingLifo<NpadCommonState> shared memory, GetCurrentTimePoint (0x18 reply), NotifyRunning u8, RomFS-root data storage
 
-## 6b. Texture recompression (Tier-B1) — ✅ Bc1Encoder shipped (luminance-extreme endpoints, 0.5B/px); ⬜ wire into TextureCache upload path
+## 6b. Texture recompression (Tier-B1) — ✅ COMPLETE: Bc1Encoder + wired into TextureCache ASTC upload path (8x host-memory reduction, D3D12 GPU-side decode)
 
 **hid IAppletResource** (`IAppletResource.cs`, verified): `[CommandCmif(0)]
 GetSharedMemoryHandle() -> handle<copy>` — returns the hid shared KSharedMemory as a
