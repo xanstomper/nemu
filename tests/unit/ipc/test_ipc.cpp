@@ -330,10 +330,27 @@ void TestHidService() {
     auto hid_session = std::make_shared<KClientSession>();
     hid_session->SetService(reg.Find("hid"));
 
-    // GetSharedMemoryHandle
+    // Real libnx protocol: Initialize -> CreateAppletResource -> [IAppletResource]
+    // GetSharedMemoryHandle.
     WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request),
-                 HidService::GetSharedMemoryHandle, nullptr, 0);
+                 HidService::Initialize, nullptr, 0);
     NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *hid_session, reg) ==
+                    static_cast<u32>(IpcResult::Success));
+
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request),
+                 HidService::CreateAppletResource, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *hid_session, reg) ==
+                    static_cast<u32>(IpcResult::Success));
+    const Handle resource_handle = ReadReply<Handle>(proc->GetVirtualMemory());
+    NEMU_IPC_ASSERT(resource_handle != InvalidHandle);
+
+    auto resource_session = proc->GetHandleTable().GetObject<KClientSession>(resource_handle);
+    NEMU_IPC_ASSERT(resource_session && "CreateAppletResource must return a session handle");
+
+    // [IAppletResource] GetSharedMemoryHandle (cmd 0)
+    WriteRequest(proc->GetVirtualMemory(), static_cast<u32>(IpcCommandType::Request),
+                 HidAppletResourceService::GetSharedMemoryHandle, nullptr, 0);
+    NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *resource_session, reg) ==
                     static_cast<u32>(IpcResult::Success));
     const Handle shmem_handle = ReadReply<Handle>(proc->GetVirtualMemory());
     NEMU_IPC_ASSERT(shmem_handle != InvalidHandle);

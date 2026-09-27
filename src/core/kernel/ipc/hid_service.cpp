@@ -21,6 +21,8 @@ u32 HidService::HandleRequest(const IpcContext& ctx, const IpcRequestReader& req
             reply.Begin(static_cast<u32>(IpcCommandType::Request), 0);
             return static_cast<u32>(IpcResult::Success);
         }
+        case CreateAppletResource:
+            return HandleCreateAppletResource(ctx, reply);
         case GetSharedMemoryHandle:
             return HandleGetSharedMemoryHandle(ctx, reply);
         case SetButtonState:
@@ -31,6 +33,47 @@ u32 HidService::HandleRequest(const IpcContext& ctx, const IpcRequestReader& req
             return HandleUpdateTimestamp(reply);
         default:
             NEMU_LOG_WARN("hid", "Unhandled hid command id 0x{:X}", x_id);
+            return static_cast<u32>(IpcResult::Unimplemented);
+    }
+}
+
+u32 HidService::HandleCreateAppletResource(const IpcContext& ctx, IpcReplyWriter& reply) {
+    // Real hid protocol: CreateAppletResource -> new IAppletResource session.
+    // Its GetSharedMemoryHandle (cmd 0) hands out the shared KSharedMemory.
+    if (!ctx.handle_table) {
+        return static_cast<u32>(IpcResult::InvalidBuffer);
+    }
+    auto resource = std::make_shared<HidAppletResourceService>(this);
+    auto session = std::make_shared<KClientSession>();
+    session->SetService(std::move(resource));
+
+    const kernel::Handle handle = ctx.handle_table->CreateHandle(session);
+    if (handle == kernel::InvalidHandle) {
+        return static_cast<u32>(IpcResult::OutOfMemory);
+    }
+    reply.Begin(static_cast<u32>(IpcCommandType::Request), sizeof(u32));
+    reply.Payload<u32>(0, handle);
+    return static_cast<u32>(IpcResult::Success);
+}
+
+// Explicit constructor now that HidService is complete.
+HidAppletResourceService::HidAppletResourceService(HidService* owner)
+    : IIpcService("hid:IAppletResource"), owner_(owner) {}
+
+u32 HidAppletResourceService::HandleRequest(const IpcContext& ctx,
+                                            const IpcRequestReader& request,
+                                            IpcReplyWriter& reply, u32 x_id) {
+    (void)request;
+    switch (x_id) {
+        case GetSharedMemoryHandle:
+            if (owner_) {
+                return owner_->HandleGetSharedMemoryHandle(ctx, reply);
+            }
+            return static_cast<u32>(IpcResult::InvalidBuffer);
+        default:
+            NEMU_LOG_DEBUG("hid", "IAppletResource: Unhandled command 0x{:X}", x_id);
+            reply.Begin(static_cast<u32>(IpcCommandType::Request), 4);
+            reply.Payload<u32>(0, static_cast<u32>(IpcResult::Unimplemented));
             return static_cast<u32>(IpcResult::Unimplemented);
     }
 }

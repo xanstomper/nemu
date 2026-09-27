@@ -10,10 +10,39 @@ class VirtualMemory;
 
 namespace nemu::core::kernel::ipc {
 
+/// IAppletResource: the per-session object hid's CreateAppletResource returns.
+/// Real protocol: its GetSharedMemoryHandle (cmd 0) returns the shared memory
+/// handle the guest maps to read pad state. Delegates to the owning HidService
+/// so shared-memory materialisation stays in one place.
+/// Implementation (constructor + handlers) lives in hid_service.cpp.
+class HidService; // fwd
+
+class HidAppletResourceService final : public IIpcService {
+public:
+    explicit HidAppletResourceService(HidService* owner);
+
+    enum : u32 {
+        GetSharedMemoryHandle = 0x0,
+    };
+
+    u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
+                      IpcReplyWriter& reply, u32 x_id) override;
+
+private:
+    HidService* owner_;
+};
+
 /// hid: service. HLE for the Switch HID system service. It maps a shared-memory
 /// page into the guest and exposes module-scoped HLE update commands so the
 /// emulator frontend (or tests) can inject button / stick state that guest
 /// input code reads from the shared pad entries.
+///
+/// Real guest protocol (what libnx homebrew and retail games speak):
+///   hidInitialize (cmd 0)                      -> no data
+///   hidCreateAppletResource (cmd 0)            -> IAppletResource session handle
+///   [IAppletResource] GetSharedMemoryHandle(0) -> KSharedMemory handle
+/// The legacy direct GetSharedMemoryHandle (cmd 1) path is kept for the HLE
+/// bridge and older tests.
 class HidService final : public IIpcService {
 public:
     HidService();
@@ -21,10 +50,11 @@ public:
     /// Per-service command ids (subset of the real hid: CMIF).
     enum : u32 {
         Initialize = 0x0,
-        GetSharedMemoryHandle = 0x1,
-        SetButtonState = 0x20,   ///< HLE bridge: set held-button bitmask
-        SetStickState = 0x21,    ///< HLE bridge: set analog stick coords
-        UpdateTimestamp = 0x22,  ///< HLE bridge: advance the sampling timestamp
+        CreateAppletResource = 0x1,   // real protocol: first call after Initialize
+        GetSharedMemoryHandle = 0x2,  // legacy HLE bridge path
+        SetButtonState = 0x20,        ///< HLE bridge: set held-button bitmask
+        SetStickState = 0x21,         ///< HLE bridge: set analog stick coords
+        UpdateTimestamp = 0x22,       ///< HLE bridge: advance the sampling timestamp
     };
 
     u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
@@ -43,7 +73,12 @@ public:
     void UpdatePadState(memory::VirtualMemory& mem, u32 buttons, s16 lx, s16 ly, s16 rx, s16 ry);
 
 private:
+    u32 HandleCreateAppletResource(const IpcContext& ctx, IpcReplyWriter& reply);
+    // Public (below) so the IAppletResource session can delegate; kept near
+    // private helpers for clarity.
+public:
     u32 HandleGetSharedMemoryHandle(const IpcContext& ctx, IpcReplyWriter& reply);
+private:
     u32 HandleSetButtonState(const IpcContext& ctx, const IpcRequestReader& request,
                              IpcReplyWriter& reply);
     u32 HandleSetStickState(const IpcContext& ctx, const IpcRequestReader& request,
