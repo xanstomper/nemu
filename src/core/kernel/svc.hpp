@@ -79,6 +79,13 @@ private:
     static void SvcSignalEvent(cpu::CpuState& state, KProcess& process);
     static void SvcClearEvent(cpu::CpuState& state, KProcess& process);
 
+    // Handle duplication + processor/memory-info (commercial-game essentials)
+    static void SvcDuplicateHandle(cpu::CpuState& state, KProcess& process);
+    static void SvcGetCurrentProcessorNumber(cpu::CpuState& state);
+    static void SvcQueryProcessMemory(cpu::CpuState& state, KProcess& process);
+    static void SvcLockProcessMemory(cpu::CpuState& state, KProcess& process);
+    static void SvcUnlockProcessMemory(cpu::CpuState& state, KProcess& process);
+
     // Extended Horizon System & Timing SVCs
     static void SvcSetMemoryAttribute(cpu::CpuState& state);
     static void SvcMapMemory(cpu::CpuState& state);

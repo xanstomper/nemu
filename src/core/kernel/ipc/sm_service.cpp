@@ -69,11 +69,17 @@ public:
 static bool IsKnownStubService(std::string_view name) {
     static const std::unordered_set<std::string_view> stubs = {
         "aoc:u", "pctl", "pctl:a", "pctl:s", "bcat:u", "bcat:a", "bcat:m",
-        "prepo:u", "prepo:a", "caps:a", "caps:c", "caps:u", "caps:su", "caps:ss", "caps:sc",
+        "prepo:u", "prepo:a", "prepo:m", "caps:a", "caps:c", "caps:u", "caps:su", "caps:ss", "caps:sc",
         "bpc", "bpc:r", "bpc:c", "bpc:b", "bpc:w", "bpc:ams",
         "friend:u", "friend:v", "lbl", "apm", "apm:p", "apm:sys",
-        "arp:r", "spsm", "bsdcfg", "ssl", "news:u", "nfc:u", "nfc:user",
-        "ir:u", "ovln:rcv", "set:cal", "audio"
+        "arp:r", "spsm", "bsdcfg", "ssl", "ssl:u", "ssl:s", "news:u", "nfc:u", "nfc:user",
+        "ir:u", "ovln:rcv", "set:cal", "audio", "hwopus", "csrng", "sfdnsres",
+        "audin:u", "audin:a", "nvdrv:s", "nvdrv:t", "vi:s", "ro:1", "ro:dmnt", "lr",
+        "btdrv", "btsnoop", "wlan:l", "wlan:inf", "wlan:sg", "codecctl",
+        "tc", "fan", "ts", "pinmux", "gpio", "i2c", "i2c:pcv", "pcv",
+        "clkrst", "clkrst:i", "psc:m", "psc:c", "bus:m", "mig:u",
+        "notif:a", "notif:s", "ins", "jit:u", "account", "olsc:u",
+        "erpt:c", "erpt:r", "grc:c", "grc:d", "bsd:u", "bsd:s", "sdb", "eth:c", "eth:u"
     };
     return stubs.find(name) != stubs.end();
 }

@@ -106,12 +106,33 @@ std::optional<std::filesystem::path> VirtualFileSystem::ResolvePath(std::string_
     // Find mount delimiter ":/"
     const size_t delim_pos = virtual_path.find(":/");
     if (delim_pos == std::string_view::npos) {
+        // Direct host path fallback (e.g. "./path/to/game.nsp" or absolute "/path")
+        std::error_code ec;
+        std::filesystem::path p(virtual_path);
+        if (std::filesystem::exists(p, ec)) {
+            return std::filesystem::weakly_canonical(p, ec);
+        }
         NEMU_LOG_WARN("VFS", "ResolvePath failed: Missing ':/' delimiter in '{}'", virtual_path);
         return std::nullopt;
     }
 
     const std::string prefix = NormalizePrefix(virtual_path.substr(0, delim_pos + 2));
     auto it = mounts_.find(prefix);
+    if (it == mounts_.end()) {
+        // Check for Windows drive letter auto-mount (e.g. "D:/", "E:/")
+        if (prefix.size() == 3 && std::isalpha(static_cast<unsigned char>(prefix[0]))) {
+            std::error_code ec;
+            std::filesystem::path drive_root(prefix);
+            if (std::filesystem::exists(drive_root, ec)) {
+                const_cast<VirtualFileSystem*>(this)->mounts_[prefix] = MountPoint{
+                    .host_root = std::filesystem::weakly_canonical(drive_root, ec),
+                    .read_only = false
+                };
+                it = mounts_.find(prefix);
+                NEMU_LOG_INFO("VFS", "Auto-mounted drive '{}' -> '{}'", prefix, it->second.host_root.string());
+            }
+        }
+    }
     if (it == mounts_.end()) {
         NEMU_LOG_WARN("VFS", "ResolvePath failed: Unknown mount prefix in '{}'", virtual_path);
         return std::nullopt;

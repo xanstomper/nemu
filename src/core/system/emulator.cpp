@@ -45,6 +45,16 @@ bool Emulator::Initialize() {
     vfs_->Mount("save:/", save_p, false);
     vfs_->Mount("LOCAL:/", std::filesystem::path("."), false);
 
+#ifdef _WIN32
+    for (char drive = 'D'; drive <= 'G'; ++drive) {
+        std::string drive_str = std::string(1, drive) + ":/";
+        std::error_code ec;
+        if (std::filesystem::exists(drive_str, ec)) {
+            vfs_->Mount(drive_str, drive_str, false);
+        }
+    }
+#endif
+
     // 2. Configuration Manager
     config_manager_ = std::make_shared<config::ConfigManager>(*vfs_);
     config_manager_->Load();

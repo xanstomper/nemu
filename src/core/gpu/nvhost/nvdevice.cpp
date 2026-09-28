@@ -373,7 +373,10 @@ s32 NvDeviceManager::Open(std::string_view path) {
         file = std::make_shared<NvHostCtrlDevice>(syncpoints_);
     } else if (path == "/dev/nvhost-as-gpu") {
         file = std::make_shared<NvHostAsGpuDevice>(address_space_);
-    } else if (path == "/dev/nvhost-gpu" || path == "/dev/nvhost-ctrl-gpu") {
+    } else if (path == "/dev/nvhost-gpu" || path == "/dev/nvhost-ctrl-gpu" ||
+               path == "/dev/nvhost-nvdec" || path == "/dev/nvhost-vic" ||
+               path == "/dev/nvhost-nvjpg" || path == "/dev/nvhost-prof-gpu" ||
+               path == "/dev/nvhost-tsec" || path == "/dev/nvhost-tsecb") {
         file = std::make_shared<NvHostGpuDevice>(channel_, memory_);
     } else {
         NEMU_LOG_WARN("NvDeviceManager", "Open: unknown device '{}'", path);

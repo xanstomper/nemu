@@ -49,20 +49,25 @@ void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& t
         case 0x1C: SvcWaitProcessWideKeyAtomic(state, process); break;
         case 0x1E: SvcSignalProcessWideKey(state, process); break;
         case 0x1F: state.SetX(0, static_cast<u64>(Result::Success)); break; // svcSetThreadActivity
+        case 0x20: SvcDuplicateHandle(state, process); break;                 // svcDuplicateHandle
         case 0x21: SvcSendSyncRequest(state, process, thread); break;
         case 0x22: SvcSendSyncRequest(state, process, thread); break;
         case 0x25: SvcGetThreadId(state, thread); break;
         case 0x26: SvcBreak(state); break;
         case 0x27: SvcOutputDebugString(state, process); break;
+        case 0x28: SvcQueryProcessMemory(state, process); break;             // svcQueryProcessMemory
         case 0x29: SvcGetInfo(state, process); break;
         case 0x2B: SvcConnectToPort(state, process); break;
         case 0x2C: SvcGetProcessId(state, process); break;
         case 0x32: SvcSetThreadCoreMask(state); break;
+        case 0x33: SvcGetCurrentProcessorNumber(state); break;             // svcGetCurrentProcessorNumber
         case 0x34: SvcGetThreadCoreMask(state); break;
         case 0x35: state.SetX(0, static_cast<u64>(Result::Success)); break; // svcSignalToAddress
         case 0x45: SvcCreateEvent(state, process); break;
         case 0x46: SvcSignalEvent(state, process); break;
         case 0x47: SvcClearEvent(state, process); break;
+        case 0x4C: SvcLockProcessMemory(state, process); break;             // svcLockProcessMemory
+        case 0x4D: SvcUnlockProcessMemory(state, process); break;           // svcUnlockProcessMemory
         case 0x65: state.SetX(0, static_cast<u64>(Result::Success)); break; // svcSynchronizePreemptionState
         case 0x6F:
         case 0x7B: SvcGetSystemTick(state); break;
@@ -542,6 +547,79 @@ void SvcDispatcher::SvcClearEvent(cpu::CpuState& state, KProcess& process) {
     if (event) {
         event->Clear();
     }
+    state.SetX(0, static_cast<u64>(Result::Success));
+}
+
+void SvcDispatcher::SvcDuplicateHandle(cpu::CpuState& state, KProcess& process) {
+    // svcDuplicateHandle(out* handle_ptr, handle). Duplicating a handle into a
+    // different process is unsupported here (single-process HLE), so we return
+    // a copy of the same handle — games rely on this for passing handles to
+    // threads/events every frame.
+    const Handle h = static_cast<Handle>(state.GetX(1));
+    const vaddr_t out_ptr = state.GetX(0);
+    if (process.GetHandleTable().IsValid(h) &&
+        process.GetVirtualMemory().WriteBlock(out_ptr, &h, sizeof(h))) {
+        state.SetX(0, static_cast<u64>(Result::Success));
+    } else {
+        state.SetX(0, static_cast<u64>(Result::ResultInvalidHandle));
+    }
+}
+
+void SvcDispatcher::SvcGetCurrentProcessorNumber(cpu::CpuState& state) {
+    // svcGetCurrentProcessorNumber() -> core index. Real games use this for
+    // thread affinity; a valid core [0..3] keeps multi-threaded titles from
+    // spinning. Round-robin the 4 logical cores to spread guest threads.
+    static u32 s_core{0};
+    state.SetX(0, static_cast<u64>(Result::Success));
+    state.SetX(1, s_core++ % 4);
+}
+
+void SvcDispatcher::SvcQueryProcessMemory(cpu::CpuState& state, KProcess& process) {
+    // svcQueryProcessMemory(out* meminfo, process, *addr). Same MemoryInfo shape
+    // as svcQueryMemory, but queries another process. For single-process HLE we
+    // mirror svcQueryMemory on the given address.
+    const vaddr_t out_mem_info_ptr = state.GetX(0);
+    const Handle ph = static_cast<Handle>(state.GetX(2));
+    const vaddr_t query_addr = state.GetX(3);
+    (void)ph; // single-process HLE
+
+    struct MemoryInfo {
+        u64 base_address;
+        u64 size;
+        u32 type;
+        u32 attribute;
+        u32 permission;
+        u32 ipc_ref_count;
+        u32 device_ref_count;
+        u32 padding;
+    } mi{};
+    auto& vmem = process.GetVirtualMemory();
+    auto perm = vmem.GetPagePermissions(query_addr);
+    mi.base_address = query_addr & ~memory::VirtualMemory::PAGE_MASK;
+    mi.size = memory::VirtualMemory::PAGE_SIZE;
+    mi.type = perm.has_value() ? 3 : 0; // Normal / Unmapped
+    mi.permission = static_cast<u32>(perm.value_or(memory::MemoryPermission::None));
+    if (vmem.WriteBlock(out_mem_info_ptr, &mi, sizeof(mi))) {
+        state.SetX(0, static_cast<u64>(Result::Success));
+        state.SetX(1, 0);
+    } else {
+        state.SetX(0, static_cast<u64>(Result::InvalidAddress));
+    }
+}
+
+void SvcDispatcher::SvcLockProcessMemory(cpu::CpuState& state, KProcess& process) {
+    // svcLockProcessMemory(addr, size). Pins guest memory (prevents remap).
+    // HLE: virtual memory is already stable; validate the start page and succeed.
+    const vaddr_t addr = state.GetX(1);
+    if (process.GetVirtualMemory().GetPagePermissions(addr).has_value()) {
+        state.SetX(0, static_cast<u64>(Result::Success));
+    } else {
+        state.SetX(0, static_cast<u64>(Result::InvalidAddress));
+    }
+}
+
+void SvcDispatcher::SvcUnlockProcessMemory(cpu::CpuState& state, KProcess&) {
+    // svcUnlockProcessMemory(addr, size). HLE no-op.
     state.SetX(0, static_cast<u64>(Result::Success));
 }
 
