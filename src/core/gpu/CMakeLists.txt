@@ -35,6 +35,11 @@ set(GPU_SOURCES
     nvhost/nvhost_nvdec.cpp
     nvhost/h264.hpp
     nvhost/h264.cpp
+    nvhost/vp8.hpp
+    nvhost/vp8.cpp
+    nvhost/vp9_types.h
+    nvhost/vp9.hpp
+    nvhost/vp9.cpp
     nvhost/ffmpeg.hpp
     nvhost/ffmpeg.cpp
     presentation/buffer_queue.hpp
