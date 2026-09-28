@@ -36,6 +36,12 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::RORV: return "RORV";
         case Opcode::MADD: return "MADD";
         case Opcode::MSUB: return "MSUB";
+        case Opcode::SMULL: return "SMULL";
+        case Opcode::UMULL: return "UMULL";
+        case Opcode::UDIV: return "UDIV";
+        case Opcode::SDIV: return "SDIV";
+        case Opcode::SBFM: return "SBFM";
+        case Opcode::UBFM: return "UBFM";
         case Opcode::B: return "B";
         case Opcode::B_cond: return "B.cond";
         case Opcode::BL: return "BL";
@@ -313,6 +319,20 @@ DecodedInstruction Decoder::DecodeDataProcImm(u32 raw) noexcept {
         return inst;
     }
 
+    // Bitfield move: SBFM / UBFM — (raw & 0x1F800000) == 0x13000000
+    //   Group: sf(1) opc(2) 100110 N(1) immr(6) imms(6) Rn(5) Rd(5)
+    //   Ground truth: ubfx w1,w2,#4,#8 = 0x53042C41 (sf=0, opc=10, immr=4, imms=11)
+    //                 sbfx w1,w2,#4,#8 = 0x13042C41 (sf=0, opc=00, immr=4, imms=11)
+    if ((raw & 0x1F800000) == 0x13000000) {
+        const u32 opc = ExtractBits(raw, 29, 2);
+        if (opc == 0b00) inst.opcode = Opcode::SBFM;
+        else if (opc == 0b10) inst.opcode = Opcode::UBFM;
+        else return inst; // BFM (opc=01/11) unsupported; stays UNDEFINED
+        inst.shift_amount = static_cast<u8>(ExtractBits(raw, 16, 6)); // immr
+        inst.imm = ExtractBits(raw, 10, 6);                           // imms
+        return inst;
+    }
+
     return inst;
 }
 
@@ -375,6 +395,35 @@ DecodedInstruction Decoder::DecodeDataProcReg(u32 raw) noexcept {
         const bool is_sub = ExtractBit(raw, 15);
         inst.ra = static_cast<u8>(ExtractBits(raw, 10, 5));
         inst.opcode = is_sub ? Opcode::MSUB : Opcode::MADD;
+        return inst;
+    }
+
+    // SMULL / UMULL — 32-bit multiply-long (dest is 64-bit, sf=1):
+    //   MulLong group: (raw & 0x7F200000) == 0x1B200000, sf set separately;
+    //   U selector = bit 23 (0=SMULL, 1=UMULL), bit 21 is fixed 1.
+    //   Ground truth: smull x1,w2,w3 = 0x9B237C41 (mask->0x1B200000, bit23=0),
+    //                 umull x1,w2,w3 = 0x9BA37C41 (mask->0x1B200000, bit23=1).
+    if ((raw & 0x7F200000) == 0x1B200000 && ExtractBit(raw, 31)) {
+        inst.opcode = ExtractBit(raw, 23) ? Opcode::UMULL : Opcode::SMULL;
+        inst.is_64bit = true;
+        return inst;
+    }
+
+    // Divide + variable shift — dataproc 2-source:
+    //   (raw & 0x7FE00000) == 0x1AC00000; opcode = bits[15:10].
+    //   Ground truth: udiv w = 0x1AC30841 (000010), sdiv w = 0x1AC30C41 (000011),
+    //   lslv = 0x1AC32041 (001000), lsrv = 001001, asrv = 001010, rorv = 001011.
+    if ((raw & 0x7FE00000) == 0x1AC00000) {
+        const u32 op = ExtractBits(raw, 10, 6);
+        switch (op) {
+        case 0b000010: inst.opcode = Opcode::UDIV; break;
+        case 0b000011: inst.opcode = Opcode::SDIV; break;
+        case 0b001000: inst.opcode = Opcode::LSLV; break;
+        case 0b001001: inst.opcode = Opcode::LSRV; break;
+        case 0b001010: inst.opcode = Opcode::ASRV; break;
+        case 0b001011: inst.opcode = Opcode::RORV; break;
+        default: return inst; // unsupported 2-source (e.g. SDIV variants) stays UNDEFINED
+        }
         return inst;
     }
 
