@@ -100,15 +100,18 @@ pre-committing the whole image.
 
 | Order | Item | Effort | Payoff |
 |---|---|---|---|
-| 1 | ✅ Buffer dedup (done this session) | small | big (cut redundant uploads) |
-| 2 | ✅ BC1 alpha punch-through (done this session) | medium | big (correct alpha, no BC3 cost) |
-| 3 | Buffer overlap **merge** in FindCovering | small-medium | medium (fewer, bigger buffers) |
-| 4 | Big/small GMMU page split | medium | small-medium (bookkeeping/table). |
+| 1 | ✅ Buffer dedup (done) | small | big (cut redundant uploads) |
+| 2 | ✅ BC1 alpha punch-through (done) | medium | big (correct alpha, no BC3 cost) |
+| 3 | ✅ Texture byte-budget LRU (done) | small | **big — caps resident textures (the 5 GiB OOM defense)** |
+| 4 | ✅ Texture bytes feed 5 GiB governor (done) | small | visibility — Diagnostics shows true combined usage |
+| 5 | ✅ Budget tuned to 1.5 GiB textures (done) | small | keeps total ~4.5 GiB < 5 GiB cap |
+| 6 | Buffer overlap **merge** in FindCovering | small-medium | medium (covering-reuse already captures most) |
+| 7 | Big/small GMMU page split | medium | small-medium (already 64 KiB big-page sparse) |
 
-Items 3 and 4 remain. Item 3's covering-reuse (shipped in #1) already captures
-most of its memory win without the id-invalidating merge complexity — a merge
-would force child entry-id remaps that risk stale ids held by callers. Item 4
-matters most if profiling shows GPU page-table memory dominating.
+Items 6-7 remain but are lower-value than the shipped set: covering-reuse already
+delivers most of #6's win without stale-id risk, and the GMMU is already a sparse
+64 KiB big-page table. Item 7 matters only if profiling shows GPU page-table
+memory dominating — profile on-device first.
 
 On-device seatbelt: `scripts/xbox_bringup.sh` + the live
-`RAM Used / Peak (5 GiB cap)` Diagnostics row.
+`RAM Used / Peak (5 GiB cap)` Diagnostics row (now showing textures + guest RAM).

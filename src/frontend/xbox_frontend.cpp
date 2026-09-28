@@ -3011,19 +3011,25 @@ void XboxFrontend::DrawSwitchGameOptions(std::vector<core::gpu::RasterVertex>& o
 void XboxFrontend::DrawSwitchNso(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu) {
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.1765f, 0.1765f, 0.1765f, 1.0f});
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 80, UiColor{0.89f, 0.0f, 0.07f, 1.0f});
+    // Deep NEMULATOR background
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.11f, 0.115f, 0.125f, 1.0f});
+    // Cyan accent header bar (NEMULATOR Network branding)
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 80, UiColor{0.0f, 0.60f, 0.70f, 1.0f});
+    // Subtle separator line under header
+    UiGeometryBuilder::AddQuad(out, 0, 78, 1280, 2, UiColor{0.0f, 0.82f, 0.90f, 0.6f});
 
     std::string icon_path = FindAsset("ui/icon_nso.png");
     if (overlay && !icon_path.empty()) {
         gpu->UiImageOverlay("hdr_nso", icon_path, 60.0f, 18.0f, 44.0f, 44.0f);
-        gpu->UiTextOverlay("Nintendo Switch Online", 120.0f, 26.0f, 26.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("NEMULATOR Network & LAN Play", 120.0f, 22.0f, 24.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("XBOX UWP \u2022 LOCAL WIRELESS", 120.0f, 52.0f, 13.0f, 0.70f, 0.92f, 0.98f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "NINTENDO SWITCH ONLINE", 60.0f, 26.0f, 2.2f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "NEMULATOR NETWORK & LAN PLAY", 60.0f, 26.0f, 2.0f, UiColor::White());
     }
 
-    UiGeometryBuilder::AddQuad(out, 60.0f, 110.0f, 1160.0f, 80.0f, UiColor{0.22f, 0.22f, 0.22f, 1.0f});
-    UiGeometryBuilder::AddRectOutline(out, 60.0f, 110.0f, 1160.0f, 80.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+    // Player profile card
+    UiGeometryBuilder::AddQuad(out, 60.0f, 110.0f, 1160.0f, 80.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
+    UiGeometryBuilder::AddRectOutline(out, 60.0f, 110.0f, 1160.0f, 80.0f, 1.5f, UiColor{0.22f, 0.22f, 0.24f, 1.0f});
     // Real save-slot count from save:/ plus real local status (no online emulation claims)
     size_t state_count = 0;
     {
@@ -3036,10 +3042,10 @@ void XboxFrontend::DrawSwitchNso(std::vector<core::gpu::RasterVertex>& out, core
         }
     }
     if (overlay) {
-        gpu->UiTextOverlay("Local Player Profile", 90.0f, 125.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
-        gpu->UiTextOverlay("Offline mode - " + std::to_string(state_count) + " local saves/states in save:/ - cloud services not emulated", 90.0f, 155.0f, 15.0f, 0.20f, 0.85f, 0.40f, 1.0f, -1);
+        gpu->UiTextOverlay("NEMULATOR Local Player", 90.0f, 125.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("LAN Mode \u2022 " + std::to_string(state_count) + " local saves/states in save:/ \u2022 Xbox Full Trust", 90.0f, 155.0f, 15.0f, 0.0f, 0.82f, 0.90f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "Local Player Profile - Offline", 90.0f, 135.0f, 1.5f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "NEMULATOR Local Player - LAN Mode", 90.0f, 135.0f, 1.5f, UiColor::White());
     }
 
     // Real LAN multiplayer (LDN): lobby create / scan / join / leave
@@ -3050,26 +3056,26 @@ void XboxFrontend::DrawSwitchNso(std::vector<core::gpu::RasterVertex>& out, core
     if (selected_game_index_ < library_.size()) {
         host_title = "Host LAN Lobby for " + library_[selected_game_index_].title.substr(0, 34);
     }
-    cards_v.push_back({host_title, "Open a local-wireless lobby on this LAN (A)"});
-    cards_v.push_back({"Scan for Lobbies", "Discover Nemu lobbies on the local network (X)"});
+    cards_v.push_back({host_title, "Open a local-wireless lobby on this LAN  \xEE\x80\x80 (A)"});
+    cards_v.push_back({"Scan for Lobbies", "Discover NEMULATOR lobbies on the local network  \xEE\x80\x82 (X)"});
     if (!ldn_discovered_.empty()) {
         const auto& sd = ldn_discovered_[nso_lan_row_ % ldn_discovered_.size()];
         cards_v.push_back({"Join: " + std::string(sd.name),
-                           std::to_string(sd.player_count) + "/" + std::to_string(sd.max_players) + " players - (Y) to join"});
+                           std::to_string(sd.player_count) + "/" + std::to_string(sd.max_players) + " players  \xEE\x80\x83 (Y) to join"});
     }
     if (ldn_station_ && ldn_station_->GetState() != nemu::core::network::LdnStation::State::Initialized) {
-        cards_v.push_back({"Leave Lobby", "Close the access point / disconnect (LB)"});
+        cards_v.push_back({"Leave Lobby", "Close the access point / disconnect  \xEE\x80\x84 (LB)"});
     }
     cards_v.push_back({"Local Multiplayer", "Up to 4 connected Xbox controllers map to emulated Joy-Cons / Pro Controllers."});
 
     for (size_t c = 0; c < cards_v.size() && c < 3; ++c) {
         float cy = 215.0f + static_cast<float>(c) * 125.0f;
-        UiGeometryBuilder::AddQuad(out, 60.0f, cy, 1160.0f, 105.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
-        UiGeometryBuilder::AddRectOutline(out, 60.0f, cy, 1160.0f, 105.0f, 1.5f, UiColor{0.26f, 0.26f, 0.26f, 1.0f});
+        UiGeometryBuilder::AddQuad(out, 60.0f, cy, 1160.0f, 105.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
+        UiGeometryBuilder::AddRectOutline(out, 60.0f, cy, 1160.0f, 105.0f, 1.5f, UiColor{0.20f, 0.21f, 0.23f, 1.0f});
 
         if (overlay) {
             gpu->UiTextOverlay(cards_v[c].title, 90.0f, cy + 20.0f, 20.0f, 0.0f, 0.82f, 0.90f, 1.0f, -1);
-            gpu->UiTextOverlay(cards_v[c].sub, 90.0f, cy + 55.0f, 15.0f, 0.80f, 0.82f, 0.86f, 1.0f, -1);
+            gpu->UiTextOverlay(cards_v[c].sub, 90.0f, cy + 55.0f, 15.0f, 0.70f, 0.72f, 0.76f, 1.0f, -1);
         } else {
             UiGeometryBuilder::AddText(out, cards_v[c].title, 90.0f, cy + 20.0f, 1.6f, UiColor::EdenCyan());
         }
@@ -3078,24 +3084,24 @@ void XboxFrontend::DrawSwitchNso(std::vector<core::gpu::RasterVertex>& out, core
     // Live LAN status panel (bottom-left)
     if (overlay && !lan_status.empty()) {
         float sy = 540.0f;
-        gpu->UiFillRectOverlay(60.0f, sy, 640.0f, 100.0f, 0.1765f, 0.1765f, 0.1765f, 1.0f);
+        gpu->UiFillRectOverlay(60.0f, sy, 640.0f, 100.0f, 0.11f, 0.115f, 0.125f, 1.0f);
         for (size_t i = 0; i < lan_status.size() && i < 3; ++i) {
             gpu->UiTextOverlay(lan_status[i], 70.0f, sy + 8.0f + static_cast<float>(i) * 30.0f, 15.0f,
-                               0.30f, 0.90f, 0.95f, 1.0f, -1);
+                               0.0f, 0.82f, 0.90f, 1.0f, -1);
         }
     }
 
-    UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.20f, 0.21f, 0.23f, 1.0f});
 
     std::string btn_a = FindAsset("ui/btn_a.png");
     std::string btn_b = FindAsset("ui/btn_b.png");
     if (overlay && !btn_a.empty() && !btn_b.empty()) {
         gpu->UiImageOverlay("btn_b_nso", btn_b, 970.0f, 674.0f, 24.0f, 24.0f);
-        gpu->UiTextOverlay("Back to HOME", 1002.0f, 678.0f, 17.0f, 0.95f, 0.95f, 0.95f, 1.0f, -1);
+        gpu->UiTextOverlay("Back to NEMULATOR", 1002.0f, 678.0f, 17.0f, 0.90f, 0.90f, 0.92f, 1.0f, -1);
         gpu->UiImageOverlay("btn_a_nso", btn_a, 1140.0f, 674.0f, 24.0f, 24.0f);
-        gpu->UiTextOverlay("Sync Saves", 1172.0f, 678.0f, 17.0f, 0.95f, 0.95f, 0.95f, 1.0f, -1);
+        gpu->UiTextOverlay("Sync Saves", 1172.0f, 678.0f, 17.0f, 0.90f, 0.90f, 0.92f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "(B) Back to HOME   (A) Sync Cloud Saves", 900.0f, 678.0f, 1.4f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "(B) Back to NEMULATOR   (A) Sync Saves", 900.0f, 678.0f, 1.4f, UiColor::White());
     }
 }
 
