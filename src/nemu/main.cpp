@@ -41,10 +41,12 @@ static core::hid::XboxGamepadState PollSdlKeyboard() {
     out.dpad_right = k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D];
     out.a          = k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_J];
     out.b          = k[SDL_SCANCODE_ESCAPE] || k[SDL_SCANCODE_K];
-    out.x          = k[SDL_SCANCODE_I];
-    out.y          = k[SDL_SCANCODE_U];
-    out.start      = k[SDL_SCANCODE_RETURN] && k[SDL_SCANCODE_LCTRL];
-    out.back       = k[SDL_SCANCODE_BACKSPACE];
+    out.x          = k[SDL_SCANCODE_X]     || k[SDL_SCANCODE_I];
+    out.y          = k[SDL_SCANCODE_Y]     || k[SDL_SCANCODE_U];
+    out.lb         = k[SDL_SCANCODE_Q]     || k[SDL_SCANCODE_1];
+    out.rb         = k[SDL_SCANCODE_E]     || k[SDL_SCANCODE_2];
+    out.start      = (k[SDL_SCANCODE_RETURN] && k[SDL_SCANCODE_LCTRL]) || k[SDL_SCANCODE_P];
+    out.back       = k[SDL_SCANCODE_BACKSPACE] || k[SDL_SCANCODE_TAB] || k[SDL_SCANCODE_GRAVE];
     return out;
 }
 #endif
@@ -222,6 +224,8 @@ static int MainInternal(int argc, char** argv) {
             input_state.b          = input_state.b          || kb.b;
             input_state.x          = input_state.x          || kb.x;
             input_state.y          = input_state.y          || kb.y;
+            input_state.lb         = input_state.lb         || kb.lb;
+            input_state.rb         = input_state.rb         || kb.rb;
             input_state.start      = input_state.start      || kb.start;
             input_state.back       = input_state.back       || kb.back;
         }
@@ -322,6 +326,8 @@ static int MainInternal(int argc, char** argv) {
                         in_game_input.b          = in_game_input.b          || kb.b;
                         in_game_input.x          = in_game_input.x          || kb.x;
                         in_game_input.y          = in_game_input.y          || kb.y;
+                        in_game_input.lb         = in_game_input.lb         || kb.lb;
+                        in_game_input.rb         = in_game_input.rb         || kb.rb;
                         in_game_input.start      = in_game_input.start      || kb.start;
                         in_game_input.back       = in_game_input.back       || kb.back;
                     }
