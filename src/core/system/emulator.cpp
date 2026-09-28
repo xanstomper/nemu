@@ -456,10 +456,14 @@ void Emulator::PollInput() {
                 if (state->b) btn_mask |= (1u << 1);
                 if (state->x) btn_mask |= (1u << 2);
                 if (state->y) btn_mask |= (1u << 3);
+                if (state->lsb) btn_mask |= (1u << 4);
+                if (state->rsb) btn_mask |= (1u << 5);
                 if (state->lb) btn_mask |= (1u << 6);
                 if (state->rb) btn_mask |= (1u << 7);
-                if (state->start) btn_mask |= (1u << 9);
-                if (state->back) btn_mask |= (1u << 8);
+                if (state->trigger_l >= 0.5f) btn_mask |= (1u << 8);
+                if (state->trigger_r >= 0.5f) btn_mask |= (1u << 9);
+                if (state->start) btn_mask |= (1u << 10);
+                if (state->back) btn_mask |= (1u << 11);
                 if (state->dpad_left) btn_mask |= (1u << 12);
                 if (state->dpad_up) btn_mask |= (1u << 13);
                 if (state->dpad_right) btn_mask |= (1u << 14);

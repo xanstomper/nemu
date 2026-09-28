@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build-win"
 STAGING_DIR="${BUILD_DIR}/package_staging"
-OUTPUT_APPX="${BUILD_DIR}/Nemu_1.0.0.0_x64.appx"
+OUTPUT_APPX="${BUILD_DIR}/Nemulator_1.0.0.0_x64.appx"
 
 echo "=========================================================="
 echo "  NEMU: Xbox Series S/X Developer Mode Packaging Pipeline "
@@ -49,14 +49,14 @@ echo "[3/4] Building specification-compliant AppX package container (with BlockM
 python3 "${ROOT_DIR}/scripts/make_appx.py" "${STAGING_DIR}" "${OUTPUT_APPX}"
 
 # Copy certificate next to appx for Xbox Device Portal installation
-cp "${OUTPUT_APPX}" "${BUILD_DIR}/Nemulator_1.0.0.0_x64.appx"
+cp "${OUTPUT_APPX}" "${BUILD_DIR}/Nemu_1.0.0.0_x64.appx"
 cp "${ROOT_DIR}/packaging/xbox/NemuDev.cer" "${BUILD_DIR}/NemuDev.cer"
 cp "${ROOT_DIR}/packaging/xbox/NemuDev.pfx" "${BUILD_DIR}/NemuDev.pfx"
 
 # Also populate release directory
 mkdir -p "${ROOT_DIR}/packaging/xbox/release"
 cp "${OUTPUT_APPX}" "${ROOT_DIR}/packaging/xbox/release/"
-cp "${OUTPUT_APPX}" "${ROOT_DIR}/packaging/xbox/release/Nemulator_1.0.0.0_x64.appx"
+cp "${OUTPUT_APPX}" "${ROOT_DIR}/packaging/xbox/release/Nemu_1.0.0.0_x64.appx"
 cp "${ROOT_DIR}/packaging/xbox/NemuDev.cer" "${ROOT_DIR}/packaging/xbox/release/"
 cp "${ROOT_DIR}/packaging/xbox/NemuDev.pfx" "${ROOT_DIR}/packaging/xbox/release/"
 
@@ -75,7 +75,7 @@ echo "  APPX PACKAGE & CERTIFICATE GENERATED SUCCESSFULLY!     "
 echo "=========================================================="
 echo "  Deployment Option A (Standard Signed AppX):             "
 echo "  1. Open Xbox Device Portal (https://<xbox-ip>:11443)    "
-echo "  2. Under 'Install app', choose 'Nemu_1.0.0.0_x64.appx'  "
+echo "  2. Under 'Install app', choose 'Nemulator_1.0.0.0_x64.appx'  "
 echo "  3. Click Next, select certificate 'NemuDev.cer'         "
 echo "  4. Click Start / Deploy                                 "
 echo "                                                          "

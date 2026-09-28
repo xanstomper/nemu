@@ -33,6 +33,10 @@ void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& t
         case 0x09: SvcStartThread(state, process); break;
         case 0x0A: SvcExitThread(state, thread); break;
         case 0x0B: SvcSleepThread(state); break;
+        case 0x0C: state.SetX(0, static_cast<u64>(Result::Success)); state.SetX(1, 44); break; // svcGetThreadPriority
+        case 0x0D: state.SetX(0, static_cast<u64>(Result::Success)); break; // svcSetThreadPriority
+        case 0x0E: SvcGetThreadCoreMask(state); break;
+        case 0x0F: SvcSetThreadCoreMask(state); break;
         case 0x13: SvcCreateSharedMemory(state, process); break;
         case 0x14: SvcMapSharedMemory(state, process); break;
         case 0x15: SvcUnmapSharedMemory(state, process); break;
@@ -44,6 +48,7 @@ void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& t
         case 0x1B: SvcArbitrateUnlock(state, process); break;
         case 0x1C: SvcWaitProcessWideKeyAtomic(state, process); break;
         case 0x1E: SvcSignalProcessWideKey(state, process); break;
+        case 0x1F: state.SetX(0, static_cast<u64>(Result::Success)); break; // svcSetThreadActivity
         case 0x21: SvcSendSyncRequest(state, process, thread); break;
         case 0x22: SvcSendSyncRequest(state, process, thread); break;
         case 0x25: SvcGetThreadId(state, thread); break;
@@ -54,9 +59,11 @@ void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& t
         case 0x2C: SvcGetProcessId(state, process); break;
         case 0x32: SvcSetThreadCoreMask(state); break;
         case 0x34: SvcGetThreadCoreMask(state); break;
+        case 0x35: state.SetX(0, static_cast<u64>(Result::Success)); break; // svcSignalToAddress
         case 0x45: SvcCreateEvent(state, process); break;
         case 0x46: SvcSignalEvent(state, process); break;
         case 0x47: SvcClearEvent(state, process); break;
+        case 0x65: state.SetX(0, static_cast<u64>(Result::Success)); break; // svcSynchronizePreemptionState
         case 0x6F:
         case 0x7B: SvcGetSystemTick(state); break;
 

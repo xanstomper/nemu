@@ -27,7 +27,7 @@ XboxControllerDriver::~XboxControllerDriver() {
 
 bool XboxControllerDriver::InitializeXInput() {
 #ifdef _WIN32
-    const char* dlls[] = { "xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll" };
+    const char* dlls[] = { "xinput1_4.dll", "xinputuap.dll", "xinput1_3.dll", "xinput9_1_0.dll" };
     for (const char* dll : dlls) {
         HMODULE mod = LoadLibraryA(dll);
         if (mod) {
