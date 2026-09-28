@@ -4580,6 +4580,9 @@ void XboxFrontend::DrawSwitchGridView(std::vector<core::gpu::RasterVertex>& out,
 
     // Background
     UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.13f, 0.135f, 0.145f, 1.0f});
+    if (overlay) {
+        gpu->UiFillRectOverlay(0, 0, 1280, 720, 0.13f, 0.135f, 0.145f, 1.0f);
+    }
 
     // Top Chrome
     DrawSwitchHomeChrome(out, gpu, false);
@@ -4619,10 +4622,29 @@ void XboxFrontend::DrawSwitchGridView(std::vector<core::gpu::RasterVertex>& out,
             UiGeometryBuilder::AddQuad(out, x, y, card_w, card_h, UiColor{0.18f, 0.185f, 0.20f, 1.0f});
             UiGeometryBuilder::AddRectOutline(out, x, y, card_w, card_h, 1.0f, UiColor{0.25f, 0.25f, 0.28f, 1.0f});
         }
+        if (overlay) {
+            if (is_sel) {
+                gpu->UiFillRectOverlay(x - 4.0f, y - 4.0f, card_w + 8.0f, card_h + 8.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+                gpu->UiFillRectOverlay(x, y, card_w, card_h, 0.22f, 0.225f, 0.25f, 1.0f);
+            } else {
+                gpu->UiFillRectOverlay(x, y, card_w, card_h, 0.18f, 0.185f, 0.20f, 1.0f);
+                gpu->UiRectOutlineOverlay(x, y, card_w, card_h, 1.0f, 0.25f, 0.25f, 0.28f, 1.0f);
+            }
+        }
 
         // Cover art if available
-        if (overlay && !entry.cover_host_path.empty()) {
-            gpu->UiImageOverlay("grid_cov_" + std::to_string(idx), entry.cover_host_path, x, y, card_w, card_h - 40.0f);
+        if (overlay) {
+            if (!entry.cover_host_path.empty()) {
+                gpu->UiImageOverlay("grid_cov_" + std::to_string(idx), entry.cover_host_path, x, y, card_w, card_h - 40.0f);
+            } else {
+                float icon_sz = 90.0f;
+                float icon_x = x + (card_w - icon_sz) * 0.5f;
+                float icon_y = y + 35.0f;
+                gpu->UiFillRectOverlay(icon_x, icon_y, icon_sz, icon_sz, 0.12f, 0.45f, 0.55f, 0.85f);
+                gpu->UiRectOutlineOverlay(icon_x, icon_y, icon_sz, icon_sz, 1.5f, 0.0f, 0.85f, 0.95f, 0.9f);
+                gpu->UiTextOverlay(entry.title.empty() ? "N" : std::string(1, entry.title[0]),
+                                   icon_x + icon_sz * 0.5f, icon_y + icon_sz * 0.22f, 44.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
+            }
         } else {
             // Icon placeholder
             UiGeometryBuilder::AddQuad(out, x + card_w / 2.0f - 35.0f, y + 45.0f, 70.0f, 70.0f, UiColor{0.10f, 0.82f, 0.90f, 0.35f});
@@ -4632,6 +4654,7 @@ void XboxFrontend::DrawSwitchGridView(std::vector<core::gpu::RasterVertex>& out,
         // Title banner at bottom of card
         UiGeometryBuilder::AddQuad(out, x, y + card_h - 46.0f, card_w, 46.0f, UiColor{0.10f, 0.105f, 0.12f, 0.95f});
         if (overlay) {
+            gpu->UiFillRectOverlay(x, y + card_h - 46.0f, card_w, 46.0f, 0.10f, 0.105f, 0.12f, 0.95f);
             gpu->UiTextOverlay(entry.title, x + 10.0f, y + card_h - 40.0f, 15.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
             gpu->UiTextOverlay(entry.playtime_str.empty() ? entry.format_badge : entry.playtime_str, x + 10.0f, y + card_h - 18.0f, 12.0f, 0.0f, 0.85f, 0.95f, 1.0f, -1);
         } else {
@@ -4642,6 +4665,7 @@ void XboxFrontend::DrawSwitchGridView(std::vector<core::gpu::RasterVertex>& out,
         // Format badge in top-right
         UiGeometryBuilder::AddQuad(out, x + card_w - 56.0f, y + 8.0f, 48.0f, 20.0f, UiColor{0.08f, 0.085f, 0.10f, 0.85f});
         if (overlay) {
+            gpu->UiFillRectOverlay(x + card_w - 56.0f, y + 8.0f, 48.0f, 20.0f, 0.08f, 0.085f, 0.10f, 0.85f);
             gpu->UiTextOverlay(entry.format_badge, x + card_w - 52.0f, y + 11.0f, 11.0f, 0.10f, 0.85f, 0.45f, 1.0f, -1);
         }
     }
@@ -4665,6 +4689,9 @@ void XboxFrontend::DrawSwitchListView(std::vector<core::gpu::RasterVertex>& out,
 
     // Background
     UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.13f, 0.135f, 0.145f, 1.0f});
+    if (overlay) {
+        gpu->UiFillRectOverlay(0, 0, 1280, 720, 0.13f, 0.135f, 0.145f, 1.0f);
+    }
 
     // Top Chrome
     DrawSwitchHomeChrome(out, gpu, false);
@@ -4680,6 +4707,8 @@ void XboxFrontend::DrawSwitchListView(std::vector<core::gpu::RasterVertex>& out,
     UiGeometryBuilder::AddQuad(out, 50.0f, 131.0f, 1180.0f, 1.0f, UiColor{0.28f, 0.28f, 0.32f, 1.0f});
 
     if (overlay) {
+        gpu->UiFillRectOverlay(50.0f, 104.0f, 1180.0f, 28.0f, 0.18f, 0.185f, 0.20f, 1.0f);
+        gpu->UiFillRectOverlay(50.0f, 131.0f, 1180.0f, 1.0f, 0.28f, 0.28f, 0.32f, 1.0f);
         gpu->UiTextOverlay("#", 65.0f, 110.0f, 13.0f, 0.7f, 0.7f, 0.75f, 1.0f, -1);
         gpu->UiTextOverlay("Title Name", 110.0f, 110.0f, 13.0f, 0.7f, 0.7f, 0.75f, 1.0f, -1);
         gpu->UiTextOverlay("Title ID", 530.0f, 110.0f, 13.0f, 0.7f, 0.7f, 0.75f, 1.0f, -1);
@@ -4724,6 +4753,14 @@ void XboxFrontend::DrawSwitchListView(std::vector<core::gpu::RasterVertex>& out,
         }
 
         if (overlay) {
+            if (is_sel) {
+                gpu->UiFillRectOverlay(50.0f, ry, 1180.0f, 48.0f, 0.23f, 0.26f, 0.33f, 1.0f);
+                gpu->UiFillRectOverlay(50.0f, ry, 4.0f, 48.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+                gpu->UiRectOutlineOverlay(50.0f, ry, 1180.0f, 48.0f, 1.5f, 0.0f, 0.85f, 0.95f, 1.0f);
+            } else {
+                gpu->UiFillRectOverlay(50.0f, ry, 1180.0f, 48.0f, (r % 2 == 0) ? 0.16f : 0.145f, (r % 2 == 0) ? 0.165f : 0.15f, (r % 2 == 0) ? 0.18f : 0.165f, 1.0f);
+                gpu->UiRectOutlineOverlay(50.0f, ry, 1180.0f, 48.0f, 0.5f, 0.22f, 0.22f, 0.25f, 1.0f);
+            }
             gpu->UiTextOverlay(num_buf, 65.0f, ry + 15.0f, 14.0f, is_sel ? 1.0f : 0.6f, is_sel ? 1.0f : 0.6f, is_sel ? 1.0f : 0.65f, 1.0f, -1);
             gpu->UiTextOverlay(entry.title, 110.0f, ry + 15.0f, 15.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
             gpu->UiTextOverlay(tid_buf, 530.0f, ry + 15.0f, 13.5f, 0.65f, 0.70f, 0.75f, 1.0f, -1);
@@ -5422,7 +5459,7 @@ void XboxFrontend::DrawPerGameProperties(std::vector<core::gpu::RasterVertex>& o
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
     // Modal backdrop
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.0f, 0.0f, 0.0f, 0.82f});
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.0f, 0.0f, 0.0f, 0.85f});
 
     // Dialog box
     constexpr float dx = 180.0f, dy = 70.0f, dw = 920.0f, dh = 580.0f;
@@ -5436,6 +5473,11 @@ void XboxFrontend::DrawPerGameProperties(std::vector<core::gpu::RasterVertex>& o
     const auto& game = (selected_game_index_ < library_.size()) ? library_[selected_game_index_] : GameEntry{};
 
     if (overlay) {
+        gpu->UiFillRectOverlay(0, 0, 1280, 720, 0.0f, 0.0f, 0.0f, 0.88f);
+        gpu->UiFillRectOverlay(dx, dy, dw, dh, 0.13f, 0.135f, 0.155f, 1.0f);
+        gpu->UiRectOutlineOverlay(dx, dy, dw, dh, 2.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+        gpu->UiFillRectOverlay(dx, dy, dw, 52.0f, 0.18f, 0.19f, 0.22f, 1.0f);
+        gpu->UiFillRectOverlay(dx, dy + 50.0f, dw, 2.0f, 0.0f, 0.85f, 0.95f, 1.0f);
         gpu->UiTextOverlay("EDEN SOFTWARE PROPERTIES — " + (game.title.empty() ? "Game Properties" : game.title),
                            dx + 25.0f, dy + 16.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
         gpu->UiTextOverlay("[LB/RB] Switch Tabs  •  [B] Close", dx + dw - 25.0f, dy + 18.0f, 13.0f, 0.0f, 0.85f, 0.95f, 1.0f, 1);
@@ -5457,6 +5499,12 @@ void XboxFrontend::DrawPerGameProperties(std::vector<core::gpu::RasterVertex>& o
             UiGeometryBuilder::AddQuad(out, tx, ty, tab_w - 6.0f, 32.0f, UiColor{0.15f, 0.155f, 0.17f, 1.0f});
         }
         if (overlay) {
+            if (is_act) {
+                gpu->UiFillRectOverlay(tx, ty, tab_w - 6.0f, 32.0f, 0.22f, 0.24f, 0.30f, 1.0f);
+                gpu->UiFillRectOverlay(tx, ty + 30.0f, tab_w - 6.0f, 2.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+            } else {
+                gpu->UiFillRectOverlay(tx, ty, tab_w - 6.0f, 32.0f, 0.15f, 0.155f, 0.17f, 1.0f);
+            }
             gpu->UiTextOverlay(tabs[t], tx + (tab_w - 6.0f) * 0.5f, ty + 8.0f, 13.0f, is_act ? 1.0f : 0.70f, is_act ? 1.0f : 0.70f, is_act ? 1.0f : 0.72f, 1.0f, 0);
         } else {
             UiGeometryBuilder::AddText(out, tabs[t], tx + 10.0f, ty + 8.0f, 1.1f, is_act ? UiColor::EdenCyan() : UiColor::TextDim());
@@ -5468,11 +5516,22 @@ void XboxFrontend::DrawPerGameProperties(std::vector<core::gpu::RasterVertex>& o
     float ch = dh - 160.0f;
     UiGeometryBuilder::AddQuad(out, dx + 20.0f, cy, dw - 40.0f, ch, UiColor{0.11f, 0.115f, 0.13f, 1.0f});
     UiGeometryBuilder::AddRectOutline(out, dx + 20.0f, cy, dw - 40.0f, ch, 1.0f, UiColor{0.24f, 0.25f, 0.28f, 1.0f});
+    if (overlay) {
+        gpu->UiFillRectOverlay(dx + 20.0f, cy, dw - 40.0f, ch, 0.11f, 0.115f, 0.13f, 1.0f);
+        gpu->UiRectOutlineOverlay(dx + 20.0f, cy, dw - 40.0f, ch, 1.0f, 0.24f, 0.25f, 0.28f, 1.0f);
+    }
 
     if (per_game_tab_ == 0) { // Info Tab
         float pic_x = dx + 45.0f, pic_y = cy + 25.0f, pic_sz = 140.0f;
-        if (overlay && !game.cover_host_path.empty()) {
-            gpu->UiImageOverlay("prop_cover", game.cover_host_path, pic_x, pic_y, pic_sz, pic_sz);
+        if (overlay) {
+            if (!game.cover_host_path.empty()) {
+                gpu->UiImageOverlay("prop_cover", game.cover_host_path, pic_x, pic_y, pic_sz, pic_sz);
+            } else {
+                gpu->UiFillRectOverlay(pic_x, pic_y, pic_sz, pic_sz, 0.22f, 0.23f, 0.26f, 1.0f);
+                gpu->UiRectOutlineOverlay(pic_x, pic_y, pic_sz, pic_sz, 1.5f, 0.0f, 0.85f, 0.95f, 1.0f);
+                gpu->UiTextOverlay(game.title.empty() ? "N" : std::string(1, game.title[0]),
+                                   pic_x + pic_sz * 0.5f, pic_y + pic_sz * 0.28f, 52.0f, 1.0f, 1.0f, 1.0f, 0.85f, 0);
+            }
         } else {
             UiGeometryBuilder::AddQuad(out, pic_x, pic_y, pic_sz, pic_sz, UiColor{0.22f, 0.23f, 0.26f, 1.0f});
             UiGeometryBuilder::AddRectOutline(out, pic_x, pic_y, pic_sz, pic_sz, 1.5f, UiColor{0.0f, 0.85f, 0.95f, 1.0f});
@@ -5527,6 +5586,14 @@ void XboxFrontend::DrawPerGameProperties(std::vector<core::gpu::RasterVertex>& o
             UiGeometryBuilder::AddRectOutline(out, dx + 50.0f, ay + 12.0f, 24.0f, 24.0f, 1.0f, UiColor::White());
 
             if (overlay) {
+                if (is_sel) {
+                    gpu->UiFillRectOverlay(dx + 35.0f, ay, dw - 70.0f, 48.0f, 0.20f, 0.23f, 0.28f, 1.0f);
+                    gpu->UiRectOutlineOverlay(dx + 35.0f, ay, dw - 70.0f, 48.0f, 1.5f, 0.0f, 0.85f, 0.95f, 1.0f);
+                } else {
+                    gpu->UiFillRectOverlay(dx + 35.0f, ay, dw - 70.0f, 48.0f, 0.14f, 0.145f, 0.16f, 1.0f);
+                }
+                gpu->UiFillRectOverlay(dx + 50.0f, ay + 12.0f, 24.0f, 24.0f, addons[i].enabled ? 0.0f : 0.20f, addons[i].enabled ? 0.85f : 0.20f, addons[i].enabled ? 0.95f : 0.24f, 1.0f);
+                gpu->UiRectOutlineOverlay(dx + 50.0f, ay + 12.0f, 24.0f, 24.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
                 gpu->UiTextOverlay(addons[i].enabled ? "[X]" : "[ ]", dx + 62.0f, ay + 16.0f, 13.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
                 gpu->UiTextOverlay(addons[i].name, dx + 90.0f, ay + 15.0f, 15.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
                 gpu->UiTextOverlay(addons[i].type + "  •  TID: " + addons[i].tid, dx + dw - 50.0f, ay + 16.0f, 13.0f, 0.10f, 0.85f, 0.45f, 1.0f, 1);
@@ -5554,6 +5621,14 @@ void XboxFrontend::DrawPerGameProperties(std::vector<core::gpu::RasterVertex>& o
             UiGeometryBuilder::AddQuad(out, dx + 50.0f, ay + 11.0f, 24.0f, 24.0f, cheats[i].enabled ? UiColor{0.10f, 0.85f, 0.45f, 1.0f} : UiColor{0.20f, 0.20f, 0.24f, 1.0f});
             UiGeometryBuilder::AddRectOutline(out, dx + 50.0f, ay + 11.0f, 24.0f, 24.0f, 1.0f, UiColor::White());
             if (overlay) {
+                if (is_sel) {
+                    gpu->UiFillRectOverlay(dx + 35.0f, ay, dw - 70.0f, 46.0f, 0.20f, 0.23f, 0.28f, 1.0f);
+                    gpu->UiRectOutlineOverlay(dx + 35.0f, ay, dw - 70.0f, 46.0f, 1.5f, 0.0f, 0.85f, 0.95f, 1.0f);
+                } else {
+                    gpu->UiFillRectOverlay(dx + 35.0f, ay, dw - 70.0f, 46.0f, 0.14f, 0.145f, 0.16f, 1.0f);
+                }
+                gpu->UiFillRectOverlay(dx + 50.0f, ay + 11.0f, 24.0f, 24.0f, cheats[i].enabled ? 0.10f : 0.20f, cheats[i].enabled ? 0.85f : 0.20f, cheats[i].enabled ? 0.45f : 0.24f, 1.0f);
+                gpu->UiRectOutlineOverlay(dx + 50.0f, ay + 11.0f, 24.0f, 24.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
                 gpu->UiTextOverlay(cheats[i].name, dx + 90.0f, ay + 8.0f, 14.5f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
                 gpu->UiTextOverlay(cheats[i].desc, dx + 90.0f, ay + 26.0f, 12.0f, 0.65f, 0.65f, 0.70f, 1.0f, -1);
                 gpu->UiTextOverlay(cheats[i].enabled ? "ACTIVE" : "OFF", dx + dw - 50.0f, ay + 15.0f, 13.0f, cheats[i].enabled ? 0.10f : 0.60f, cheats[i].enabled ? 0.85f : 0.60f, cheats[i].enabled ? 0.45f : 0.65f, 1.0f, 1);
@@ -5579,6 +5654,12 @@ void XboxFrontend::DrawPerGameProperties(std::vector<core::gpu::RasterVertex>& o
                 UiGeometryBuilder::AddQuad(out, dx + 35.0f, ay, dw - 70.0f, 46.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
             }
             if (overlay) {
+                if (is_sel) {
+                    gpu->UiFillRectOverlay(dx + 35.0f, ay, dw - 70.0f, 46.0f, 0.20f, 0.23f, 0.28f, 1.0f);
+                    gpu->UiRectOutlineOverlay(dx + 35.0f, ay, dw - 70.0f, 46.0f, 1.5f, 0.0f, 0.85f, 0.95f, 1.0f);
+                } else {
+                    gpu->UiFillRectOverlay(dx + 35.0f, ay, dw - 70.0f, 46.0f, 0.14f, 0.145f, 0.16f, 1.0f);
+                }
                 gpu->UiTextOverlay(gfx[i].title, dx + 50.0f, ay + 8.0f, 14.5f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
                 gpu->UiTextOverlay(gfx[i].desc, dx + 50.0f, ay + 26.0f, 12.0f, 0.65f, 0.65f, 0.70f, 1.0f, -1);
                 gpu->UiTextOverlay(gfx[i].value, dx + dw - 50.0f, ay + 15.0f, 13.5f, 0.0f, 0.85f, 0.95f, 1.0f, 1);
@@ -5603,6 +5684,12 @@ void XboxFrontend::DrawPerGameProperties(std::vector<core::gpu::RasterVertex>& o
                 UiGeometryBuilder::AddQuad(out, dx + 35.0f, ay, dw - 70.0f, 48.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
             }
             if (overlay) {
+                if (is_sel) {
+                    gpu->UiFillRectOverlay(dx + 35.0f, ay, dw - 70.0f, 48.0f, 0.20f, 0.23f, 0.28f, 1.0f);
+                    gpu->UiRectOutlineOverlay(dx + 35.0f, ay, dw - 70.0f, 48.0f, 1.5f, 0.0f, 0.85f, 0.95f, 1.0f);
+                } else {
+                    gpu->UiFillRectOverlay(dx + 35.0f, ay, dw - 70.0f, 48.0f, 0.14f, 0.145f, 0.16f, 1.0f);
+                }
                 gpu->UiTextOverlay(sys[i].title, dx + 50.0f, ay + 9.0f, 14.5f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
                 gpu->UiTextOverlay(sys[i].desc, dx + 50.0f, ay + 28.0f, 12.0f, 0.65f, 0.65f, 0.70f, 1.0f, -1);
                 gpu->UiTextOverlay(sys[i].value, dx + dw - 50.0f, ay + 16.0f, 13.5f, 0.10f, 0.85f, 0.45f, 1.0f, 1);
@@ -5618,6 +5705,10 @@ void XboxFrontend::DrawPerGameProperties(std::vector<core::gpu::RasterVertex>& o
     UiGeometryBuilder::AddQuad(out, dx + dw - 220.0f, by + 8.0f, 95.0f, 32.0f, UiColor{0.0f, 0.85f, 0.95f, 1.0f});
     UiGeometryBuilder::AddQuad(out, dx + dw - 110.0f, by + 8.0f, 90.0f, 32.0f, UiColor{0.25f, 0.26f, 0.29f, 1.0f});
     if (overlay) {
+        gpu->UiFillRectOverlay(dx, by, dw, 48.0f, 0.16f, 0.165f, 0.18f, 1.0f);
+        gpu->UiFillRectOverlay(dx, by, dw, 1.0f, 0.26f, 0.27f, 0.30f, 1.0f);
+        gpu->UiFillRectOverlay(dx + dw - 220.0f, by + 8.0f, 95.0f, 32.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+        gpu->UiFillRectOverlay(dx + dw - 110.0f, by + 8.0f, 90.0f, 32.0f, 0.25f, 0.26f, 0.29f, 1.0f);
         gpu->UiTextOverlay("OK / Save", dx + dw - 172.5f, by + 16.0f, 13.5f, 0.0f, 0.0f, 0.0f, 1.0f, 0);
         gpu->UiTextOverlay("Cancel", dx + dw - 65.0f, by + 16.0f, 13.5f, 0.90f, 0.90f, 0.90f, 1.0f, 0);
     }
@@ -5667,7 +5758,7 @@ void XboxFrontend::HandlePerGamePropertiesInput(const core::hid::XboxGamepadStat
 void XboxFrontend::DrawInstallToNandDialog(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu) {
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.0f, 0.0f, 0.0f, 0.82f});
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.0f, 0.0f, 0.0f, 0.85f});
 
     constexpr float dx = 240.0f, dy = 100.0f, dw = 800.0f, dh = 520.0f;
     UiGeometryBuilder::AddQuad(out, dx, dy, dw, dh, UiColor{0.13f, 0.135f, 0.155f, 0.98f});
@@ -5678,6 +5769,11 @@ void XboxFrontend::DrawInstallToNandDialog(std::vector<core::gpu::RasterVertex>&
     UiGeometryBuilder::AddQuad(out, dx, dy + 50.0f, dw, 2.0f, UiColor{0.0f, 0.85f, 0.95f, 1.0f});
 
     if (overlay) {
+        gpu->UiFillRectOverlay(0, 0, 1280, 720, 0.0f, 0.0f, 0.0f, 0.88f);
+        gpu->UiFillRectOverlay(dx, dy, dw, dh, 0.13f, 0.135f, 0.155f, 1.0f);
+        gpu->UiRectOutlineOverlay(dx, dy, dw, dh, 2.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+        gpu->UiFillRectOverlay(dx, dy, dw, 52.0f, 0.18f, 0.19f, 0.22f, 1.0f);
+        gpu->UiFillRectOverlay(dx, dy + 50.0f, dw, 2.0f, 0.0f, 0.85f, 0.95f, 1.0f);
         gpu->UiTextOverlay("EDEN INSTALL FILES TO NAND SYSTEM STORAGE", dx + 25.0f, dy + 16.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
         gpu->UiTextOverlay("Destination: nand:/user/Contents/registered (24.8 GB Free)", dx + 25.0f, dy + 62.0f, 13.5f, 0.10f, 0.85f, 0.45f, 1.0f, -1);
     } else {
@@ -5711,6 +5807,12 @@ void XboxFrontend::DrawInstallToNandDialog(std::vector<core::gpu::RasterVertex>&
         std::snprintf(sz_str, sizeof(sz_str), "%.1f MB", static_cast<double>(nand_packages_[i].size_bytes) / (1024.0 * 1024.0));
 
         if (overlay) {
+            if (is_sel) {
+                gpu->UiFillRectOverlay(dx + 25.0f, py, dw - 50.0f, 50.0f, 0.20f, 0.23f, 0.28f, 1.0f);
+                gpu->UiRectOutlineOverlay(dx + 25.0f, py, dw - 50.0f, 50.0f, 1.5f, 0.0f, 0.85f, 0.95f, 1.0f);
+            } else {
+                gpu->UiFillRectOverlay(dx + 25.0f, py, dw - 50.0f, 50.0f, 0.14f, 0.145f, 0.16f, 1.0f);
+            }
             gpu->UiTextOverlay(nand_packages_[i].name, dx + 45.0f, py + 10.0f, 15.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
             gpu->UiTextOverlay(nand_packages_[i].type + "  •  TID: " + tid_str + "  •  " + sz_str,
                                dx + 45.0f, py + 28.0f, 12.5f, 0.65f, 0.65f, 0.70f, 1.0f, -1);
@@ -5732,6 +5834,12 @@ void XboxFrontend::DrawInstallToNandDialog(std::vector<core::gpu::RasterVertex>&
     }
 
     if (overlay) {
+        gpu->UiFillRectOverlay(dx + 25.0f, prog_y, dw - 50.0f, 16.0f, 0.10f, 0.10f, 0.12f, 1.0f);
+        gpu->UiRectOutlineOverlay(dx + 25.0f, prog_y, dw - 50.0f, 16.0f, 1.0f, 0.30f, 0.30f, 0.35f, 1.0f);
+        if (install_nand_progress_ > 0.0f) {
+            float fill_w = (dw - 50.0f) * install_nand_progress_;
+            gpu->UiFillRectOverlay(dx + 25.0f, prog_y, fill_w, 16.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+        }
         gpu->UiTextOverlay(install_nand_status_, dx + 25.0f, prog_y + 22.0f, 13.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
     }
 
@@ -5741,6 +5849,9 @@ void XboxFrontend::DrawInstallToNandDialog(std::vector<core::gpu::RasterVertex>&
     UiGeometryBuilder::AddQuad(out, dx + dw - 240.0f, btn_y + 8.0f, 120.0f, 32.0f, UiColor{0.0f, 0.85f, 0.95f, 1.0f});
     UiGeometryBuilder::AddQuad(out, dx + dw - 105.0f, btn_y + 8.0f, 85.0f, 32.0f, UiColor{0.25f, 0.26f, 0.29f, 1.0f});
     if (overlay) {
+        gpu->UiFillRectOverlay(dx, btn_y, dw, 48.0f, 0.16f, 0.165f, 0.18f, 1.0f);
+        gpu->UiFillRectOverlay(dx + dw - 240.0f, btn_y + 8.0f, 120.0f, 32.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+        gpu->UiFillRectOverlay(dx + dw - 105.0f, btn_y + 8.0f, 85.0f, 32.0f, 0.25f, 0.26f, 0.29f, 1.0f);
         gpu->UiTextOverlay("Install to NAND", dx + dw - 180.0f, btn_y + 16.0f, 13.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0);
         gpu->UiTextOverlay("Close", dx + dw - 62.5f, btn_y + 16.0f, 13.0f, 0.90f, 0.90f, 0.90f, 1.0f, 0);
     }
@@ -5768,7 +5879,7 @@ void XboxFrontend::HandleInstallNandInput(bool pressed_up, bool pressed_down, bo
 void XboxFrontend::DrawModManager(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu) {
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.0f, 0.0f, 0.0f, 0.82f});
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.0f, 0.0f, 0.0f, 0.85f});
 
     constexpr float dx = 220.0f, dy = 90.0f, dw = 840.0f, dh = 540.0f;
     UiGeometryBuilder::AddQuad(out, dx, dy, dw, dh, UiColor{0.13f, 0.135f, 0.155f, 0.98f});
@@ -5779,6 +5890,11 @@ void XboxFrontend::DrawModManager(std::vector<core::gpu::RasterVertex>& out, cor
     UiGeometryBuilder::AddQuad(out, dx, dy + 50.0f, dw, 2.0f, UiColor{0.0f, 0.85f, 0.95f, 1.0f});
 
     if (overlay) {
+        gpu->UiFillRectOverlay(0, 0, 1280, 720, 0.0f, 0.0f, 0.0f, 0.88f);
+        gpu->UiFillRectOverlay(dx, dy, dw, dh, 0.13f, 0.135f, 0.155f, 1.0f);
+        gpu->UiRectOutlineOverlay(dx, dy, dw, dh, 2.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+        gpu->UiFillRectOverlay(dx, dy, dw, 52.0f, 0.18f, 0.19f, 0.22f, 1.0f);
+        gpu->UiFillRectOverlay(dx, dy + 50.0f, dw, 2.0f, 0.0f, 0.85f, 0.95f, 1.0f);
         gpu->UiTextOverlay("EDEN MOD & LAYEREDFS MANAGER", dx + 25.0f, dy + 16.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
         gpu->UiTextOverlay("Path: sdmc:/atmosphere/contents/<title_id>/", dx + 25.0f, dy + 62.0f, 13.5f, 0.0f, 0.85f, 0.95f, 1.0f, -1);
     } else {
@@ -5811,6 +5927,14 @@ void XboxFrontend::DrawModManager(std::vector<core::gpu::RasterVertex>& out, cor
         UiGeometryBuilder::AddRectOutline(out, dx + 45.0f, my + 13.0f, 24.0f, 24.0f, 1.0f, UiColor::White());
 
         if (overlay) {
+            if (is_sel) {
+                gpu->UiFillRectOverlay(dx + 25.0f, my, dw - 50.0f, 50.0f, 0.20f, 0.23f, 0.28f, 1.0f);
+                gpu->UiRectOutlineOverlay(dx + 25.0f, my, dw - 50.0f, 50.0f, 1.5f, 0.0f, 0.85f, 0.95f, 1.0f);
+            } else {
+                gpu->UiFillRectOverlay(dx + 25.0f, my, dw - 50.0f, 50.0f, 0.14f, 0.145f, 0.16f, 1.0f);
+            }
+            gpu->UiFillRectOverlay(dx + 45.0f, my + 13.0f, 24.0f, 24.0f, mod_list_[i].enabled ? 0.10f : 0.20f, mod_list_[i].enabled ? 0.85f : 0.20f, mod_list_[i].enabled ? 0.45f : 0.24f, 1.0f);
+            gpu->UiRectOutlineOverlay(dx + 45.0f, my + 13.0f, 24.0f, 24.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
             gpu->UiTextOverlay(mod_list_[i].name, dx + 85.0f, my + 10.0f, 15.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
             gpu->UiTextOverlay(mod_list_[i].type + "  •  by " + mod_list_[i].author + "  •  " + mod_list_[i].version,
                                dx + 85.0f, my + 28.0f, 12.5f, 0.65f, 0.65f, 0.70f, 1.0f, -1);
@@ -5828,6 +5952,9 @@ void XboxFrontend::DrawModManager(std::vector<core::gpu::RasterVertex>& out, cor
     UiGeometryBuilder::AddQuad(out, dx + dw - 240.0f, btn_y + 8.0f, 130.0f, 32.0f, UiColor{0.0f, 0.85f, 0.95f, 1.0f});
     UiGeometryBuilder::AddQuad(out, dx + dw - 95.0f, btn_y + 8.0f, 75.0f, 32.0f, UiColor{0.25f, 0.26f, 0.29f, 1.0f});
     if (overlay) {
+        gpu->UiFillRectOverlay(dx, btn_y, dw, 48.0f, 0.16f, 0.165f, 0.18f, 1.0f);
+        gpu->UiFillRectOverlay(dx + dw - 240.0f, btn_y + 8.0f, 130.0f, 32.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+        gpu->UiFillRectOverlay(dx + dw - 95.0f, btn_y + 8.0f, 75.0f, 32.0f, 0.25f, 0.26f, 0.29f, 1.0f);
         gpu->UiTextOverlay("Open Mod Dir", dx + dw - 175.0f, btn_y + 16.0f, 13.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0);
         gpu->UiTextOverlay("Close", dx + dw - 57.5f, btn_y + 16.0f, 13.0f, 0.90f, 0.90f, 0.90f, 1.0f, 0);
     }
@@ -5856,6 +5983,10 @@ void XboxFrontend::DrawLibraryFilterBar(std::vector<core::gpu::RasterVertex>& ou
     // Bar background
     UiGeometryBuilder::AddQuad(out, 40.0f, y, 1200.0f, 34.0f, UiColor{0.15f, 0.155f, 0.175f, 0.95f});
     UiGeometryBuilder::AddRectOutline(out, 40.0f, y, 1200.0f, 34.0f, 1.0f, UiColor{0.24f, 0.25f, 0.28f, 1.0f});
+    if (overlay) {
+        gpu->UiFillRectOverlay(40.0f, y, 1200.0f, 34.0f, 0.15f, 0.155f, 0.175f, 0.98f);
+        gpu->UiRectOutlineOverlay(40.0f, y, 1200.0f, 34.0f, 1.0f, 0.24f, 0.25f, 0.28f, 1.0f);
+    }
 
     // Filter pills
     const char* filter_labels[5] = {"All Games", "Installed", "Favorites", "Updates", "DLC"};
@@ -5869,6 +6000,11 @@ void XboxFrontend::DrawLibraryFilterBar(std::vector<core::gpu::RasterVertex>& ou
             UiGeometryBuilder::AddQuad(out, px, y + 4.0f, pw, 26.0f, UiColor{0.20f, 0.21f, 0.24f, 1.0f});
         }
         if (overlay) {
+            if (is_act) {
+                gpu->UiFillRectOverlay(px, y + 4.0f, pw, 26.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+            } else {
+                gpu->UiFillRectOverlay(px, y + 4.0f, pw, 26.0f, 0.20f, 0.21f, 0.24f, 1.0f);
+            }
             gpu->UiTextOverlay(filter_labels[f], px + pw * 0.5f, y + 10.0f, 12.5f,
                                is_act ? 0.0f : 0.85f, is_act ? 0.0f : 0.85f, is_act ? 0.0f : 0.88f, 1.0f, 0);
         } else {
@@ -5882,6 +6018,8 @@ void XboxFrontend::DrawLibraryFilterBar(std::vector<core::gpu::RasterVertex>& ou
     UiGeometryBuilder::AddQuad(out, sq_x, y + 4.0f, 320.0f, 26.0f, UiColor{0.11f, 0.115f, 0.13f, 1.0f});
     UiGeometryBuilder::AddRectOutline(out, sq_x, y + 4.0f, 320.0f, 26.0f, 1.0f, UiColor{0.28f, 0.29f, 0.32f, 1.0f});
     if (overlay) {
+        gpu->UiFillRectOverlay(sq_x, y + 4.0f, 320.0f, 26.0f, 0.11f, 0.115f, 0.13f, 1.0f);
+        gpu->UiRectOutlineOverlay(sq_x, y + 4.0f, 320.0f, 26.0f, 1.0f, 0.28f, 0.29f, 0.32f, 1.0f);
         std::string query_display = search_query_.empty() ? "Filter titles... (Press Y to cycle)" : search_query_;
         gpu->UiTextOverlay(query_display, sq_x + 12.0f, y + 10.0f, 12.5f,
                            search_query_.empty() ? 0.55f : 1.0f,
@@ -5894,6 +6032,8 @@ void XboxFrontend::DrawLibraryFilterBar(std::vector<core::gpu::RasterVertex>& ou
     UiGeometryBuilder::AddQuad(out, sort_x, y + 4.0f, 190.0f, 26.0f, UiColor{0.20f, 0.22f, 0.26f, 1.0f});
     UiGeometryBuilder::AddRectOutline(out, sort_x, y + 4.0f, 190.0f, 26.0f, 1.0f, UiColor{0.0f, 0.85f, 0.95f, 0.8f});
     if (overlay) {
+        gpu->UiFillRectOverlay(sort_x, y + 4.0f, 190.0f, 26.0f, 0.20f, 0.22f, 0.26f, 1.0f);
+        gpu->UiRectOutlineOverlay(sort_x, y + 4.0f, 190.0f, 26.0f, 1.0f, 0.0f, 0.85f, 0.95f, 0.8f);
         gpu->UiTextOverlay("Sort: " + GetSortModeString(), sort_x + 95.0f, y + 10.0f, 12.0f, 0.0f, 0.85f, 0.95f, 1.0f, 0);
         gpu->UiTextOverlay("[F6/F7/F8] View", 1220.0f, y + 10.0f, 12.0f, 0.70f, 0.70f, 0.75f, 1.0f, 1);
     }

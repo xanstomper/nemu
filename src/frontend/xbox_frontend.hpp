@@ -259,6 +259,11 @@ public:
             menu_bar_.active_item = -1;
         }
     }
+    void OpenTopMenuCategory(int category_index) noexcept {
+        menu_bar_.is_open = true;
+        menu_bar_.active_category = category_index;
+        menu_bar_.active_item = 0;
+    }
     [[nodiscard]] bool IsAmiiboScannerOpen() const noexcept { return amiibo_scanner_.is_open; }
     void ToggleAmiiboScanner() noexcept { amiibo_scanner_.is_open = !amiibo_scanner_.is_open; }
     void LoadAmiiboNfc(const std::string& tag_name);
@@ -321,6 +326,9 @@ public:
 
     void AddRecentFile(const std::string& path);
     [[nodiscard]] const std::vector<std::string>& GetRecentFiles() const noexcept { return recent_files_; }
+
+    [[nodiscard]] const std::string& GetSearchQuery() const noexcept { return search_query_; }
+    void SetSearchQuery(std::string q) { search_query_ = std::move(q); }
 
     [[nodiscard]] std::string GetCompatString(CompatRating rating) const;
     [[nodiscard]] UiColor GetCompatColor(CompatRating rating) const;

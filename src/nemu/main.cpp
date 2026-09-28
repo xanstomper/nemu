@@ -77,6 +77,13 @@ static int MainInternal(int argc, char** argv) {
     u64 texture_budget_mib = 0; // --texture-budget=<MiB> resident texture cap
     bool demo_mode = false;
     bool ui_test_mode = false;
+    std::string initial_view;
+    std::string initial_dialog;
+    std::string initial_filter;
+    std::string initial_sort;
+    std::string initial_menu;
+    size_t initial_prop_tab = 0;
+    u64 ui_target_frames = 60;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -86,6 +93,20 @@ static int MainInternal(int argc, char** argv) {
             ui_test_mode = true;
         } else if (arg.rfind("--subview=", 0) == 0) {
             initial_subview = arg.substr(10);
+        } else if (arg.rfind("--view=", 0) == 0) {
+            initial_view = arg.substr(7);
+        } else if (arg.rfind("--dialog=", 0) == 0) {
+            initial_dialog = arg.substr(9);
+        } else if (arg.rfind("--filter=", 0) == 0) {
+            initial_filter = arg.substr(9);
+        } else if (arg.rfind("--sort=", 0) == 0) {
+            initial_sort = arg.substr(7);
+        } else if (arg.rfind("--menu=", 0) == 0) {
+            initial_menu = arg.substr(7);
+        } else if (arg.rfind("--prop-tab=", 0) == 0) {
+            initial_prop_tab = std::strtoull(arg.substr(11).c_str(), nullptr, 10);
+        } else if (arg.rfind("--ui-frames=", 0) == 0) {
+            ui_target_frames = std::max<u64>(1, std::strtoull(arg.substr(12).c_str(), nullptr, 10));
         } else if (arg == "--run") {
             if (i + 1 < argc) run_boot_path = argv[++i];
         } else if (arg.rfind("--max-frames=", 0) == 0) {
@@ -174,6 +195,47 @@ static int MainInternal(int argc, char** argv) {
         else if (initial_subview == "nso") frontend.SetActiveSubView(frontend::ActiveSubView::NSO);
         else if (initial_subview == "eshop") frontend.SetActiveSubView(frontend::ActiveSubView::EShop);
         else if (initial_subview == "profile") frontend.SetActiveSubView(frontend::ActiveSubView::UserProfile);
+    }
+
+    if (!initial_view.empty()) {
+        if (initial_view == "grid") frontend.SetGameListMode(frontend::GameListMode::Grid);
+        else if (initial_view == "list") frontend.SetGameListMode(frontend::GameListMode::List);
+        else if (initial_view == "carousel") frontend.SetGameListMode(frontend::GameListMode::Carousel);
+    }
+    if (!initial_filter.empty()) {
+        if (initial_filter == "all") frontend.SetFilterCategory(frontend::LibraryFilterCategory::All);
+        else if (initial_filter == "installed") frontend.SetFilterCategory(frontend::LibraryFilterCategory::Installed);
+        else if (initial_filter == "favorites") frontend.SetFilterCategory(frontend::LibraryFilterCategory::Favorites);
+        else if (initial_filter == "updates") frontend.SetFilterCategory(frontend::LibraryFilterCategory::Updates);
+        else if (initial_filter == "dlc") frontend.SetFilterCategory(frontend::LibraryFilterCategory::DLC);
+    }
+    if (!initial_sort.empty()) {
+        if (initial_sort == "title") frontend.SetSortMode(frontend::LibrarySortMode::TitleAsc);
+        else if (initial_sort == "time") frontend.SetSortMode(frontend::LibrarySortMode::PlayTime);
+        else if (initial_sort == "size") frontend.SetSortMode(frontend::LibrarySortMode::FileSize);
+        else if (initial_sort == "compat") frontend.SetSortMode(frontend::LibrarySortMode::Compatibility);
+    }
+    if (!initial_dialog.empty()) {
+        if (initial_dialog == "properties") {
+            frontend.SetPerGamePropertiesOpen(true);
+            frontend.SetPerGameTab(initial_prop_tab);
+        }
+        else if (initial_dialog == "nand") frontend.SetInstallNandDialogOpen(true);
+        else if (initial_dialog == "mods") frontend.SetModManagerOpen(true);
+        else if (initial_dialog == "cheats") frontend.SetCheatManagerOpen(true);
+        else if (initial_dialog == "multiplayer") frontend.SetMultiplayerLobbyOpen(true);
+        else if (initial_dialog == "about") frontend.SetAboutDialogOpen(true);
+        else if (initial_dialog == "amiibo") frontend.ToggleAmiiboScanner();
+        else if (initial_dialog == "tas") frontend.SetTasOverlayOpen(true);
+        else if (initial_dialog == "quickmenu") frontend.SetQuickMenuOpen(true);
+    }
+    if (!initial_menu.empty()) {
+        if (initial_menu == "file") frontend.OpenTopMenuCategory(0);
+        else if (initial_menu == "emulation") frontend.OpenTopMenuCategory(1);
+        else if (initial_menu == "view") frontend.OpenTopMenuCategory(2);
+        else if (initial_menu == "multiplayer") frontend.OpenTopMenuCategory(3);
+        else if (initial_menu == "tools") frontend.OpenTopMenuCategory(4);
+        else if (initial_menu == "help") frontend.OpenTopMenuCategory(5);
     }
 
     NEMU_LOG_INFO("Frontend", "Entering interactive Eden / Switch UI event loop...");
@@ -452,8 +514,8 @@ static int MainInternal(int argc, char** argv) {
         }
         ++ui_frames;
 
-        if (ui_test_mode && ui_frames >= 60) {
-            NEMU_LOG_INFO("Frontend", "UI test mode completed 60 frames successfully");
+        if (ui_test_mode && ui_frames >= ui_target_frames) {
+            NEMU_LOG_INFO("Frontend", "UI test mode completed {} frames successfully", ui_frames);
             break;
         }
 
