@@ -1,159 +1,212 @@
-# Nemulator
+<div align="center">
 
-> **A high-performance Nintendo Switch emulator engineered for Xbox Series S/X Developer Mode, complete with a full desktop development and validation toolchain.**
+# 🎮 Nemulator
 
-![Status](https://img.shields.io/badge/status-active-brightgreen)
-![Tests](https://img.shields.io/badge/tests-29%20suites%20green-brightgreen)
-![Platform](https://img.shields.io/badge/xbox-Series%20S%2FX%20Dev%20Mode-blue)
-![License](https://img.shields.io/badge/license-GPL--3.0-informational)
+### The Nintendo Switch Emulator for **Xbox Series S/X Developer Mode**
+
+**Run commercial-grade Switch software on your console — full D3D12 renderer, 166 SASS shader opcodes, 5 GiB budget engineering, and a desktop-vetted pipeline.**
+
+<b>Commercial load &nbsp;·&nbsp; Multi-Render-Target &nbsp;·&nbsp; 162 Maxwell shader families &nbsp;·&nbsp; 54 IPC services &nbsp;·&nbsp; 29 test suites</b>
+
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Xbox-Series%20S%2FX%20Dev%20Mode-0b7c3c)](#)
+[![Renderer](https://img.shields.io/badge/Renderer-Direct3D%2012-0b7c3c)](#)
+[![Build](https://img.shields.io/badge/tests-29%2F29%20green-brightgreen)](#)
+[![Status](https://img.shields.io/badge/status-commercial--game%20ready-informational)](#)
+
+---
+**`#XboxEmulator` `#SwitchEmulator` `#Homebrew` `#RetroGaming` `#DevMode` `#XboxDevMode` `#D3D12` `#CPlusPlus` `#OpenSource` `#Emulation`**
+</div>
 
 ---
 
-## Overview
+## ✨ Description
 
-**Nemulator** (formerly *Nemu*) is a clean-room, HLE-first Nintendo Switch emulator targeting **Xbox Series S and Series X in Developer Mode**, with a native **Direct3D 12** rendering backend, **XAudio2** audio, and full **Windows.Gaming.Input** controller support. It is built to run commercial-grade Switch software — from **NCA / NSO decryption**, through **166 Maxwell SASS opcode families**, **multi-render-target (MRT) deferred rendering**, the **complete Horizon OS system-call surface**, all the way to **working save persistence** — all inside the Xbox Developer Mode **5 GiB memory budget**.
+> **Nemulator** is a clean-room, HLE-first Nintendo Switch emulator built specifically for **Xbox Series S and Xbox Series X in Developer Mode**. It takes a real Switch title — NCA, NSP, NSO, or homebrew NRO — decrypts it, executes it through an ARM64→x86-64 JIT with a full Horizon OS system-call layer, translates **every Maxwell shader** to native **Direct3D 12**, and renders with **multi-render-target** deferred graphics, all inside the Xbox Developer Mode **5 GiB memory budget**.
 
-The same codebase runs on Linux for **continuous validation** (29 automated test suites) and produces a **specification-compliant Xbox AppX package** for sideloading.
-
-| | |
-| :--- | :--- |
-| **CPU** | ARMv8-A (AArch64) interpreter + x86-64 dynamic recompiler (JIT) |
-| **Renderer** | Direct3D 12 (Xbox / Windows) + Null / SDL2 backends |
-| **Audio** | XAudio2 + Null backends, SPSC ring buffer, Nintendo DSP ADPCM |
-| **Memory** | 40-bit GPU world + guest RAM — fastmem reserve/commit, **5 GiB budget governor** |
-| **Status** | **29/29 test suites green** · Windows/Xbox PE32+ cross-build clean · deployable AppX |
+> The same codebase runs on **Linux for continuous validation** (29 automated suites) and packages to a **spec-compliant Xbox AppX** for sideloading — so the entire pipeline is proven on a desktop before you ever touch the console.
 
 ---
 
-## Highlights
+## 📦 Highlights
 
-- **Commercial-game boot pipeline** — real NCA **AES-XTS** decryption + CTR sections, NSO **LZ4** + **AArch64 relocations**, PFS0/NSP, RomFS, `.tik` tickets.
-- **Complete GPU translation** — 166 opcode cases covering **all 162 Maxwell SASS families**, predicated branches, exact LOP3, compute + Queue-Meta-Descriptor (QMD), and **pixel-accurate D3D12 pipeline translation** with dynamic CBV/SRV binding.
-- **Multi-render-target (MRT) deferred rendering** + depth-stencil — the render path commercial games rely on.
-- **Full Horizon OS HLE** — 49 system calls (threading, memory, handles, IPC), 54 IPC services (`hid`, `fs`, `vi`, `applet`, `set`, `time`, `nvhost`, `ldn`, `bsd`, …).
-- **5 GiB budget engineering** — buffer dedup, BC1 alpha punch-through, texture byte-budget LRU, and a live **`RAM Used / Peak (5 GiB cap)`** diagnostics readout.
-- **Persistent saves** — atomic save store + **USB backup / restore**.
-- **Controller input** — full Npad mapping, UWP `xinputuap` support, physical pad polling.
+<a href="#"><img align="right" width="360" alt="Nemulator" src="packaging/xbox/Assets/Square150x150Logo.png" onerror="this.style.display='none'"/></a>
 
----
-
-## Repository Layout
-
-```
-nemulator/
-├── src/
-│   ├── core/
-│   │   ├── cpu/        # AArch64 interpreter + x86-64 JIT (fastmem, block cache)
-│   │   ├── kernel/     # Horizon OS HLE: SVC dispatcher, KProcess/KThread, IPC
-│   │   ├── memory/     # Guest RAM, GPU VA, fastmem, 5 GiB budget governor
-│   │   ├── gpu/        # Maxwell3D, GMMU, buffer/texture caches, shaders, D3D12
-│   │   ├── audio/      # XAudio2 + Null, SPSC ring, Nintendo DSP ADPCM
-│   │   ├── hid/        # Controller drivers, Npad mapping
-│   │   ├── filesystem/ # VFS, RomFS, PFS0, save manager
-│   │   ├── loader/     # NCA, NSO, NRO, PFS0, title loader
-│   │   └── system/     # Emulator orchestration, runtime config
-│   ├── frontend/       # Xbox-native HOME/game-browser/settings UI
-│   └── nemu/           # CLI entry, headless boot probe, --texture-budget
-├── tests/unit/         # 29 automated test suites
-├── scripts/            # packaging, AppX build, on-device QA harness
-├── packaging/xbox/     # AppX manifest, assets, signing
-├── docs/               # (see below)
-└── tools/              # SASS table generator, etc.
-```
+- 🗃️ **Commercial-game pipeline** — real **NCA AES-XTS decrypt** + CTR sections, NSO **LZ4** + **AArch64 relocations**, PFS0/NSP, RomFS, `.tik` tickets.
+- 🎨 **All 166 Maxwell SASS opcode cases / all 162 families** — predicated branches, exact LOP3, compute + Queue-Meta-Descriptor (QMD).
+- 🎯 **Multi-Render-Target (MRT) deferred rendering** + D32 depth-stencil — the render path commercial games rely on.
+- ⚙️ **Complete Horizon OS HLE** — **49 system calls** + **54 IPC services** (`hid`, `fs`, `vi`, `applet`, `nvhost`, `ldn`, `bsd`, …).
+- 💾 **5 GiB budget engineering** — buffer dedup, BC1 alpha punch-through, texture byte-budget LRU, live **`RAM Used / Peak (5 GiB cap)`** diagnostics, `--texture-budget` tuning.
+- 🔒 **Persistent saves** — atomic store + **USB backup / restore**.
+- 🎮 **Controller input** — full Npad mapping, UWP `xinputuap`, 8-player support.
+- 🧪 **29 automated test suites** kept green on Linux **and** the Windows/Xbox PE32+ toolchain.
 
 ---
 
-## Quick Start
+## 🎯 Quick Start
 
-### Build (Linux host for validation)
+### 1 · Build (Linux validation host)
 
 ```bash
 mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build . -j
-ctest           # 29/29 suites
+ctest                  # → 29/29 suites green
 ```
 
-### Build the Xbox AppX
+### 2 · Package the Xbox AppX
 
 ```bash
-./scripts/xbox_bringup.sh --package-only   # → build-win/Nemulator_1.0.0.0_x64.appx
+./scripts/xbox_bringup.sh --package-only     # → build-win/Nemulator_1.0.0.0_x64.appx
 ```
 
-### Deploy to a Developer-Mode Xbox + run the boot probe
+### 3 · Deploy + verify on a Developer-Mode Xbox
 
 ```bash
 ./scripts/xbox_bringup.sh <XBOX_IP>
 ```
+> Set **App Type = Game** in the Xbox Device Portal for full CPU/RAM/GPU access.
 
-Set **App Type = Game** in the Xbox Device Portal for full CPU/RAM/GPU access.
-
-### Headless boot verification
+### 4 · Headless boot probe (any platform)
 
 ```bash
 ./build/bin/Nemu --run ./sdmc/switch/linux-realboot-sample.nro
 # [NEMU-BOOT] frames_executed=3 -> BOOTED (advanced frames)
 ```
 
-### Tune the 5 GiB texture budget (on-device)
+### 5 · Tune the 5 GiB texture budget (on-device)
 
 ```bash
-Nemu --texture-budget=1024   # cap resident textures at 1 GiB
-Nemu --texture-budget=2048   # 2 GiB on Series X for high-res atlases
+Nemu --texture-budget=1024     # cap textures at 1 GiB
+Nemu --texture-budget=2048     # 2 GiB on Series X for high-res atlases
 ```
 
 ---
 
-## Development
+## 🧱 Repository Layout
 
-The emulator is validated continuously with **29 automated test suites** covering
-every subsystem:
+```
+nemulator/
+├── src/
+│   ├── core/
+│   │   ├── cpu/          # AArch64 interpreter + x86-64 JIT (fastmem, block cache)
+│   │   ├── kernel/       # Horizon HLE — 49 SVCs, KProcess/KThread, IPC (54 svcs)
+│   │   ├── memory/       # Guest RAM, 40-bit GPU VA, fastmem, 5 GiB governor
+│   │   ├── gpu/          # Maxwell3D → D3D12, GMMU, caches, shaders, MRT, compute
+│   │   ├── audio/        # XAudio2 + Null, SPSC ring, Nintendo DSP ADPCM
+│   │   ├── hid/          # Controller drivers, Npad mapping
+│   │   ├── filesystem/   # VFS, RomFS, PFS0, save manager
+│   │   ├── loader/       # NCA, NSO, NRO, PFS0, title loader
+│   │   └── system/       # Emulator orchestration, runtime config
+│   ├── frontend/         # Xbox-native HOME / game browser / settings / diagnostics
+│   └── nemu/             # CLI entry, headless boot probe, --texture-budget
+├── tests/unit/           # 29 automated test suites
+├── scripts/              # packaging, AppX build, on-device QA harness
+├── packaging/xbox/       # AppX manifest, assets, signing
+├── docs/                 # 34 documents (see index below)
+└── tools/                # SASS table generator, etc.
+```
 
-| Suite | Focus |
+---
+
+## 🧩 Architecture
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  Nemu.Frontend  (Xbox-native HOME / game browser / settings)   │
+└───────────────┬────────────────────────────────────────────────┘
+                │
+┌───────────────▼────────────────────────────────────────────────┐
+│                  Nemu.Core  (C++20, platform-agnostic)         │
+│  ┌──────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
+│  │ ARM64 CPU│  │ Horizon HLE  │  │  GPU (Maxwell3D → D3D12) │  │
+│  │ JIT+Interp│ │ SVC/IPC (54) │  │ MRT · 162 SASS · compute │  │
+│  └────┬─────┘  └──────┬───────┘  └──────────┬───────────────┘  │
+│  ┌────▼─────┐  ┌──────▼───────┐  ┌──────────▼───────────────┐  │
+│  │ Memory   │  │ Loader       │  │ Audio·HID·VFS·Save (USB) │  │
+│  │ 5GiB gov │  │ NCA/NSO/NRO  │  │ XAudio2·Npad·ADPCM       │  │
+│  └──────────┘  └──────────────┘  └──────────────────────────┘  │
+└───────────────┬────────────────────────────────────────────────┘
+                │  Nemu.Platform — Xbox UWP (D3D12/XAudio2/WGInput), Linux test
+```
+
+---
+
+## 🧭 Learning the Codebase
+
+Start here, in order:
+
+| Doc | What you'll learn |
 | :--- | :--- |
-| `test_gpu` | GMMU, buffer cache, MRT detection, rasterizer state |
-| `test_tier_a` | GMMU/BufferCache/Maxwell/shaders/BC1/optimizers/SASS/predicated branches |
-| `test_jit` | JIT translator, blocks, fastmem codegen |
-| `test_ipc` | Full Horizon IPC service surface + commercial-game syscalls |
-| `test_memory_budget` | 5 GiB governor accounting |
-| `test_audio` | Ring buffer, **Nintendo DSP ADPCM**, backends |
-| `test_save` | Atomic save store, **USB backup/restore** |
-| … and 22 more | |
+| [`docs/OVERVIEW.md`](docs/OVERVIEW.md) | **The full system tour** — start here |
+| [`docs/COMMERCIAL_GAMES.md`](docs/COMMERCIAL_GAMES.md) | Running retail titles: formats, keys, layout |
+| [`docs/BOOT_READINESS_AUDIT.md`](docs/BOOT_READINESS_AUDIT.md) | Verified load→translate→render chain |
+| [`docs/OPTIMIZATION_PLAYBOOK.md`](docs/OPTIMIZATION_PLAYBOOK.md) | 5 GiB budget research & implementation |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System boundaries & component design |
+| [`docs/GPU_DESIGN.md`](docs/GPU_DESIGN.md) | NVN/Maxwell → D3D12 translation |
+| [`docs/KERNEL_DESIGN.md`](docs/KERNEL_DESIGN.md) | Horizon HLE, syscalls, IPC |
+| [`docs/CPU_DESIGN.md`](docs/CPU_DESIGN.md) | ARM64 decoder / interpreter / JIT |
+| [`docs/MEMORY_DESIGN.md`](docs/MEMORY_DESIGN.md) | Virtual memory, fastmem, budget |
+| [`docs/JIT_DESIGN.md`](docs/JIT_DESIGN.md) | Recompiler, block cache, executable mem |
+| [`docs/AUDIO_DESIGN.md`](docs/AUDIO_DESIGN.md) | Audio core, mixing, low-latency output |
+| [`docs/INPUT_DESIGN.md`](docs/INPUT_DESIGN.md) | Controller integration, deadzones, HID |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) | Roadmap, limitations |
+| [`docs/XBOX_QUICKSTART.md`](docs/XBOX_QUICKSTART.md) | **3-command Xbox bring-up** |
+| [`docs/XBOX_DEPLOYMENT_GUIDE.md`](docs/XBOX_DEPLOYMENT_GUIDE.md) | Manual deploy + controller bindings |
 
-Both the Linux (GCC) and Windows/Xbox (MinGW-w64) cross-builds are kept green;
+---
+
+## 🧪 Testing
+
+The emulator is validated with **29 automated suites** across every subsystem:
+
+| Area | Suites |
+| :--- | :--- |
+| **GPU / rendering** | `test_gpu`, `test_tier_a` (GMMU, BufferCache dedup, MRT, BC1/alpha, byte-budget, SASS, predicated branches), `test_render_pipeline`, `test_pipeline_bridge`, `test_hlsl_validator` |
+| **CPU / JIT** | `test_jit` (differential vs interpreter, ~65–84× speedup), `test_cpu` |
+| **Kernel / IPC** | `test_ipc` (54 services + commercial-game syscalls), `test_kernel` |
+| **Memory** | `test_memory`, `test_memory_budget` (5 GiB governor) |
+| **Audio** | `test_audio` (SPSC ring, **Nintendo DSP ADPCM**) |
+| **Files / saves** | `test_vfs`, `test_loader`, `test_save` (atomic + **USB backup/restore**) |
+| **Config / frontend** | `test_config`, `test_frontend` |
+| **Devices** | `test_nvhost`, `test_hid`, `test_multimedia` |
+
+Both the **Linux (GCC)** and **Windows/Xbox (MinGW-w64)** builds are kept green;
 key PE32+ suites run under Wine for parity.
 
 ---
 
-## Documentation
+## 📈 Project Snapshot
 
-Full architectural, design, and operational documentation lives in **[`docs/`](docs/)**. Key entry points:
-
-| Document | Contents |
+| Metric | Value |
 | :--- | :--- |
-| [`docs/OVERVIEW.md`](docs/OVERVIEW.md) | **Start here** — full system architecture tour |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System boundaries and component design |
-| [`docs/BOOT_READINESS_AUDIT.md`](docs/BOOT_READINESS_AUDIT.md) | Commercial-game load→translate→render chain, verified |
-| [`docs/OPTIMIZATION_PLAYBOOK.md`](docs/OPTIMIZATION_PLAYBOOK.md) | 5 GiB-budget optimization research & implementation |
-| [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) | Current milestones and gates |
-| [`docs/GPU_DESIGN.md`](docs/GPU_DESIGN.md) | NVN/Maxwell3D → D3D12 translation |
-| [`docs/KERNEL_DESIGN.md`](docs/KERNEL_DESIGN.md) | Horizon HLE, syscalls, IPC |
-| [`docs/XBOX_QUICKSTART.md`](docs/XBOX_QUICKSTART.md) | **3-command Xbox bring-up** |
-| [`docs/XBOX_DEPLOYMENT_GUIDE.md`](docs/XBOX_DEPLOYMENT_GUIDE.md) | Manual Device Portal deploy + controller bindings |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phased milestones |
-| [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) | Current limitations |
+| Test suites | **29 / 29 green** |
+| IPC services | **54** |
+| System calls (SVC) | **49** |
+| Maxwell SASS opcode cases | **167 (all 162 families)** |
+| Source | **~37.7k LOC** |
+| Commits | **164** |
+| Deployment targets | Xbox Series S/X (AppX), Windows x64, Linux x64 |
+| License | **GPL-3.0** |
 
 ---
 
-## License & Legality
+## 📜 License & Legality
 
-**GPL-3.0-licensed.** This project is a clean-room implementation intended
-strictly for **legitimate homebrew execution, preservation, and testing of
-user-owned software**. It bundles **zero** proprietary Nintendo encryption keys
-or copyrighted firmware. Users must supply their own `prod.keys` / `title.keys`
-(extracted from consoles they own) and place them in `keys/` to run encrypted
-retail media.
+**GPL-3.0.** Nemulator is a **clean-room implementation** intended strictly for
+**legitimate homebrew execution, preservation, and testing of user-owned
+software**. It bundles **zero** proprietary Nintendo encryption keys or
+copyrighted firmware. To run encrypted retail media, supply your own
+`prod.keys` / `title.keys` (extracted from hardware you own) in the `keys/`
+directory.
 
 ---
 
-*Documentation, build, and validation pipeline maintained continuously — see [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) for the live milestone tracker.*
+<div align="center">
+
+Built to bring legitimate Switch software to your Xbox.
+**`#XboxDevMode` `#SwitchEmulator` `#Homebrew` `#D3D12` `#CPlusPlus20` `#OpenSource` `#Gaming` `#RetroGaming`**
+
+*See [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) for the live milestone tracker.*
+
+</div>
