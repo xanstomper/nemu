@@ -93,6 +93,49 @@ int main() {
     dma.CallMethod(MaxwellDma::REG_LAUNCH, (1u << 2) | (1u << 4));
     DMA_ASSERT(dma.GetCopyCount() == 2, "zero-extent launch rejected");
 
-    std::cout << "  - Maxwell DMA copy engine (byte-exact 1D + pitched multi-line + guards): PASSED" << std::endl;
+    // --- Pitch -> block-linear: true GOB swizzle round-trip. ---
+    // Swizzled-then-deswizzled data must equal the original linear source.
+    constexpr u32 kW2 = 64, kH2 = 32, kBH = 4; // width, height, block-height gobs
+    constexpr vaddr_t kSrc3 = 0x0094000000ULL, kDst3 = 0x0095000000ULL;
+    constexpr vaddr_t kDst4 = 0x0096000000ULL;
+    DMA_ASSERT(mem.Map(kSrc3, 0x4000, memory::MemoryPermission::All));
+    DMA_ASSERT(mem.Map(kDst3, 0x4000, memory::MemoryPermission::All));
+    DMA_ASSERT(mem.Map(kDst4, 0x4000, memory::MemoryPermission::All));
+    std::vector<u8> src3(kW2 * kH2);
+    for (u32 i = 0; i < src3.size(); ++i) src3[i] = static_cast<u8>(i * 7 + 3);
+    DMA_ASSERT(mem.WriteBlock(kSrc3, src3.data(), src3.size()));
+
+    dma.CallMethod(MaxwellDma::REG_LINE_LENGTH_IN, kW2);
+    dma.CallMethod(MaxwellDma::REG_LINE_COUNT, kH2);
+    dma.CallMethod(MaxwellDma::REG_OFFSET_IN, static_cast<u32>(kSrc3 & 0xFFFFFFFFULL));
+    dma.CallMethod(MaxwellDma::REG_OFFSET_IN + 1, static_cast<u32>(kSrc3 >> 32));
+    dma.CallMethod(MaxwellDma::REG_OFFSET_OUT, static_cast<u32>(kDst3 & 0xFFFFFFFFULL));
+    dma.CallMethod(MaxwellDma::REG_OFFSET_OUT + 1, static_cast<u32>(kDst3 >> 32));
+    dma.CallMethod(MaxwellDma::REG_PITCH_IN, kW2);
+    dma.CallMethod(MaxwellDma::REG_DST_PARAMS_WIDTH, kW2);
+    dma.CallMethod(MaxwellDma::REG_DST_PARAMS_HEIGHT, kH2);
+    dma.CallMethod(MaxwellDma::REG_DST_PARAMS_BLOCK_SIZE, (kBH / 4u) << 4); // log2 encoding
+    dma.CallMethod(MaxwellDma::REG_LAUNCH, (1u << 2)); // src pitch, dst block-linear
+    DMA_ASSERT(dma.GetCopyCount() == 3, "swizzle copy executed");
+
+    // Now reverse: block-linear -> pitch using the swizzled data as source.
+    dma.CallMethod(MaxwellDma::REG_LINE_LENGTH_IN, kW2);
+    dma.CallMethod(MaxwellDma::REG_LINE_COUNT, kH2);
+    dma.CallMethod(MaxwellDma::REG_OFFSET_IN, static_cast<u32>(kDst3 & 0xFFFFFFFFULL));
+    dma.CallMethod(MaxwellDma::REG_OFFSET_IN + 1, static_cast<u32>(kDst3 >> 32));
+    dma.CallMethod(MaxwellDma::REG_OFFSET_OUT, static_cast<u32>(kDst4 & 0xFFFFFFFFULL));
+    dma.CallMethod(MaxwellDma::REG_OFFSET_OUT + 1, static_cast<u32>(kDst4 >> 32));
+    dma.CallMethod(MaxwellDma::REG_PITCH_OUT, kW2);
+    dma.CallMethod(MaxwellDma::REG_SRC_PARAMS_WIDTH, kW2);
+    dma.CallMethod(MaxwellDma::REG_SRC_PARAMS_HEIGHT, kH2);
+    dma.CallMethod(MaxwellDma::REG_SRC_PARAMS_BLOCK_SIZE, (kBH / 4u) << 4);
+    dma.CallMethod(MaxwellDma::REG_LAUNCH, (1u << 4)); // src block-linear, dst pitch
+    DMA_ASSERT(dma.GetCopyCount() == 4, "deswizzle copy executed");
+
+    std::vector<u8> roundtrip(kW2 * kH2, 0);
+    DMA_ASSERT(mem.ReadBlock(kDst4, roundtrip.data(), roundtrip.size()));
+    DMA_ASSERT(src3 == roundtrip, "swizzle->deswizzle round-trip is byte-exact");
+
+    std::cout << "  - Maxwell DMA copy engine (byte-exact 1D + pitched multi-line + guards + swizzle round-trip): PASSED" << std::endl;
     return 0;
 }

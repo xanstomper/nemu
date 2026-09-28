@@ -30,6 +30,14 @@ public:
         REG_PITCH_IN = 0x0650,
         REG_PITCH_OUT = 0x0658,
         REG_LAUNCH = 0x06C0,           // LaunchDMA config
+        // Dst block-linear surface params (yuzu dst_params).
+        REG_DST_PARAMS_WIDTH = 0x06A8,
+        REG_DST_PARAMS_HEIGHT = 0x06AC,
+        REG_DST_PARAMS_BLOCK_SIZE = 0x06B0, // bits [7:4] = block height gobs log2
+        // Src block-linear surface params (yuzu src_params).
+        REG_SRC_PARAMS_WIDTH = 0x0700,
+        REG_SRC_PARAMS_HEIGHT = 0x0704,
+        REG_SRC_PARAMS_BLOCK_SIZE = 0x0708,
     };
 
     // LaunchDMA bit fields (yuzu launch_dma union).
@@ -70,6 +78,10 @@ private:
     u32 pitch_in_{0};
     u32 pitch_out_{0};
     Launch launch_{};
+
+    // Block-linear surface params (latched; consumed by the swizzle paths).
+    u32 dst_width_{0}, dst_height_{0}, dst_block_height_gobs_{0};
+    u32 src_width_{0}, src_height_{0}, src_block_height_gobs_{0};
 
     u64 copy_count_{0};
 };

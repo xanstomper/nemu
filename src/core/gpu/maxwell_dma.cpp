@@ -1,5 +1,6 @@
 #include "maxwell_dma.hpp"
 #include "core/memory/virtual_memory.hpp"
+#include "core/gpu/deswizzle.hpp"
 #include "platform/logger.hpp"
 #include <vector>
 
@@ -15,6 +16,8 @@ void MaxwellDma::Reset() {
     pitch_in_ = 0;
     pitch_out_ = 0;
     launch_ = {};
+    dst_width_ = dst_height_ = dst_block_height_gobs_ = 0;
+    src_width_ = src_height_ = src_block_height_gobs_ = 0;
 }
 
 void MaxwellDma::CallMethod(u32 method, u32 argument) {
@@ -36,6 +39,17 @@ void MaxwellDma::CallMethod(u32 method, u32 argument) {
         return;
     case REG_PITCH_IN: pitch_in_ = argument; return;
     case REG_PITCH_OUT: pitch_out_ = argument; return;
+    case REG_DST_PARAMS_WIDTH: dst_width_ = argument; return;
+    case REG_DST_PARAMS_HEIGHT: dst_height_ = argument; return;
+    case REG_DST_PARAMS_BLOCK_SIZE:
+        // yuzu block_size: bits [7:4] = block height (gobs, log2).
+        dst_block_height_gobs_ = 1u << ((argument >> 4) & 0xF);
+        return;
+    case REG_SRC_PARAMS_WIDTH: src_width_ = argument; return;
+    case REG_SRC_PARAMS_HEIGHT: src_height_ = argument; return;
+    case REG_SRC_PARAMS_BLOCK_SIZE:
+        src_block_height_gobs_ = 1u << ((argument >> 4) & 0xF);
+        return;
     case REG_LAUNCH:
         launch_.raw = argument;
         DoLaunch(); // launch register write triggers the copy (yuzu: is_last_call)
@@ -87,25 +101,47 @@ void MaxwellDma::CopyPitchToPitch() {
 }
 
 void MaxwellDma::CopyPitchToBlockLinear() {
-    // Read the linear source, stream to the destination. Full GOB swizzling needs
-    // the destination block dims (remap/block-dim registers); the dominant game
-    // use is compatible-layout streaming, which a linear copy serves.
-    std::vector<u8> linear(static_cast<size_t>(line_length_in_) * line_count_);
-    for (u32 l = 0; l < line_count_; ++l) {
+    // Linear source -> GOB-swizzled destination. Uses the latched dst_params
+    // surface description (width/height/block height) for a true swizzle; falls
+    // back to a layout-compatible stream when the guest didn't program them.
+    const u32 width = dst_width_ ? dst_width_ : line_length_in_;
+    const u32 height = dst_height_ ? dst_height_ : line_count_;
+    const u32 bh = dst_block_height_gobs_ ? dst_block_height_gobs_ : 1;
+
+    std::vector<u8> linear(static_cast<size_t>(width) * height);
+    for (u32 l = 0; l < height && l < line_count_; ++l) {
         memory_->ReadBlock(offset_in_ + static_cast<u64>(l) * pitch_in_,
-                           linear.data() + static_cast<size_t>(l) * line_length_in_,
-                           line_length_in_);
+                           linear.data() + static_cast<size_t>(l) * width, width);
     }
-    memory_->WriteBlock(offset_out_, linear.data(), linear.size());
+    std::vector<u8> swizzled(linear.size());
+    if (TextureSwizzler::SwizzleBlockLinear(linear, swizzled, width, height, 1, bh)) {
+        memory_->WriteBlock(offset_out_, swizzled.data(), swizzled.size());
+    } else {
+        memory_->WriteBlock(offset_out_, linear.data(), linear.size());
+    }
 }
 
 void MaxwellDma::CopyBlockLinearToPitch() {
-    std::vector<u8> linear(static_cast<size_t>(line_length_in_) * line_count_);
-    // See CopyPitchToBlockLinear note: layout-compatible streaming copy.
-    if (memory_->ReadBlock(offset_in_, linear.data(), linear.size())) {
+    // GOB-swizzled source -> linear destination (true deswizzle via dst_params/
+    // src_params surface description; streaming fallback when not programmed).
+    const u32 width = src_width_ ? src_width_ : line_length_in_;
+    const u32 height = src_height_ ? src_height_ : line_count_;
+    const u32 bh = src_block_height_gobs_ ? src_block_height_gobs_ : 1;
+
+    std::vector<u8> swizzled(static_cast<size_t>(width) * height);
+    if (!memory_->ReadBlock(offset_in_, swizzled.data(), swizzled.size())) {
+        return;
+    }
+    std::vector<u8> linear(swizzled.size());
+    if (TextureSwizzler::DeswizzleBlockLinear(swizzled, linear, width, height, 1, bh)) {
+        for (u32 l = 0; l < height; ++l) {
+            memory_->WriteBlock(offset_out_ + static_cast<u64>(l) * pitch_out_,
+                                linear.data() + static_cast<size_t>(l) * width, width);
+        }
+    } else {
         for (u32 l = 0; l < line_count_; ++l) {
             memory_->WriteBlock(offset_out_ + static_cast<u64>(l) * pitch_out_,
-                                linear.data() + static_cast<size_t>(l) * line_length_in_,
+                                swizzled.data() + static_cast<size_t>(l) * line_length_in_,
                                 line_length_in_);
         }
     }
