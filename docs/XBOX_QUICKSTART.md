@@ -18,6 +18,10 @@ scripts/xbox_bringup.sh 192.168.1.150
 
 # 3. To test a real title (retail NSO/NCA), stage it then run with more frames:
 scripts/xbox_bringup.sh --full 192.168.1.150 mytitle.nso   # 60-frame boil
+
+# Tune resident texture memory for the 5 GiB budget (default 1.5 GiB):
+Nemu --texture-budget=1024     # cap textures at 1 GiB on a tight Series S
+Nemu --texture-budget=2048     # 2 GiB on Series X for high-res atlases
 ```
 
 ## What each piece does
