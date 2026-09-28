@@ -312,5 +312,39 @@ COMPLETED:
   - Updated Xbox Developer Mode APPX package: build-win/Nemu_1.0.0.0_x64.appx (912 KB).
 ```
 
+---
+
+## Handoff 006: Commercial Title Compatibility, Atmosphere IPS Patches, NVDEC Video Decode, & Full 37/37 Parity
+
+* **Date:** 2026-09-28
+* **From:** Antigravity (AGY) & Hermes (Co-Engineers)
+* **To:** Engineering Record & Deployment
+
+```text
+CURRENT MILESTONE: Commercial Game Readiness, Hardware Video Subsystem, Patch Manager, & Packaging Complete
+GATE STATUS: 37/37 Unit Test Suites Passing (100% on Linux & Windows/Wine)
+
+COMPLETED:
+- Atmosphere IPS & IPS32 Patch Manager (src/core/loader/patch_manager.hpp/.cpp, tests/unit/loader/test_patch_manager.cpp):
+  - Supports standard 24-bit IPS and 32-bit IPS32 patch formats with RLE record decompression and bounds checking.
+  - Automatically queries VFS paths: sdmc:/atmosphere/contents/<title_id>/exefs/<build_id>.ips and sdmc:/atmosphere/exefs_patches/<build_id>.ips.
+  - Wired into NsoLoader and TitleLoader.
+- NVDEC Hardware Video Decoding Subsystem (src/core/gpu/nvhost/nvdec.hpp/.cpp, nvhost_nvdec.hpp/.cpp, h264.hpp/.cpp, ffmpeg.hpp/.cpp):
+  - Hardware device /dev/nvhost-nvdec registered and exposed through nvdrv service.
+  - Bit-exact Annex-B H.264 bitstream composer constructing SPS/PPS NAL headers from Tegra X1 picture info registers.
+  - Fixed bitwriter packing bug in H264BitWriter::WriteBits.
+  - Host FFmpeg integration for real video frame decode and PresentNVDECFrame backend forwarding.
+- Per-Title Compatibility Registry (src/core/cpu/title_compat.hpp/.cpp, tests/unit/cpu/test_title_compat.cpp):
+  - 685 verified titles seeded from Ryujinx telemetry.
+  - Binary search lookup applying sync_relaxed, ue4_shader_storm, gpu_strict_formats, and nvdec_required flags.
+- Eden Desktop UI Shortcuts & Polish (src/frontend/xbox_frontend.cpp, src/nemu/main.cpp):
+  - Wired F1 (About), F6/F7/F8 (Grid/List/Carousel), F9 (Multiplayer), F11 (Fullscreen), F12 (Screenshot), Ctrl+O (Content Manager), Ctrl+I (Install NAND), Ctrl+P (Settings), Ctrl+M (Mods), Ctrl+A (Amiibo), Ctrl+C (Controllers), Ctrl+T (TAS), Alt+Enter, and Tab.
+- Verification & Packaging:
+  - 37 of 37 unit test suites passing 100% on Native Linux GCC 13 and Windows PE32+ (MinGW-w64 under Wine).
+  - Signed Xbox Series S/X Developer Mode package generated: build-win/Nemulator_1.0.0.0_x64.appx (6.4 MB).
+  - Live Eden frontend running on DISPLAY=:0 with verified visual output.
+```
+
+
 
 
