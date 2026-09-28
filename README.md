@@ -6,8 +6,9 @@
 
 **Run commercial-grade Switch software on your console — full D3D12 renderer, 166 SASS shader opcodes, 5 GiB budget engineering, and a desktop-vetted pipeline.**
 
-<b>Commercial load &nbsp;·&nbsp; Multi-Render-Target &nbsp;·&nbsp; 162 Maxwell shader families &nbsp;·&nbsp; 54 IPC services &nbsp;·&nbsp; 29 test suites</b>
+<b>EXPERIMENTAL STAGE &nbsp;·&nbsp; Commercial load &nbsp;·&nbsp; Multi-Render-Target &nbsp;·&nbsp; 4 GPU engines (3D/DMA/Blit/Compute) &nbsp;·&nbsp; 54 IPC services &nbsp;·&nbsp; 75 SVCs &nbsp;·&nbsp; 33 test suites + E2E chain</b>
 
+[![Stage](https://img.shields.io/badge/stage-EXPERIMENTAL-orange)](docs/PROJECT_STATUS.md)
 [![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Xbox-Series%20S%2FX%20Dev%20Mode-0b7c3c)](#)
 [![Renderer](https://img.shields.io/badge/Renderer-Direct3D%2012-0b7c3c)](#)
