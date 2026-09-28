@@ -56,3 +56,6 @@ Testing/
 
 # Packaging certs (never commit)
 *.cer
+
+# Orphaned UI asset mockups (not wired into any source file)
+assets/ui/*.png
