@@ -486,8 +486,12 @@ static int MainInternal(int argc, char** argv) {
             frontend.RefreshLibrary();
         }
 
-        // Render Eden UI frame
-        frontend.Render(*emulator.GetGpuBackend());
+        // Render Eden UI frame (or QuickMenu overlay if open)
+        if (frontend.IsQuickMenuOpen()) {
+            frontend.RenderQuickMenu(*emulator.GetGpuBackend());
+        } else {
+            frontend.Render(*emulator.GetGpuBackend());
+        }
 
         // Push live emulator telemetry for the Diagnostics screen
         {

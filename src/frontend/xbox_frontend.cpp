@@ -1469,11 +1469,62 @@ void XboxFrontend::RenderQuickMenu(core::gpu::IGpuBackend& gpu) {
     };
     gpu.ClearRenderTarget(bg);
 
-    std::vector<core::gpu::RasterVertex> qm_vertices;
-    BuildQuickMenuGeometry(qm_vertices);
-    if (!qm_vertices.empty()) {
-        gpu.SetRasterVertices(qm_vertices);
-        gpu.DrawArrays(core::gpu::PrimitiveTopology::Triangles, 0, static_cast<u32>(qm_vertices.size()));
+    if (!gpu.SupportsUiOverlay()) {
+        std::vector<core::gpu::RasterVertex> qm_vertices;
+        BuildQuickMenuGeometry(qm_vertices);
+        if (!qm_vertices.empty()) {
+            gpu.SetRasterVertices(qm_vertices);
+            gpu.DrawArrays(core::gpu::PrimitiveTopology::Triangles, 0, static_cast<u32>(qm_vertices.size()));
+        }
+    } else {
+        gpu.UiFillRectOverlay(0, 0, 1280, 720, 0.05f, 0.05f, 0.06f, 0.88f);
+        gpu.UiFillRectOverlay(360, 85, 560, 550, 0.12f, 0.125f, 0.14f, 0.98f);
+        gpu.UiRectOutlineOverlay(360, 85, 560, 550, 2.0f, 0.0f, 0.82f, 0.90f, 0.90f);
+
+        gpu.UiTextOverlay("NEMULATOR QUICK MENU", 640, 105, 24.0f, 0.0f, 0.85f, 0.95f, 1.0f, 0);
+        gpu.UiTextOverlay("XBOX UWP IN-GAME CONTROLS • DIRECT3D 12", 640, 136, 13.0f, 0.70f, 0.72f, 0.76f, 1.0f, 0);
+        gpu.UiFillRectOverlay(380, 162, 520, 1, 0.22f, 0.24f, 0.28f, 1.0f);
+
+        const char* qm_items[] = {
+            "Resume Game",
+            "Restart Title",
+            "Save State",
+            "Load State",
+            "State Slot",
+            "Core Options (Resolution / FSR)",
+            "Controls (Nintendo / Xbox Layout)",
+            "Take Screenshot",
+            "Close Content (Return to NEMULATOR)",
+            "Fast Forward (Toggle 2x)"
+        };
+
+        auto& cfg = config_.GetConfig();
+
+        for (size_t i = 0; i < 10; ++i) {
+            float iy = 176.0f + static_cast<float>(i) * 39.0f;
+            bool is_sel = (i == quick_menu_row_);
+
+            if (is_sel) {
+                gpu.UiFillRectOverlay(380, iy - 4, 520, 34, 0.0f, 0.82f, 0.90f, 0.25f);
+                gpu.UiRectOutlineOverlay(380, iy - 4, 520, 34, 1.5f, 0.0f, 0.85f, 0.95f, 1.0f);
+                gpu.UiTextOverlay(">", 395, iy + 4, 16.0f, 0.0f, 0.85f, 0.95f, 1.0f, -1);
+            }
+
+            std::string label = qm_items[i];
+            if (i == 2) label += " (Slot " + std::to_string(current_state_slot_) + ")";
+            else if (i == 3) label += " (Slot " + std::to_string(current_state_slot_) + ")";
+            else if (i == 4) label += ": < " + std::to_string(current_state_slot_) + " >";
+            else if (i == 5) {
+                label = "Resolution: " + std::string((cfg.resolution_scale == core::config::ResolutionScale::Ultra4K_2_0x) ? "2x (4K UHD)" : "1x (1080p FHD)");
+            } else if (i == 6) {
+                label = "Layout: " + std::string((cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard) ? "Nintendo (B/A/Y/X)" : "Xbox Native (A/B/X/Y)");
+            }
+
+            gpu.UiTextOverlay(label, 420, iy + 4, 15.0f, is_sel ? 1.0f : 0.88f, is_sel ? 1.0f : 0.90f, is_sel ? 1.0f : 0.92f, 1.0f, -1);
+        }
+
+        gpu.UiFillRectOverlay(380, 580, 520, 1, 0.22f, 0.24f, 0.28f, 1.0f);
+        gpu.UiTextOverlay("(A) Select   (B) Close Quick Menu   (D-Pad) Navigate", 640, 595, 14.0f, 0.0f, 0.85f, 0.95f, 1.0f, 0);
     }
 
     gpu.EndFrame();
@@ -4497,6 +4548,10 @@ void XboxFrontend::DrawEdenTopMenuBar(std::vector<core::gpu::RasterVertex>& out,
     // Menu bar background strip
     UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 32, UiColor{0.10f, 0.105f, 0.12f, 0.96f});
     UiGeometryBuilder::AddQuad(out, 0, 31, 1280, 1, UiColor{0.22f, 0.23f, 0.26f, 1.0f});
+    if (overlay) {
+        gpu->UiFillRectOverlay(0, 0, 1280, 32, 0.10f, 0.105f, 0.12f, 0.98f);
+        gpu->UiFillRectOverlay(0, 31, 1280, 1, 0.22f, 0.23f, 0.26f, 1.0f);
+    }
 
     const struct MenuCatPos {
         const char* name;
@@ -4516,6 +4571,10 @@ void XboxFrontend::DrawEdenTopMenuBar(std::vector<core::gpu::RasterVertex>& out,
         if (is_active) {
             UiGeometryBuilder::AddQuad(out, cats[i].x - 4.0f, 2.0f, cats[i].w, 28.0f, UiColor{0.20f, 0.22f, 0.28f, 1.0f});
             UiGeometryBuilder::AddQuad(out, cats[i].x - 4.0f, 29.0f, cats[i].w, 2.0f, UiColor{0.0f, 0.85f, 0.95f, 1.0f});
+            if (overlay) {
+                gpu->UiFillRectOverlay(cats[i].x - 4.0f, 2.0f, cats[i].w, 28.0f, 0.20f, 0.22f, 0.28f, 1.0f);
+                gpu->UiFillRectOverlay(cats[i].x - 4.0f, 29.0f, cats[i].w, 2.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+            }
         }
         if (overlay) {
             gpu->UiTextOverlay(cats[i].name, cats[i].x + 4.0f, 8.0f, 14.0f, is_active ? 1.0f : 0.85f, is_active ? 1.0f : 0.85f, is_active ? 1.0f : 0.88f, 1.0f, -1);
@@ -4550,6 +4609,10 @@ void XboxFrontend::DrawEdenTopMenuBar(std::vector<core::gpu::RasterVertex>& out,
 
         UiGeometryBuilder::AddQuad(out, drop_x, drop_y, drop_w, drop_h, UiColor{0.13f, 0.135f, 0.155f, 0.98f});
         UiGeometryBuilder::AddRectOutline(out, drop_x, drop_y, drop_w, drop_h, 1.5f, UiColor{0.0f, 0.82f, 0.90f, 0.85f});
+        if (overlay) {
+            gpu->UiFillRectOverlay(drop_x, drop_y, drop_w, drop_h, 0.11f, 0.12f, 0.14f, 1.0f);
+            gpu->UiRectOutlineOverlay(drop_x, drop_y, drop_w, drop_h, 1.5f, 0.0f, 0.82f, 0.90f, 0.90f);
+        }
 
         for (size_t it = 0; it < cat.items.size(); ++it) {
             float iy = drop_y + 5.0f + static_cast<float>(it) * 30.0f;
@@ -4558,6 +4621,10 @@ void XboxFrontend::DrawEdenTopMenuBar(std::vector<core::gpu::RasterVertex>& out,
             if (is_sel) {
                 UiGeometryBuilder::AddQuad(out, drop_x + 3.0f, iy, drop_w - 6.0f, 28.0f, UiColor{0.22f, 0.25f, 0.32f, 1.0f});
                 UiGeometryBuilder::AddQuad(out, drop_x + 3.0f, iy, 3.0f, 28.0f, UiColor{0.0f, 0.85f, 0.95f, 1.0f});
+                if (overlay) {
+                    gpu->UiFillRectOverlay(drop_x + 3.0f, iy, drop_w - 6.0f, 28.0f, 0.22f, 0.25f, 0.32f, 1.0f);
+                    gpu->UiFillRectOverlay(drop_x + 3.0f, iy, 3.0f, 28.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+                }
             }
 
             if (overlay) {
@@ -4802,6 +4869,12 @@ void XboxFrontend::DrawAmiiboScanner(std::vector<core::gpu::RasterVertex>& out, 
     UiGeometryBuilder::AddQuad(out, mx, my, mw, mh, UiColor{0.13f, 0.135f, 0.155f, 0.98f});
     UiGeometryBuilder::AddRectOutline(out, mx, my, mw, mh, 2.0f, UiColor{0.0f, 0.85f, 0.95f, 0.95f});
 
+    if (overlay) {
+        gpu->UiFillRectOverlay(0, 0, 1280, 720, 0.0f, 0.0f, 0.0f, 0.82f);
+        gpu->UiFillRectOverlay(mx, my, mw, mh, 0.12f, 0.125f, 0.14f, 1.0f);
+        gpu->UiRectOutlineOverlay(mx, my, mw, mh, 2.0f, 0.0f, 0.85f, 0.95f, 0.95f);
+    }
+
     // Header
     if (overlay) {
         gpu->UiTextOverlay("VIRTUAL NFC AMIIBO SCANNER", mx + 30.0f, my + 24.0f, 22.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
@@ -4812,6 +4885,9 @@ void XboxFrontend::DrawAmiiboScanner(std::vector<core::gpu::RasterVertex>& out, 
     }
 
     UiGeometryBuilder::AddQuad(out, mx + 20.0f, my + 82.0f, mw - 40.0f, 1.0f, UiColor{0.25f, 0.25f, 0.28f, 1.0f});
+    if (overlay) {
+        gpu->UiFillRectOverlay(mx + 20.0f, my + 82.0f, mw - 40.0f, 1.0f, 0.25f, 0.25f, 0.28f, 1.0f);
+    }
 
     // 2 columns x 4 rows
     constexpr float cw = 360.0f;
@@ -4833,13 +4909,25 @@ void XboxFrontend::DrawAmiiboScanner(std::vector<core::gpu::RasterVertex>& out, 
             UiGeometryBuilder::AddQuad(out, x, y, cw, ch, UiColor{0.22f, 0.25f, 0.33f, 1.0f});
             UiGeometryBuilder::AddQuad(out, x, y, 4.0f, ch, UiColor{0.0f, 0.85f, 0.95f, 1.0f});
             UiGeometryBuilder::AddRectOutline(out, x, y, cw, ch, 2.0f, UiColor{0.0f, 0.85f, 0.95f, 1.0f});
+            if (overlay) {
+                gpu->UiFillRectOverlay(x, y, cw, ch, 0.22f, 0.25f, 0.33f, 1.0f);
+                gpu->UiFillRectOverlay(x, y, 4.0f, ch, 0.0f, 0.85f, 0.95f, 1.0f);
+                gpu->UiRectOutlineOverlay(x, y, cw, ch, 2.0f, 0.0f, 0.85f, 0.95f, 1.0f);
+            }
         } else {
             UiGeometryBuilder::AddQuad(out, x, y, cw, ch, UiColor{0.17f, 0.175f, 0.195f, 1.0f});
             UiGeometryBuilder::AddRectOutline(out, x, y, cw, ch, 1.0f, UiColor{0.24f, 0.24f, 0.26f, 1.0f});
+            if (overlay) {
+                gpu->UiFillRectOverlay(x, y, cw, ch, 0.17f, 0.175f, 0.195f, 1.0f);
+                gpu->UiRectOutlineOverlay(x, y, cw, ch, 1.0f, 0.24f, 0.24f, 0.26f, 1.0f);
+            }
         }
 
         // Icon circle
         UiGeometryBuilder::AddQuad(out, x + 12.0f, y + 12.0f, 52.0f, 52.0f, is_sel ? UiColor{0.0f, 0.85f, 0.95f, 0.25f} : UiColor{0.25f, 0.25f, 0.28f, 0.5f});
+        if (overlay) {
+            gpu->UiFillRectOverlay(x + 12.0f, y + 12.0f, 52.0f, 52.0f, is_sel ? 0.0f : 0.25f, is_sel ? 0.85f : 0.25f, is_sel ? 0.95f : 0.28f, is_sel ? 0.25f : 0.5f);
+        }
         UiGeometryBuilder::AddText(out, p.icon_char, x + 30.0f, y + 26.0f, 1.5f, is_sel ? UiColor::EdenCyan() : UiColor::White());
 
         if (overlay) {
@@ -4854,6 +4942,10 @@ void XboxFrontend::DrawAmiiboScanner(std::vector<core::gpu::RasterVertex>& out, 
     // Status strip
     UiGeometryBuilder::AddQuad(out, mx + 20.0f, my + mh - 60.0f, mw - 40.0f, 40.0f, UiColor{0.10f, 0.105f, 0.12f, 0.95f});
     UiGeometryBuilder::AddRectOutline(out, mx + 20.0f, my + mh - 60.0f, mw - 40.0f, 40.0f, 1.0f, UiColor{0.22f, 0.23f, 0.26f, 1.0f});
+    if (overlay) {
+        gpu->UiFillRectOverlay(mx + 20.0f, my + mh - 60.0f, mw - 40.0f, 40.0f, 0.10f, 0.105f, 0.12f, 0.95f);
+        gpu->UiRectOutlineOverlay(mx + 20.0f, my + mh - 60.0f, mw - 40.0f, 40.0f, 1.0f, 0.22f, 0.23f, 0.26f, 1.0f);
+    }
 
     if (overlay) {
         gpu->UiTextOverlay(amiibo_scanner_.status_msg, mx + 36.0f, my + mh - 47.0f, 14.5f, 0.0f, 0.85f, 0.95f, 1.0f, -1);
