@@ -34,8 +34,11 @@ XBOX_IP="${1:?usage: scripts/qa_xbox.sh <XBOX_IP> [NRO_NAME] [MAX_FRAMES]}"
 NRO_NAME="${2:-linux-realboot-sample.nro}"
 MAX_FRAMES="${3:-3}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-APPX="${ROOT_DIR}/build-win/Nemu_1.0.0.0_x64.appx"
+if [[ -f "${ROOT_DIR}/build-win/Nemulator_1.0.0.0_x64.appx" ]]; then
+    APPX="${ROOT_DIR}/build-win/Nemulator_1.0.0.0_x64.appx"
+else
+    APPX="${ROOT_DIR}/build-win/Nemu_1.0.0.0_x64.appx"
+fi
 PORTAL_BASE="https://${XBOX_IP}:11443"
 CERTS=""
 AUTH=""

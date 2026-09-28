@@ -256,18 +256,72 @@ case MaxwellOpcode::HSETP2:
     break;
 
 // ---- Texture variants (map onto declared samplers) ---------------------------
-case MaxwellOpcode::TLDS:
 case MaxwellOpcode::TLD4:
-case MaxwellOpcode::TLD4S:
-case MaxwellOpcode::TEX_b:
-case MaxwellOpcode::TLD_b:
+case MaxwellOpcode::TLD4S: {
+    if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+        if (!program.used_textures.empty()) {
+            u32 tid = program.used_textures[0];
+            ss << "    R[" << inst.dest.reg_index << "] = tex" << tid
+               << ".Gather(samp" << tid << ", float2("
+               << NEMU_SRC(0) << ", " << NEMU_SRC(1) << ")).r;\n";
+        } else {
+            ss << "    R[" << inst.dest.reg_index << "] = 0.0f;\n";
+        }
+    }
+    break;
+}
+case MaxwellOpcode::TLDS:
+case MaxwellOpcode::TLD_b: {
+    if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+        if (!program.used_textures.empty()) {
+            u32 tid = program.used_textures[0];
+            ss << "    R[" << inst.dest.reg_index << "] = tex" << tid
+               << ".Load(int3(asint(" << NEMU_SRC(0) << "), asint(" << NEMU_SRC(1) << "), 0)).r;\n";
+        } else {
+            ss << "    R[" << inst.dest.reg_index << "] = 0.0f;\n";
+        }
+    }
+    break;
+}
 case MaxwellOpcode::TXD:
-case MaxwellOpcode::TXD_b:
+case MaxwellOpcode::TXD_b: {
+    if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+        if (!program.used_textures.empty()) {
+            u32 tid = program.used_textures[0];
+            ss << "    R[" << inst.dest.reg_index << "] = tex" << tid
+               << ".SampleGrad(samp" << tid << ", float2("
+               << NEMU_SRC(0) << ", " << NEMU_SRC(1) << "), float2(0.0f, 0.0f), float2(0.0f, 0.0f)).r;\n";
+        } else {
+            ss << "    R[" << inst.dest.reg_index << "] = 0.0f;\n";
+        }
+    }
+    break;
+}
 case MaxwellOpcode::TMML:
-case MaxwellOpcode::TMML_b:
+case MaxwellOpcode::TMML_b: {
+    if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+        if (!program.used_textures.empty()) {
+            u32 tid = program.used_textures[0];
+            ss << "    R[" << inst.dest.reg_index << "] = tex" << tid
+               << ".CalculateLevelOfDetail(samp" << tid << ", float2("
+               << NEMU_SRC(0) << ", " << NEMU_SRC(1) << "));\n";
+        } else {
+            ss << "    R[" << inst.dest.reg_index << "] = 0.0f;\n";
+        }
+    }
+    break;
+}
+case MaxwellOpcode::TEX_b:
 case MaxwellOpcode::TXA: {
     if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
-        ss << "    R[" << inst.dest.reg_index << "] = 0.0f; // texture-variant fetch (bindless path pending)\n";
+        if (!program.used_textures.empty()) {
+            u32 tid = program.used_textures[0];
+            ss << "    R[" << inst.dest.reg_index << "] = tex" << tid
+               << ".Sample(samp" << tid << ", float2("
+               << NEMU_SRC(0) << ", " << NEMU_SRC(1) << ")).r;\n";
+        } else {
+            ss << "    R[" << inst.dest.reg_index << "] = 0.0f;\n";
+        }
     }
     break;
 }

@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 #include <span>
+#include <string_view>
 
 namespace nemu::core::gpu {
 
@@ -37,6 +38,9 @@ public:
         u32 height,
         u32 bytes_per_pixel,
         u32 block_height_gobs = 1);
+
+    /// Get pre-compiled or source Direct3D 12 Compute Shader HLSL for on-GPU deswizzling
+    [[nodiscard]] static std::string_view GetDeswizzleComputeShaderHlsl() noexcept;
 };
 
 } // namespace nemu::core::gpu

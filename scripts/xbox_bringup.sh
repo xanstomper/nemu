@@ -22,7 +22,7 @@ fail() { echo >&2 "  [!!] $*"; exit 1; }
 case "${ACTION}" in
     --package-only)
         "${ROOT_DIR}/scripts/package_xbox.sh" || fail "packaging failed"
-        pass "AppX built: build-win/Nemu_1.0.0.0_x64.appx"
+        pass "AppX built: build-win/Nemulator_1.0.0.0_x64.appx"
         exit 0
         ;;
     --help|-h|"")
