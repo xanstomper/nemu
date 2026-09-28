@@ -3422,6 +3422,9 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
     UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.14f, 0.14f, 0.15f, 1.0f});
+    if (overlay) {
+        gpu->UiFillRectOverlay(0, 0, 1280, 720, 0.14f, 0.14f, 0.15f, 1.0f);
+    }
 
     std::string icon_path = FindAsset("ui/icon_settings.png");
     if (overlay && !icon_path.empty()) {
@@ -3434,6 +3437,9 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
     }
 
     UiGeometryBuilder::AddQuad(out, 40.0f, 82.0f, 1200.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+    if (overlay) {
+        gpu->UiFillRectOverlay(40.0f, 82.0f, 1200.0f, 2.0f, 0.28f, 0.28f, 0.28f, 1.0f);
+    }
 
     const char* cat_names[16] = {
         "General",
@@ -3461,6 +3467,8 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
             UiGeometryBuilder::AddQuad(out, 45.0f, cy, 275.0f, 30.0f, UiColor{0.24f, 0.25f, 0.28f, 1.0f});
             UiGeometryBuilder::AddQuad(out, 45.0f, cy, 5.0f, 30.0f, UiColor{0.0f, 0.85f, 0.95f, 1.0f});
             if (overlay) {
+                gpu->UiFillRectOverlay(45.0f, cy, 275.0f, 30.0f, 0.24f, 0.25f, 0.28f, 1.0f);
+                gpu->UiFillRectOverlay(45.0f, cy, 5.0f, 30.0f, 0.0f, 0.85f, 0.95f, 1.0f);
                 gpu->UiTextOverlay(cat_names[c], 56.0f, cy + 8.0f, 14.5f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
             } else {
                 UiGeometryBuilder::AddText(out, cat_names[c], 56.0f, cy + 8.0f, 1.3f, UiColor::White());
@@ -3475,6 +3483,9 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
     }
 
     UiGeometryBuilder::AddQuad(out, 330.0f, 84.0f, 2.0f, 554.0f, UiColor{0.26f, 0.26f, 0.28f, 1.0f});
+    if (overlay) {
+        gpu->UiFillRectOverlay(330.0f, 84.0f, 2.0f, 554.0f, 0.26f, 0.26f, 0.28f, 1.0f);
+    }
 
     const auto& cfg = config_.GetConfig();
     struct OptionItem {
@@ -3628,9 +3639,17 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
         if (is_sel) {
             UiGeometryBuilder::AddQuad(out, 350.0f, ry, 885.0f, 94.0f, UiColor{0.25f, 0.27f, 0.32f, 1.0f});
             UiGeometryBuilder::AddRectOutline(out, 350.0f, ry, 885.0f, 94.0f, 2.5f, UiColor{0.0f, 0.85f, 0.95f, 1.0f});
+            if (overlay) {
+                gpu->UiFillRectOverlay(350.0f, ry, 885.0f, 94.0f, 0.25f, 0.27f, 0.32f, 1.0f);
+                gpu->UiRectOutlineOverlay(350.0f, ry, 885.0f, 94.0f, 2.5f, 0.0f, 0.85f, 0.95f, 1.0f);
+            }
         } else {
             UiGeometryBuilder::AddQuad(out, 350.0f, ry, 885.0f, 94.0f, UiColor{0.20f, 0.20f, 0.22f, 1.0f});
             UiGeometryBuilder::AddRectOutline(out, 350.0f, ry, 885.0f, 94.0f, 1.0f, UiColor{0.27f, 0.27f, 0.30f, 1.0f});
+            if (overlay) {
+                gpu->UiFillRectOverlay(350.0f, ry, 885.0f, 94.0f, 0.20f, 0.20f, 0.22f, 1.0f);
+                gpu->UiRectOutlineOverlay(350.0f, ry, 885.0f, 94.0f, 1.0f, 0.27f, 0.27f, 0.30f, 1.0f);
+            }
         }
 
         if (overlay) {
@@ -3645,6 +3664,9 @@ void XboxFrontend::DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out,
     }
 
     UiGeometryBuilder::AddQuad(out, 30.0f, 650.0f, 1220.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+    if (overlay) {
+        gpu->UiFillRectOverlay(30.0f, 650.0f, 1220.0f, 2.0f, 0.28f, 0.28f, 0.28f, 1.0f);
+    }
 
     std::string btn_a = FindAsset("ui/btn_a.png");
     std::string btn_b = FindAsset("ui/btn_b.png");

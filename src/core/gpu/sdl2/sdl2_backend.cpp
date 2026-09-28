@@ -180,8 +180,9 @@ void Sdl2GpuBackend::DrawArrays(PrimitiveTopology t, u32 fv, u32 vc) {
     if (renderer_ && t == PrimitiveTopology::Triangles && !vertices_readonly_.empty()) {
         std::vector<SDL_Vertex> sdl_verts;
         sdl_verts.reserve(vc);
-        const float fw = static_cast<float>(width_);
-        const float fh = static_cast<float>(height_);
+        // Match logical rendering size (1280x720) configured via SDL_RenderSetLogicalSize
+        const float fw = 1280.0f;
+        const float fh = 720.0f;
         const u32 end = std::min(fv + vc, static_cast<u32>(vertices_readonly_.size()));
         for (u32 i = fv; i < end; ++i) {
             const auto& rv = vertices_readonly_[i];
