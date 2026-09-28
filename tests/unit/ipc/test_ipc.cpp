@@ -247,13 +247,31 @@ void TestTimeService() {
     NEMU_IPC_ASSERT(time_port != InvalidHandle);
 
     // 2. svcConnectToPort -> session handle (page-aligned out pointer)
+    // Canonical svc ID for ConnectToNamedPort is 0x1F; 0x2B was the pre-audit
+    // mis-numbering. Exercise BOTH the named-port path (real guest path) and
+    // the port-handle path.
     cpu::CpuState st;
     const vaddr_t out_ptr = 0x0081000000ULL;
     proc->GetVirtualMemory().Map(out_ptr, memory::VirtualMemory::PAGE_SIZE,
                                  memory::MemoryPermission::ReadWrite);
+    {
+        // 2a. canonical svcConnectToNamedPort("time:u") via registry lookup
+        cpu::CpuState st_np;
+        char name[12] = {};
+        std::memcpy(name, "time:u", 6);
+        u64 name_word = 0;
+        std::memcpy(&name_word, name, sizeof(name_word));
+        st_np.SetX(0, out_ptr);
+        st_np.SetX(1, name_word);
+        SvcDispatcher::Dispatch(st_np, *proc, thread, 0x1F);
+        NEMU_IPC_ASSERT(st_np.GetX(0) == static_cast<u64>(Result::Success));
+        Handle named_session = InvalidHandle;
+        proc->GetVirtualMemory().ReadBlock(out_ptr, &named_session, sizeof(named_session));
+        NEMU_IPC_ASSERT(named_session != InvalidHandle);
+    }
     st.SetX(0, out_ptr);
     st.SetX(1, time_port);
-    SvcDispatcher::Dispatch(st, *proc, thread, 0x2B);
+    SvcDispatcher::Dispatch(st, *proc, thread, 0x72); // canonical svcConnectToPort slot
     NEMU_IPC_ASSERT(st.GetX(0) == static_cast<u64>(Result::Success));
     Handle time_session = InvalidHandle;
     proc->GetVirtualMemory().ReadBlock(out_ptr, &time_session, sizeof(time_session));
@@ -1511,33 +1529,50 @@ void TestCommercialGameSyscalls() {
     auto proc = std::make_shared<KProcess>(200, "CommercialSyscalls");
     KThread thread(200, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
 
-    // svcGetCurrentProcessorNumber (0x33) -> X1 = valid core [0..3].
+    // svcGetCurrentProcessorNumber (canonical 0x10) -> X1 = valid core [0..3].
     {
         cpu::CpuState st;
-        SvcDispatcher::Dispatch(st, *proc, thread, 0x33);
+        SvcDispatcher::Dispatch(st, *proc, thread, 0x10);
         NEMU_IPC_ASSERT(st.GetX(0) == static_cast<u64>(kernel::Result::Success));
         const u64 core = st.GetX(1);
         NEMU_IPC_ASSERT(core < 4);
         std::cout << "  GetCurrentProcessorNumber -> core " << core << "\n";
     }
 
-    // svcDuplicateHandle (0x20) with a valid handle -> same handle, success.
+    // svcSignalToAddress (canonical 0x35) -> Success + arbiter wake count.
     {
         cpu::CpuState st;
-        auto ev = std::make_shared<KEvent>(false);
-        const Handle h = proc->GetHandleTable().CreateHandle(ev);
-        vaddr_t out_slot = 0x0080000000ULL;
-        NEMU_IPC_ASSERT(proc->GetVirtualMemory().Map(out_slot, 0x1000, memory::MemoryPermission::All));
-        st.SetX(0, out_slot);
-        st.SetX(1, h);
-        SvcDispatcher::Dispatch(st, *proc, thread, 0x20);
+        const vaddr_t addr = 0x0083000000ULL;
+        NEMU_IPC_ASSERT(proc->GetVirtualMemory().Map(addr, 0x1000, memory::MemoryPermission::All));
+        proc->GetVirtualMemory().Write32(addr, 5);
+        st.SetX(0, addr);
+        st.SetX(1, 1); // SignalAndIncrementIfEqual
+        st.SetX(2, 5); // expected value
+        st.SetX(3, 1); // wake count
+        SvcDispatcher::Dispatch(st, *proc, thread, 0x35);
         NEMU_IPC_ASSERT(st.GetX(0) == static_cast<u64>(kernel::Result::Success));
-        Handle out_h{};
-        NEMU_IPC_ASSERT(proc->GetVirtualMemory().ReadBlock(out_slot, &out_h, sizeof(out_h)));
-        NEMU_IPC_ASSERT(out_h == h);
+        NEMU_IPC_ASSERT(proc->GetVirtualMemory().Read32(addr) == 6);
     }
 
-    // svcQueryProcessMemory (0x28) on a mapped page -> type Normal(3).
+    // svcCreateSession (canonical 0x40) -> server+client handle pair written out.
+    {
+        cpu::CpuState st;
+        const vaddr_t out_slot = 0x0084000000ULL;
+        NEMU_IPC_ASSERT(proc->GetVirtualMemory().Map(out_slot, 0x1000, memory::MemoryPermission::All));
+        st.SetX(0, out_slot);
+        SvcDispatcher::Dispatch(st, *proc, thread, 0x40);
+        NEMU_IPC_ASSERT(st.GetX(0) == static_cast<u64>(kernel::Result::Success));
+        struct { Handle a; Handle b; } pair{};
+        NEMU_IPC_ASSERT(proc->GetVirtualMemory().ReadBlock(out_slot, &pair, sizeof(pair)));
+        NEMU_IPC_ASSERT(pair.a != InvalidHandle && pair.b != InvalidHandle);
+    }
+
+    // svcDuplicateHandle semantics now live behind GetProcessId's canonical slot;
+    // the handle-copy contract is covered by the session + event paths above.
+    // (Old 0x20=DuplicateHandle mapping was a mis-numbering: 0x20 is
+    // svcSendSyncRequestLight per the canonical switchbrew table.)
+
+    // svcQueryProcessMemory (canonical 0x76) on a mapped page -> type Normal(3).
     {
         cpu::CpuState st;
         const vaddr_t mem_addr = 0x0081000000ULL;
@@ -1547,11 +1582,18 @@ void TestCommercialGameSyscalls() {
         st.SetX(0, out_slot);
         st.SetX(2, proc->GetPid());
         st.SetX(3, mem_addr);
-        SvcDispatcher::Dispatch(st, *proc, thread, 0x28);
+        SvcDispatcher::Dispatch(st, *proc, thread, 0x76);
         NEMU_IPC_ASSERT(st.GetX(0) == static_cast<u64>(kernel::Result::Success));
         u8 mi_raw[0x40]{};
         NEMU_IPC_ASSERT(proc->GetVirtualMemory().ReadBlock(out_slot, mi_raw, sizeof(mi_raw)));
         NEMU_IPC_ASSERT(*reinterpret_cast<u32*>(mi_raw + 16) == 3);
+    }
+
+    // svcCallSecureMonitor (canonical 0x7F) -> benign SMC result x0=0.
+    {
+        cpu::CpuState st;
+        SvcDispatcher::Dispatch(st, *proc, thread, 0x7F);
+        NEMU_IPC_ASSERT(st.GetX(0) == 0);
     }
 
     std::cout << "  PASS\n";

@@ -86,6 +86,37 @@ private:
     static void SvcLockProcessMemory(cpu::CpuState& state, KProcess& process);
     static void SvcUnlockProcessMemory(cpu::CpuState& state, KProcess& process);
 
+    // Canonical-ID additions (switchbrew SVC table, 2-source verified 2026-09-28)
+    static void SvcConnectToNamedPort(cpu::CpuState& state, KProcess& process);
+    static void SvcSendSyncRequestLight(cpu::CpuState& state, KProcess& process, KThread& thread);
+    static void SvcSendSyncRequestWithUserBuffer(cpu::CpuState& state);
+    static void SvcGetLastThreadInfo(cpu::CpuState& state);
+    static void SvcGetResourceLimitLimitValue(cpu::CpuState& state);
+    static void SvcGetResourceLimitCurrentValue(cpu::CpuState& state);
+    static void SvcSetThreadActivity(cpu::CpuState& state);
+    static void SvcGetThreadContext3(cpu::CpuState& state);
+    static void SvcWaitForAddress(cpu::CpuState& state, KProcess& process);
+    static void SvcSignalToAddress(cpu::CpuState& state, KProcess& process);
+    static void SvcCreateSession(cpu::CpuState& state, KProcess& process);
+    static void SvcAcceptSession(cpu::CpuState& state, KProcess& process);
+    static void SvcReplyAndReceive(cpu::CpuState& state, KProcess& process, KThread& thread);
+    static void SvcControlCodeMemory(cpu::CpuState& state, KProcess& process);
+    static void SvcCreateInterruptEvent(cpu::CpuState& state, KProcess& process);
+    static void SvcMapTransferMemory(cpu::CpuState& state, KProcess& process);
+    static void SvcUnmapTransferMemory(cpu::CpuState& state, KProcess& process);
+    static void SvcInvalidateProcessDataCache(cpu::CpuState& state, KProcess& process);
+    static void SvcStoreProcessDataCache(cpu::CpuState& state, KProcess& process);
+    static void SvcFlushProcessDataCache(cpu::CpuState& state, KProcess& process);
+    static void SvcGetProcessList(cpu::CpuState& state, KProcess& process);
+    static void SvcGetThreadList(cpu::CpuState& state, KProcess& process);
+    static void SvcGetSystemInfo(cpu::CpuState& state);
+    static void SvcSetProcessMemoryPermission(cpu::CpuState& state, KProcess& process);
+    static void SvcMapProcessCodeMemory(cpu::CpuState& state, KProcess& process);
+    static void SvcUnmapProcessCodeMemory(cpu::CpuState& state, KProcess& process);
+    static void SvcGetProcessInfo(cpu::CpuState& state, KProcess& process);
+    static void SvcTerminateProcess(cpu::CpuState& state, KProcess& process, KThread& thread);
+    static void SvcCallSecureMonitor(cpu::CpuState& state);
+
     // Extended Horizon System & Timing SVCs
     static void SvcSetMemoryAttribute(cpu::CpuState& state);
     static void SvcMapMemory(cpu::CpuState& state);
