@@ -167,7 +167,8 @@ private:
     // exceed it. Prevents a streaming game from filling the whole 5 GiB cap.
     // Default 1.5 GiB keeps total under the cap: ~2.5 GiB guest RAM + 1.5 GiB
     // textures + ~0.5 GiB JIT/overhead = ~4.5 GiB < 5 GiB.
-    static constexpr size_t kDefaultMaxTextureBytes = (size_t)1536 * 1024 * 1024; // 1.5 GiB
+    static constexpr size_t kDefaultMaxTextureBytes =
+        static_cast<size_t>(1536) * 1024 * 1024; // 1.5 GiB
     size_t max_texture_bytes_{kDefaultMaxTextureBytes};
     size_t total_resident_bytes_{0};
     u64 frame_{0};

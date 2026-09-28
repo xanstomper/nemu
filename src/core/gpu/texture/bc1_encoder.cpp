@@ -37,7 +37,8 @@ void Bc1Encoder::PickEndpoints(std::span<const u8, 64> rgba_block, u16& c0, u16&
     for (u32 i = 0; i < 16; ++i) {
         const u8* px = rgba_block.data() + i * 4;
         if (px[3] < 8) continue;
-        const u32 lum = px[0] * 299 + px[1] * 587 + px[2] * 114;
+        const u32 lum = static_cast<u32>(px[0]) * 299u + static_cast<u32>(px[1]) * 587u
+                      + static_cast<u32>(px[2]) * 114u;
         if (lum < lo) {
             lo = lum;
             lo_px[0] = px[0]; lo_px[1] = px[1]; lo_px[2] = px[2];
@@ -83,7 +84,7 @@ Bc1Encoder::Block Bc1Encoder::EncodeBlock(std::span<const u8, 64> rgba_block) {
     std::array<std::array<u8, 3>, 4> palette{};
     Unpack565(c0, palette[0][0], palette[0][1], palette[0][2]);
     Unpack565(c1, palette[1][0], palette[1][1], palette[1][2]);
-    for (int ch = 0; ch < 3; ++ch) {
+    for (size_t ch = 0; ch < 3; ++ch) {
         palette[2][ch] = static_cast<u8>((2 * palette[0][ch] + palette[1][ch]) / 3);
         palette[3][ch] = static_cast<u8>((palette[0][ch] + 2 * palette[1][ch]) / 3);
     }
