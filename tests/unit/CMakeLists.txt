@@ -483,3 +483,19 @@ target_link_libraries(test_memory_budget PRIVATE
 
 target_compile_features(test_memory_budget PRIVATE cxx_std_20)
 add_test(NAME test_memory_budget COMMAND test_memory_budget)
+
+# End-to-end experimental-readiness smoke test (loader->kernel->IPC->GPU->save)
+add_executable(test_e2e_boot
+    ../integration/test_e2e_boot.cpp
+)
+
+target_include_directories(test_e2e_boot PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_e2e_boot PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_e2e_boot PRIVATE cxx_std_20)
+add_test(NAME test_e2e_boot COMMAND test_e2e_boot WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
