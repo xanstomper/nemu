@@ -2,6 +2,7 @@
 #include "astc_decoder.hpp"
 #include "bc1_encoder.hpp"
 #include "core/gpu/deswizzle.hpp"
+#include "core/memory/memory_budget.hpp"
 #include "platform/logger.hpp"
 #include <cstring>
 #include <algorithm>
@@ -61,6 +62,10 @@ bool TextureCache::Initialize() {
 
 void TextureCache::Shutdown() {
     std::lock_guard<std::mutex> lock(mutex_);
+    // Release the resident texture bytes from the 5 GiB governor before clearing.
+    if (total_resident_bytes_ > 0) {
+        memory::MemoryBudget::AccrueSubsystem(-static_cast<s64>(total_resident_bytes_));
+    }
     textures_.clear();
     samplers_.clear();
     next_srv_index_ = 0;
@@ -264,6 +269,7 @@ std::shared_ptr<CachedTexture> TextureCache::GetOrCreateTexture(
     // cache fits. This is the primary defense against a streaming game filling
     // the whole 5 GiB cap with resident textures.
     total_resident_bytes_ += cached->linear_pixel_data.size();
+    memory::MemoryBudget::AccrueSubsystem(static_cast<s64>(cached->linear_pixel_data.size()));
     if (total_resident_bytes_ > max_texture_bytes_) {
         EvictLeastRecentlyUsed();
     }
@@ -345,6 +351,8 @@ void TextureCache::InvalidateRange(u64 gpu_address, size_t size) {
         if (tex_start < end && tex_end > gpu_address) {
             if (total_resident_bytes_ >= it->second->linear_pixel_data.size()) {
                 total_resident_bytes_ -= it->second->linear_pixel_data.size();
+                memory::MemoryBudget::AccrueSubsystem(
+                    -static_cast<s64>(it->second->linear_pixel_data.size()));
             }
             it = textures_.erase(it);
         } else {
@@ -366,6 +374,8 @@ void TextureCache::EvictLeastRecentlyUsed() {
         }
         if (total_resident_bytes_ >= oldest->second->linear_pixel_data.size()) {
             total_resident_bytes_ -= oldest->second->linear_pixel_data.size();
+            memory::MemoryBudget::AccrueSubsystem(
+                -static_cast<s64>(oldest->second->linear_pixel_data.size()));
         }
         textures_.erase(oldest);
     }
