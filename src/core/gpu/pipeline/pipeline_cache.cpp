@@ -346,8 +346,13 @@ bool PipelineCache::GetOrCreatePipeline(
             break;
     }
 
-    pso_desc.NumRenderTargets = 1;
-    pso_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    const UINT num_rts = std::clamp<UINT>(key.num_render_targets, 1, 8);
+    pso_desc.NumRenderTargets = num_rts;
+    for (UINT i = 0; i < num_rts; ++i) {
+        pso_desc.RTVFormats[i] = (key.rtv_formats[i] != 0)
+            ? static_cast<DXGI_FORMAT>(key.rtv_formats[i])
+            : DXGI_FORMAT_R8G8B8A8_UNORM;
+    }
     pso_desc.SampleDesc = {.Count = 1, .Quality = 0};
 
     // Rasterizer State
@@ -364,6 +369,13 @@ bool PipelineCache::GetOrCreatePipeline(
     pso_desc.DepthStencilState.DepthWriteMask = key.depth_write_enable ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
     pso_desc.DepthStencilState.DepthFunc = ConvertComparisonFunc(key.depth_func);
     pso_desc.DepthStencilState.StencilEnable = FALSE;
+    if (key.depth_test_enable || key.depth_write_enable) {
+        pso_desc.DSVFormat = (key.dsv_format != 0)
+            ? static_cast<DXGI_FORMAT>(key.dsv_format)
+            : DXGI_FORMAT_D32_FLOAT;
+    } else {
+        pso_desc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+    }
 
     // Blend State
     pso_desc.BlendState.AlphaToCoverageEnable = FALSE;
@@ -378,6 +390,10 @@ bool PipelineCache::GetOrCreatePipeline(
     rt_blend.DestBlendAlpha = ConvertBlendFactor(key.dst_alpha);
     rt_blend.BlendOpAlpha = ConvertBlendOp(key.op_alpha);
     rt_blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+    for (UINT i = 1; i < num_rts; ++i) {
+        pso_desc.BlendState.RenderTarget[i] = rt_blend;
+    }
 
     Microsoft::WRL::ComPtr<ID3D12PipelineState> pso;
     hr = device_->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pso));

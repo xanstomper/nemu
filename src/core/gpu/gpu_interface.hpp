@@ -91,6 +91,11 @@ struct RasterizerState {
     u32 color_mask[4]{0x1111, 0x1111, 0x1111, 0x1111};
     bool logic_op_enable{false};
     u32 logic_op{0};
+
+    // Multi-Render-Target (MRT) and Depth-Stencil format configuration
+    u8 num_render_targets{1};
+    u8 rtv_formats[8]{}; // 0 = default (DXGI_FORMAT_R8G8B8A8_UNORM)
+    u8 dsv_format{0};     // 0 = default (DXGI_FORMAT_D32_FLOAT)
 };
 
 /// Live graphics-optimizer settings (Tier-B UI wiring). The frontend Settings

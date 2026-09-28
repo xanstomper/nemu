@@ -149,6 +149,11 @@ private:
     UINT back_buffer_index_{0};
     UINT rtv_descriptor_size_{0};
 
+    // Depth-stencil buffer + view
+    Microsoft::WRL::ComPtr<ID3D12Resource> depth_stencil_buffer_;
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> dsv_heap_;
+    UINT dsv_descriptor_size_{0};
+
     // Pipeline state + geometry
     Microsoft::WRL::ComPtr<ID3D12RootSignature> root_signature_;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> pso_;

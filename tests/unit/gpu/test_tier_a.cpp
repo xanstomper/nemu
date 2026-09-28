@@ -288,10 +288,18 @@ void TestExpandedMaxwell3D() {
     NEMU_TEST_ASSERT(backend->last_raster_state.color_mask[0] == 0x1010, "color mask RT0 verified");
     NEMU_TEST_ASSERT(backend->last_raster_state.logic_op_enable, "logic op enable verified");
 
+    // Multi-Render-Target (MRT) detection: enable bits 0+2 -> 3 render targets.
+    maxwell.ProcessMethod(MaxwellMethod::ColorTargetMrtEnable, (1u << 0) | (1u << 2));
+    maxwell.ProcessMethod(MaxwellMethod::DrawArrays, draw_arg);
+    NEMU_TEST_ASSERT(backend->raster_state_pushes == 2, "raster flushed again for MRT");
+    NEMU_TEST_ASSERT(backend->last_raster_state.num_render_targets == 3,
+                     "MRT mask '000 101' selects 3 render targets");
+
     // Instanced draw: InstanceCount = 4 -> 4 draw calls.
+    const u32 draws_before_instanced = backend->draw_calls_seen;
     maxwell.ProcessMethod(MaxwellMethod::InstanceCount, 4);
     maxwell.ProcessMethod(MaxwellMethod::DrawArrays, draw_arg);
-    NEMU_TEST_ASSERT(backend->draw_calls_seen == 1 + 4, "instanced draws looped");
+    NEMU_TEST_ASSERT(backend->draw_calls_seen == draws_before_instanced + 4, "instanced draws looped");
 
     // Compute dispatch: block dims + trigger.
     maxwell.ProcessMethod(MaxwellMethod::ComputeLaunchDesc, (4u << 16) | 8u); // y=4, x=8

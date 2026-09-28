@@ -199,6 +199,46 @@ bool D3D12GpuBackend::CreateSwapChainAndTargets() {
     }
 
     NEMU_LOG_INFO("D3D12", "Swap chain created ({} back buffers)", kBackBufferCount);
+
+    // Allocate depth-stencil view heap + 2D depth buffer (DXGI_FORMAT_D32_FLOAT)
+    D3D12_DESCRIPTOR_HEAP_DESC dsv_heap_desc{};
+    dsv_heap_desc.NumDescriptors = 1;
+    dsv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+    dsv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    if (SUCCEEDED(device_->CreateDescriptorHeap(&dsv_heap_desc, IID_PPV_ARGS(&dsv_heap_)))) {
+        dsv_descriptor_size_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+
+        D3D12_RESOURCE_DESC ds_desc{};
+        ds_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        ds_desc.Width = width_;
+        ds_desc.Height = height_;
+        ds_desc.DepthOrArraySize = 1;
+        ds_desc.MipLevels = 1;
+        ds_desc.Format = DXGI_FORMAT_D32_FLOAT;
+        ds_desc.SampleDesc = {.Count = 1, .Quality = 0};
+        ds_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        ds_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+        D3D12_CLEAR_VALUE clear_val{};
+        clear_val.Format = DXGI_FORMAT_D32_FLOAT;
+        clear_val.DepthStencil.Depth = 1.0f;
+        clear_val.DepthStencil.Stencil = 0;
+
+        const D3D12_HEAP_PROPERTIES heap{ D3D12_HEAP_TYPE_DEFAULT, D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+                                          D3D12_MEMORY_POOL_UNKNOWN, 1, 1 };
+        hr_ = device_->CreateCommittedResource(
+            &heap, D3D12_HEAP_FLAG_NONE, &ds_desc, D3D12_RESOURCE_STATE_DEPTH_WRITE,
+            &clear_val, IID_PPV_ARGS(&depth_stencil_buffer_));
+        if (SUCCEEDED(hr_)) {
+            D3D12_DEPTH_STENCIL_VIEW_DESC dsv_view{};
+            dsv_view.Format = DXGI_FORMAT_D32_FLOAT;
+            dsv_view.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+            dsv_view.Flags = D3D12_DSV_FLAG_NONE;
+            device_->CreateDepthStencilView(depth_stencil_buffer_.Get(), &dsv_view,
+                                            dsv_heap_->GetCPUDescriptorHandleForHeapStart());
+            NEMU_LOG_INFO("D3D12", "Depth-stencil buffer allocated ({}x{}, D32_FLOAT)", width_, height_);
+        }
+    }
     return true;
 }
 
@@ -273,6 +313,7 @@ bool D3D12GpuBackend::CreatePipelineAndBuffers() {
     }
     std::memset(&pso_desc.DepthStencilState, 0, sizeof(pso_desc.DepthStencilState));
     pso_desc.DepthStencilState.DepthEnable = FALSE;
+    pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 
     if (FAILED(device_->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pso_)))) {
         NEMU_LOG_WARN("D3D12", "CreateGraphicsPipelineState failed; clears only");
@@ -307,6 +348,8 @@ void D3D12GpuBackend::Shutdown() {
         vertex_buffer_.Reset();
         pso_.Reset();
         root_signature_.Reset();
+        depth_stencil_buffer_.Reset();
+        dsv_heap_.Reset();
         back_buffers_.clear();
         swap_chain_.Reset();
         command_list_.Reset();
@@ -342,7 +385,12 @@ void D3D12GpuBackend::BeginFrame() {
     if (IsRenderPipelineReady()) {
         back_buffer_index_ = swap_chain_->GetCurrentBackBufferIndex();
         const D3D12_CPU_DESCRIPTOR_HANDLE rtv = CurrentRtv();
-        command_list_->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        if (dsv_heap_) {
+            const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+            command_list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+        } else {
+            command_list_->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        }
         D3D12_RESOURCE_BARRIER barrier{};
         barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
         barrier.Transition.pResource = back_buffers_[back_buffer_index_].Get();
@@ -422,7 +470,12 @@ void D3D12GpuBackend::ClearRenderTarget(const ClearColor& color) {
     NEMU_LOG_DEBUG("D3D12", "ClearRenderTarget: ({:.2f}, {:.2f}, {:.2f}, {:.2f})", color.r, color.g, color.b, color.a);
 }
 
-void D3D12GpuBackend::ClearDepthStencil([[maybe_unused]] float depth, [[maybe_unused]] u8 stencil) {
+void D3D12GpuBackend::ClearDepthStencil(float depth, u8 stencil) {
+    if (in_frame_ && command_list_ && dsv_heap_) {
+        const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+        command_list_->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
+                                            depth, stencil, 0, nullptr);
+    }
     NEMU_LOG_DEBUG("D3D12", "ClearDepthStencil: depth={:.2f}, stencil={}", depth, stencil);
 }
 
@@ -818,7 +871,27 @@ bool D3D12GpuBackend::BindTranslatedPipeline(PrimitiveTopology topology) {
     key.vs_bytecode_hash = HashBytes64(guest_vs_.data(), guest_vs_.size());
     key.ps_bytecode_hash = HashBytes64(guest_ps_.data(), guest_ps_.size());
     key.topology = topology;
-    key.blend_enable = false;
+    key.cull_mode = current_rasterizer_state_.cull_face_enable ?
+        (current_rasterizer_state_.cull_face == 0x0404 ? pipeline::CullMode::Front : pipeline::CullMode::Back) : pipeline::CullMode::None;
+    key.depth_test_enable = current_rasterizer_state_.depth_test_enable;
+    key.depth_write_enable = current_rasterizer_state_.depth_write_enable;
+    switch (current_rasterizer_state_.depth_func) {
+        case 0x0200: key.depth_func = pipeline::DepthFunc::Never; break;
+        case 0x0201: key.depth_func = pipeline::DepthFunc::Less; break;
+        case 0x0202: key.depth_func = pipeline::DepthFunc::Equal; break;
+        case 0x0203: key.depth_func = pipeline::DepthFunc::LessEqual; break;
+        case 0x0204: key.depth_func = pipeline::DepthFunc::Greater; break;
+        case 0x0205: key.depth_func = pipeline::DepthFunc::NotEqual; break;
+        case 0x0206: key.depth_func = pipeline::DepthFunc::GreaterEqual; break;
+        case 0x0207: key.depth_func = pipeline::DepthFunc::Always; break;
+        default: key.depth_func = pipeline::DepthFunc::Less; break;
+    }
+    key.blend_enable = current_rasterizer_state_.blend_enable_0;
+    key.num_render_targets = std::clamp<u8>(current_rasterizer_state_.num_render_targets, 1, 8);
+    for (u8 i = 0; i < 8; ++i) {
+        key.rtv_formats[i] = current_rasterizer_state_.rtv_formats[i];
+    }
+    key.dsv_format = current_rasterizer_state_.dsv_format;
     key.num_cbufs = guest_num_cbufs_;
     key.num_textures = guest_texture_count_;
     key.vertex_attrib_count = guest_vertex_attrib_count_;

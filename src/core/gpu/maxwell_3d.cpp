@@ -692,6 +692,27 @@ void Maxwell3D::ApplyRasterizerState() {
     rs.logic_op_enable = regs_.regs[MaxwellMethod::LogicOpEnable] != 0;
     rs.logic_op = regs_.regs[MaxwellMethod::LogicOpEnable];
 
+    // Multi-Render-Target (MRT) count detection
+    u32 mrt_mask = regs_.regs[MaxwellMethod::ColorTargetMrtEnable];
+    if (mrt_mask == 0) {
+        u8 count = 1;
+        for (u8 i = 1; i < 4; ++i) {
+            if (regs_.regs[MaxwellMethod::ColorMaskRT0 + i] != 0 ||
+                regs_.regs[MaxwellMethod::BlendEnablePerRT0 + i] != 0) {
+                count = i + 1;
+            }
+        }
+        rs.num_render_targets = count;
+    } else {
+        u8 count = 0;
+        for (u8 i = 0; i < 8; ++i) {
+            if (mrt_mask & (1u << i)) {
+                count = i + 1;
+            }
+        }
+        rs.num_render_targets = std::max<u8>(count, 1);
+    }
+
     backend_->SetRasterizerState(rs);
     raster_state_dirty_ = false;
 }

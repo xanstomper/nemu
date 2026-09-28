@@ -88,6 +88,9 @@ struct PipelineStateKey {
     BlendOp op_alpha{BlendOp::Add};
     u32 num_cbufs{0};
     u32 num_textures{0};
+    u8 num_render_targets{1};
+    std::array<u8, 8> rtv_formats{}; // DXGI_FORMAT id
+    u8 dsv_format{0};                 // DXGI_FORMAT id
     static constexpr size_t kMaxVertexAttribs = 8;
     std::array<VertexAttribDesc, kMaxVertexAttribs> vertex_attribs{};
     u8 vertex_attrib_count{0};   // number of valid entries in vertex_attribs
@@ -104,7 +107,9 @@ struct PipelineStateKeyHash {
         h ^= static_cast<size_t>(k.blend_enable) << 8;
         h ^= static_cast<size_t>(k.num_cbufs) << 12;
         h ^= static_cast<size_t>(k.num_textures) << 16;
-        h ^= static_cast<size_t>(k.vertex_attrib_count) << 20;
+        h ^= static_cast<size_t>(k.num_render_targets) << 18;
+        h ^= static_cast<size_t>(k.dsv_format) << 22;
+        h ^= static_cast<size_t>(k.vertex_attrib_count) << 26;
         for (u8 i = 0; i < k.vertex_attrib_count && i < PipelineStateKey::kMaxVertexAttribs; ++i) {
             const auto& a = k.vertex_attribs[i];
             h ^= (static_cast<size_t>(a.attr_index) << 20) ^
@@ -114,6 +119,9 @@ struct PipelineStateKeyHash {
                  (static_cast<size_t>(a.stride) << 36) ^
                  (static_cast<size_t>(a.valid) << 44);
             h = (h * 0x9e3779b9ULL) + i;
+        }
+        for (u8 i = 0; i < 8; ++i) {
+            h ^= static_cast<size_t>(k.rtv_formats[i]) << (i * 4);
         }
         return h;
     }

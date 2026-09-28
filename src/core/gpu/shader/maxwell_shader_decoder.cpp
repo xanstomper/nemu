@@ -563,7 +563,9 @@ std::string MaxwellShaderDecoder::EmitHLSL(const DecompiledProgram& program) {
         ss << "};\n\n";
 
         ss << "struct PSOutput {\n";
-        ss << "    float4 out_color0 : SV_Target0;\n";
+        for (u32 rt = 0; rt < 8; ++rt) {
+            ss << "    float4 out_color" << rt << " : SV_Target" << rt << ";\n";
+        }
         ss << "};\n\n";
 
         ss << "PSOutput main(PSInput input) {\n";
@@ -822,7 +824,8 @@ std::string MaxwellShaderDecoder::EmitHLSL(const DecompiledProgram& program) {
                         ss << "    output.out_attr" << attr_idx << "." << comp_char << " = " << OperandToHlsl(inst.sources[0], program.stage) << ";\n";
                     }
                 } else {
-                    ss << "    output.out_color0." << comp_char << " = " << OperandToHlsl(inst.sources[0], program.stage) << ";\n";
+                    u32 rt_idx = std::min(attr_idx, 7u);
+                    ss << "    output.out_color" << rt_idx << "." << comp_char << " = " << OperandToHlsl(inst.sources[0], program.stage) << ";\n";
                 }
                 break;
             }
@@ -867,9 +870,14 @@ std::string MaxwellShaderDecoder::EmitGLSL(const DecompiledProgram& program) {
         for (u32 i : program.used_attrs) {
             ss << "layout(location = " << i << ") in vec4 in_attr" << i << ";\n";
         }
-        ss << "layout(location = 0) out vec4 out_color0;\n";
+        for (u32 rt = 0; rt < 8; ++rt) {
+            ss << "layout(location = " << rt << ") out vec4 out_color" << rt << ";\n";
+        }
         ss << "\nvoid main() {\n";
         ss << "    out_color0 = vec4(1.0, 1.0, 1.0, 1.0);\n";
+        for (u32 rt = 1; rt < 8; ++rt) {
+            ss << "    out_color" << rt << " = vec4(0.0, 0.0, 0.0, 0.0);\n";
+        }
     }
 
     u32 num_regs = std::max(program.max_register_used + 1, 16u);

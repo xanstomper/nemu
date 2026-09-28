@@ -18,10 +18,20 @@ BufferCache::Entry* BufferCache::Find(Type type, u64 gpu_addr, u64 size) {
     if (it == entries_.end()) return nullptr;
 
     Entry& e = it->second;
-    if (e.gpu_addr != gpu_addr || e.size < size) {
-        // Address collision with different extent: recreate.
+    if (e.gpu_addr != gpu_addr) {
+        // Address collision with different base: recreate.
         entries_.erase(it);
         return nullptr;
+    }
+    if (e.size < size) {
+        // Dynamic expansion: retain hot prefix and upload only the delta from GMMU.
+        const u64 old_size = e.size;
+        e.data.resize(size);
+        e.size = size;
+        if (gmmu_) {
+            const size_t got = gmmu_->Read(gpu_addr + old_size, e.data.data() + old_size, size - old_size);
+            e.dirty.emplace_back(old_size, got);
+        }
     }
     return &e;
 }
