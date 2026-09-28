@@ -136,6 +136,43 @@ int main() {
     DMA_ASSERT(mem.ReadBlock(kDst4, roundtrip.data(), roundtrip.size()));
     DMA_ASSERT(src3 == roundtrip, "swizzle->deswizzle round-trip is byte-exact");
 
-    std::cout << "  - Maxwell DMA copy engine (byte-exact 1D + pitched multi-line + guards + swizzle round-trip): PASSED" << std::endl;
+    // --- Remap CONST_A fast clear: destination filled with the 8-byte pattern. ---
+    constexpr vaddr_t kClear = 0x0097000000ULL;
+    constexpr u32 kClearLen = 256, kClearLines = 4, kClearPitch = 512;
+    DMA_ASSERT(mem.Map(kClear, 0x2000, memory::MemoryPermission::All));
+    std::vector<u8> pre(kClearLines * kClearPitch, 0xEE);
+    DMA_ASSERT(mem.WriteBlock(kClear, pre.data(), pre.size()));
+
+    dma.CallMethod(MaxwellDma::REG_LINE_LENGTH_IN, kClearLen);
+    dma.CallMethod(MaxwellDma::REG_LINE_COUNT, kClearLines);
+    dma.CallMethod(MaxwellDma::REG_OFFSET_OUT, static_cast<u32>(kClear & 0xFFFFFFFFULL));
+    dma.CallMethod(MaxwellDma::REG_OFFSET_OUT + 1, static_cast<u32>(kClear >> 32));
+    dma.CallMethod(MaxwellDma::REG_PITCH_OUT, kClearPitch);
+    dma.CallMethod(MaxwellDma::REG_REMAP_COMPONENTS, 0x11); // 2 components, 2 bytes each
+    dma.CallMethod(MaxwellDma::REG_REMAP_CONST_A, 0xDEADBEEF);
+    dma.CallMethod(MaxwellDma::REG_REMAP_CONST_B, 0xCAFEBABE);
+    dma.CallMethod(MaxwellDma::REG_LAUNCH, 0x1); // remap_enable -> CONST_A clear
+    DMA_ASSERT(dma.GetCopyCount() == 5, "fast clear executed");
+
+    std::vector<u8> cleared(kClearLines * kClearPitch, 0);
+    DMA_ASSERT(mem.ReadBlock(kClear, cleared.data(), cleared.size()));
+    const u64 pattern8 = 0xCAFEBABEDEADBEEFULL;
+    for (u32 l = 0; l < kClearLines; ++l) {
+        // Cleared region repeats the 8-byte pattern.
+        for (u32 c = 0; c < kClearLen; c += 8) {
+            u64 got = 0;
+            std::memcpy(&got, cleared.data() + l * kClearPitch + c,
+                        std::min<size_t>(8, kClearLen - c));
+            const u64 want = (c + 8 <= kClearLen) ? pattern8
+                                : (pattern8 & ((1ULL << ((kClearLen - c) * 8)) - 1));
+            DMA_ASSERT(got == want, "cleared bytes match remap constant");
+        }
+        // Pitch gap between lines untouched.
+        for (u32 c = kClearLen; c < kClearPitch; ++c) {
+            DMA_ASSERT(cleared[l * kClearPitch + c] == 0xEE, "pitch gap preserved");
+        }
+    }
+
+    std::cout << "  - Maxwell DMA (1D + pitched + swizzle round-trip + remap fast-clear): PASSED" << std::endl;
     return 0;
 }

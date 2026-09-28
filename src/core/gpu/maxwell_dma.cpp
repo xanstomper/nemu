@@ -3,6 +3,8 @@
 #include "core/gpu/deswizzle.hpp"
 #include "platform/logger.hpp"
 #include <vector>
+#include <cstring>
+#include <algorithm>
 
 namespace nemu::core::gpu {
 
@@ -50,13 +52,58 @@ void MaxwellDma::CallMethod(u32 method, u32 argument) {
     case REG_SRC_PARAMS_BLOCK_SIZE:
         src_block_height_gobs_ = 1u << ((argument >> 4) & 0xF);
         return;
+    case REG_REMAP_CONST_A:
+        remap_const_ = (remap_const_ & 0xFFFFFFFF00000000ULL) | argument;
+        return;
+    case REG_REMAP_CONST_B:
+        remap_const_ = (remap_const_ & 0x00000000FFFFFFFFULL) | (static_cast<u64>(argument) << 32);
+        return;
+    case REG_REMAP_COMPONENTS:
+        remap_.components_reg = argument;
+        return;
     case REG_LAUNCH:
         launch_.raw = argument;
-        DoLaunch(); // launch register write triggers the copy (yuzu: is_last_call)
+        // yuzu: launch_dma.remap_enable (bit 0) + remap_const.dst_x == CONST_A
+        // triggers the fast buffer clear instead of a copy.
+        if ((launch_.raw & 1u) != 0 && remap_.NumComponents() >= 1 &&
+            line_length_in_ > 0 && line_count_ > 0) {
+            FastClear();
+        } else {
+            DoLaunch();
+        }
         return;
     default:
         return; // uninteresting method for HLE copies
     }
+}
+
+void MaxwellDma::FastClear() {
+    // yuzu RemapConst CONST_A path: fill the destination with the 8-byte
+    // remap constant repeated across line_length * line_count bytes. Games use
+    // this as a GPU-side fast clear for shadow maps / render targets.
+    const size_t total = static_cast<size_t>(line_length_in_) * line_count_;
+    if (total == 0) {
+        return;
+    }
+    std::vector<u8> pattern(sizeof(remap_const_));
+    std::memcpy(pattern.data(), &remap_const_, sizeof(remap_const_));
+
+    std::vector<u8> buf(total);
+    for (size_t off = 0; off < total; off += pattern.size()) {
+        const size_t n = std::min(pattern.size(), total - off);
+        std::memcpy(buf.data() + off, pattern.data(), n);
+    }
+    // Honor pitch_out when lines are strided.
+    if (line_count_ > 1 && pitch_out_ > line_length_in_) {
+        for (u32 l = 0; l < line_count_; ++l) {
+            memory_->WriteBlock(offset_out_ + static_cast<u64>(l) * pitch_out_,
+                                buf.data() + static_cast<size_t>(l) * line_length_in_,
+                                line_length_in_);
+        }
+    } else {
+        memory_->WriteBlock(offset_out_, buf.data(), buf.size());
+    }
+    ++copy_count_;
 }
 
 void MaxwellDma::DoLaunch() {
