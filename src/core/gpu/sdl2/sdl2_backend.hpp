@@ -131,7 +131,6 @@ private:
     SDL_Window* window_{nullptr};
     SDL_Renderer* renderer_{nullptr};
     SDL_Texture* texture_{nullptr};
-    SDL_Texture* ss_target_{nullptr}; // 2x supersampled render target (crisp fullscreen)
     u32 width_{0};
     u32 height_{0};
     bool initialized_{false};
