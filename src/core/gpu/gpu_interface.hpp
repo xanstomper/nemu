@@ -167,6 +167,9 @@ public:
     // render the software/passthrough path (Null, SDL2, or a D3D12 backend in
     // fallback mode) are unaffected.
     virtual void SetGuestShaders(std::span<const u8> /*vs_bytecode*/, std::span<const u8> /*ps_bytecode*/) {}
+    // Cap resident texture memory (bytes) for the 5 GiB budget. Default no-op;
+    // the D3D12 backend forwards to its TextureCache's byte-budget LRU.
+    virtual void SetTextureByteBudget(size_t /*bytes*/) {}
     // Carry a guest compute shader program so the translated backend can build
     // and dispatch a compute PSO. Default no-op (software backends count the
     // dispatch only).

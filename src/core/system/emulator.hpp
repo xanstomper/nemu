@@ -45,6 +45,7 @@ struct EmulatorConfig {
     std::string sdmc_root{"./sdmc"};
     std::string save_root{"./save"};
     std::string title_path{};
+    size_t texture_budget_bytes{0}; // 0 = backend default (1.5 GiB)
 };
 
 class Emulator {

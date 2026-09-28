@@ -72,6 +72,7 @@ static int MainInternal(int argc, char** argv) {
     // frames, and reports a BOOT verdict via stdout + exit code.
     std::string run_boot_path;   // --run <path.nro> headless boot probe
     u64 run_max_frames = 3;
+    u64 texture_budget_mib = 0; // --texture-budget=<MiB> resident texture cap
     bool demo_mode = false;
     bool ui_test_mode = false;
 
@@ -87,6 +88,9 @@ static int MainInternal(int argc, char** argv) {
             if (i + 1 < argc) run_boot_path = argv[++i];
         } else if (arg.rfind("--max-frames=", 0) == 0) {
             run_max_frames = std::max<u64>(1, std::strtoull(arg.substr(13).c_str(), nullptr, 10));
+        } else if (arg.rfind("--texture-budget=", 0) == 0) {
+            // MiB cap for resident texture memory (5 GiB budget tuning).
+            texture_budget_mib = std::strtoull(arg.substr(17).c_str(), nullptr, 10);
         } else if (!arg.starts_with("--")) {
             target_title = arg;
         }
@@ -101,7 +105,10 @@ static int MainInternal(int argc, char** argv) {
         .jit_enabled = true,
         .sdmc_root = "./sdmc",
         .save_root = "./save",
-        .title_path = target_title
+        .title_path = target_title,
+        .texture_budget_bytes = (texture_budget_mib != 0)
+                                    ? (texture_budget_mib * 1024 * 1024)
+                                    : 0
     };
 
     system::Emulator emulator(emu_cfg);

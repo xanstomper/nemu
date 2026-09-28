@@ -49,12 +49,14 @@ echo "[3/4] Building specification-compliant AppX package container (with BlockM
 python3 "${ROOT_DIR}/scripts/make_appx.py" "${STAGING_DIR}" "${OUTPUT_APPX}"
 
 # Copy certificate next to appx for Xbox Device Portal installation
+cp "${OUTPUT_APPX}" "${BUILD_DIR}/Nemulator_1.0.0.0_x64.appx"
 cp "${ROOT_DIR}/packaging/xbox/NemuDev.cer" "${BUILD_DIR}/NemuDev.cer"
 cp "${ROOT_DIR}/packaging/xbox/NemuDev.pfx" "${BUILD_DIR}/NemuDev.pfx"
 
 # Also populate release directory
 mkdir -p "${ROOT_DIR}/packaging/xbox/release"
 cp "${OUTPUT_APPX}" "${ROOT_DIR}/packaging/xbox/release/"
+cp "${OUTPUT_APPX}" "${ROOT_DIR}/packaging/xbox/release/Nemulator_1.0.0.0_x64.appx"
 cp "${ROOT_DIR}/packaging/xbox/NemuDev.cer" "${ROOT_DIR}/packaging/xbox/release/"
 cp "${ROOT_DIR}/packaging/xbox/NemuDev.pfx" "${ROOT_DIR}/packaging/xbox/release/"
 

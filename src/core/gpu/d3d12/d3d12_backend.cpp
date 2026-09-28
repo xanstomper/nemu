@@ -454,6 +454,14 @@ void D3D12GpuBackend::SetGuestShaders(std::span<const u8> vs_bytecode, std::span
     }
 }
 
+void D3D12GpuBackend::SetTextureByteBudget(size_t bytes) {
+    // Cap resident texture memory (the 5 GiB budget's biggest controllable
+    // term). 0 = leave the cache's default (1.5 GiB).
+    if (bytes == 0) return;
+    texture_cache_.SetByteBudget(bytes);
+    NEMU_LOG_INFO("D3D12", "SetTextureByteBudget: {} KiB", bytes / 1024);
+}
+
 void D3D12GpuBackend::SetComputeShader(std::span<const u8> compute_bytecode) {
     compute_shader_.assign(compute_bytecode.begin(), compute_bytecode.end());
     compute_shader_valid_ = !compute_shader_.empty();

@@ -184,6 +184,11 @@ void Emulator::ApplyRuntimeConfig() {
         fo.enabled = true;
         gpu_backend_->SetFrameOptimizerSettings(fo);
 
+        // 5 GiB budget: cap resident texture memory if configured (0 = default).
+        if (config_.texture_budget_bytes != 0) {
+            gpu_backend_->SetTextureByteBudget(config_.texture_budget_bytes);
+        }
+
         // Resolution scale: re-init the backend at the scaled resolution
         // (live; the guest keeps running — buffers are recreated, next frame
         // rasterizes at the new size).

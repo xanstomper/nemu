@@ -45,6 +45,7 @@ public:
     // PipelineBridge/PipelineCache; otherwise it falls back to the embedded
     // color-passthrough pipeline so rendering always works.
     void SetGuestShaders(std::span<const u8> vs_bytecode, std::span<const u8> ps_bytecode) override;
+    void SetTextureByteBudget(size_t bytes) override;
     void SetComputeShader(std::span<const u8> compute_bytecode) override;
     void DispatchCompute(u32 block_x, u32 block_y, u32 block_z) override;
 

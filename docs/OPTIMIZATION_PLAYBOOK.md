@@ -61,7 +61,8 @@ GPU decodes at sample. Ryujinx uploads `astc`→ RGBA → driver-compressed bloc
 - ✅ NEMU: `Bc1Encoder` wired into `TextureCache` ASTC upload path (8× memory
   reduction). **This is the single biggest 5 GiB lever** — a 2048×2048 ASTC
   texture is ~1.4 MB RGBA vs ~0.7 MB BC1, and atlases multiply it.
-- ⬜ TODO: BC1 1-bit-alpha / BC3 (BC1 loses alpha; many UI sprites need it).
+- ✅ NEMU: BC1 **3-color + 1-transparent punch-through** preserves UI/sprite
+  alpha with zero extra memory (was `⬜ BC1 1-bit-alpha / BC3` — done).
 
 ## 4. Present-path optimization pipeline (NEMU `GraphicsOptimizer`)
 
