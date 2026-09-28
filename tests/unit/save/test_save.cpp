@@ -99,6 +99,37 @@ int main() {
     NEMU_TEST_ASSERT(!read_after_delete.has_value(), "Save must not exist after deletion");
     std::cout << "  - Delete save data: PASSED" << std::endl;
 
+    // Test 6: Backup and restore saves
+    {
+        const std::string backup_payload = "Save to backup and restore test payload";
+        std::span<const u8> bp_span(reinterpret_cast<const u8*>(backup_payload.data()), backup_payload.size());
+        NEMU_TEST_ASSERT(save_mgr.WriteSaveData(TITLE_ID, "backup_test.sav", bp_span), "Write save for backup test");
+
+        const std::filesystem::path external_backup_dir = std::filesystem::current_path() / "test_backup_external";
+        std::filesystem::remove_all(external_backup_dir, ec);
+
+        bool backed_up = save_mgr.BackupSavesTo(external_backup_dir.string());
+        NEMU_TEST_ASSERT(backed_up, "Backup saves to external directory");
+
+        // Delete the original
+        save_mgr.DeleteSaveData(TITLE_ID, "backup_test.sav");
+        auto check_deleted = save_mgr.ReadSaveData(TITLE_ID, "backup_test.sav");
+        NEMU_TEST_ASSERT(!check_deleted.has_value(), "Ensure save is deleted before restore");
+
+        // Restore from backup
+        bool restored = save_mgr.RestoreSavesFrom(external_backup_dir.string());
+        NEMU_TEST_ASSERT(restored, "Restore saves from external directory");
+
+        auto restored_data = save_mgr.ReadSaveData(TITLE_ID, "backup_test.sav");
+        NEMU_TEST_ASSERT(restored_data.has_value(), "Read restored save data");
+        NEMU_TEST_ASSERT(restored_data->size() == backup_payload.size(), "Restored size matches");
+        NEMU_TEST_ASSERT(std::memcmp(restored_data->data(), backup_payload.data(), backup_payload.size()) == 0,
+                         "Restored payload matches");
+
+        std::filesystem::remove_all(external_backup_dir, ec);
+        std::cout << "  - Save backup and restore: PASSED" << std::endl;
+    }
+
     // Clean up
     std::filesystem::remove_all(test_dir, ec);
 

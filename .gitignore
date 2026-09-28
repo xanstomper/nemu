@@ -46,10 +46,10 @@ __pycache__/
 
 # Local data & keys (clean-room isolation)
 *.keys
-keys/
-save/
-sdmc/
-switch/
+/keys/
+/save/
+/sdmc/
+/switch/
 
 # CTest temporary artifacts
 Testing/

@@ -119,7 +119,10 @@ size_t XAudio2Backend::GetQueuedFramesCount() const noexcept {
     if (!source_voice_) return 0;
     XAUDIO2_VOICE_STATE state;
     source_voice_->GetState(&state);
-    return state.BuffersQueued;
+    if (queued_frames_ >= state.SamplesPlayed) {
+        return queued_frames_ - static_cast<size_t>(state.SamplesPlayed);
+    }
+    return 0;
 }
 
 float XAudio2Backend::GetLatencyMs() const noexcept {

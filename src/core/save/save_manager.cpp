@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cstring>
+#include <filesystem>
 
 namespace nemu::core::save {
 
@@ -146,6 +147,76 @@ bool SaveManager::DeleteSaveData(u64 title_id, std::string_view filename) {
     bool deleted = vfs_.DeleteFile(target_path);
     vfs_.DeleteFile(backup_path);
     return deleted;
+}
+
+bool SaveManager::BackupSavesTo(std::string_view target_dir) {
+    auto src_opt = vfs_.ResolvePath("save:/");
+    if (!src_opt) return false;
+
+    std::filesystem::path src_path(*src_opt);
+    std::error_code ec;
+    if (!std::filesystem::exists(src_path, ec)) return false;
+
+    std::filesystem::path dst_path;
+    if (auto resolved = vfs_.ResolvePath(target_dir)) {
+        dst_path = *resolved;
+    } else {
+        dst_path = std::string(target_dir);
+    }
+
+    std::filesystem::create_directories(dst_path, ec);
+    if (ec) {
+        NEMU_LOG_WARN("Save", "Could not create backup directory '{}': {}", dst_path.string(), ec.message());
+        return false;
+    }
+
+    bool copied_any = false;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(src_path, ec)) {
+        if (entry.is_regular_file()) {
+            auto rel = std::filesystem::relative(entry.path(), src_path, ec);
+            if (!ec) {
+                auto target_file = dst_path / rel;
+                std::filesystem::create_directories(target_file.parent_path(), ec);
+                std::filesystem::copy_file(entry.path(), target_file,
+                                           std::filesystem::copy_options::overwrite_existing, ec);
+                if (!ec) copied_any = true;
+            }
+        }
+    }
+    NEMU_LOG_INFO("Save", "Backed up save directory to '{}' (success={})", dst_path.string(), copied_any);
+    return copied_any;
+}
+
+bool SaveManager::RestoreSavesFrom(std::string_view source_dir) {
+    auto dst_opt = vfs_.ResolvePath("save:/");
+    if (!dst_opt) return false;
+
+    std::filesystem::path dst_path(*dst_opt);
+    std::filesystem::path src_path;
+    if (auto resolved = vfs_.ResolvePath(source_dir)) {
+        src_path = *resolved;
+    } else {
+        src_path = std::string(source_dir);
+    }
+
+    std::error_code ec;
+    if (!std::filesystem::exists(src_path, ec)) return false;
+
+    bool restored_any = false;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(src_path, ec)) {
+        if (entry.is_regular_file()) {
+            auto rel = std::filesystem::relative(entry.path(), src_path, ec);
+            if (!ec) {
+                auto target_file = dst_path / rel;
+                std::filesystem::create_directories(target_file.parent_path(), ec);
+                std::filesystem::copy_file(entry.path(), target_file,
+                                           std::filesystem::copy_options::overwrite_existing, ec);
+                if (!ec) restored_any = true;
+            }
+        }
+    }
+    NEMU_LOG_INFO("Save", "Restored save directory from '{}' (success={})", src_path.string(), restored_any);
+    return restored_any;
 }
 
 } // namespace nemu::core::save

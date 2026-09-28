@@ -27,6 +27,12 @@ public:
     /// Delete save data and associated backup
     bool DeleteSaveData(u64 title_id, std::string_view filename);
 
+    /// Backup all saves from save:/ to an external destination directory (e.g. "D:/NemuSaves" or USB drive)
+    bool BackupSavesTo(std::string_view target_dir);
+
+    /// Restore saves from an external source directory into save:/
+    bool RestoreSavesFrom(std::string_view source_dir);
+
 private:
     std::string GetTitleSaveDir(u64 title_id) const;
 

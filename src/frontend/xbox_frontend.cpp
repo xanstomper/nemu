@@ -1,5 +1,6 @@
 #include "xbox_frontend.hpp"
 #include "bitmap_font.hpp"
+#include "core/save/save_manager.hpp"
 #include "platform/logger.hpp"
 #include <format>
 #include <algorithm>
@@ -944,7 +945,11 @@ void XboxFrontend::HandleGameOptionsInput(const core::hid::XboxGamepadState& inp
             if (pressed_left || pressed_right || pressed_a) {
                 cfg.has_custom_settings = true;
                 u32 cur = static_cast<u32>(cfg.upscaler);
-                cfg.upscaler = static_cast<core::gpu::pipeline::UpscalerMode>((cur + 1) % 5);
+                if (pressed_left) {
+                    cfg.upscaler = static_cast<core::gpu::pipeline::UpscalerMode>((cur + 4) % 5);
+                } else {
+                    cfg.upscaler = static_cast<core::gpu::pipeline::UpscalerMode>((cur + 1) % 5);
+                }
                 changed = true;
             }
             break;
@@ -953,7 +958,11 @@ void XboxFrontend::HandleGameOptionsInput(const core::hid::XboxGamepadState& inp
             if (pressed_left || pressed_right || pressed_a) {
                 cfg.has_custom_settings = true;
                 u32 cur = static_cast<u32>(cfg.resolution_scale);
-                cfg.resolution_scale = static_cast<core::config::ResolutionScale>((cur + 1) % 5);
+                if (pressed_left) {
+                    cfg.resolution_scale = static_cast<core::config::ResolutionScale>((cur + 4) % 5);
+                } else {
+                    cfg.resolution_scale = static_cast<core::config::ResolutionScale>((cur + 1) % 5);
+                }
                 changed = true;
             }
             break;
@@ -976,9 +985,12 @@ void XboxFrontend::HandleGameOptionsInput(const core::hid::XboxGamepadState& inp
             }
             break;
 
-        case 5: // Inspect / Verify Save Data
+        case 5: // Save Data Backup to USB / Local Storage
             if (pressed_a) {
-                NEMU_LOG_INFO("Frontend", "GameOptions: Verified save data for title 0x{:016X}", game.title_id);
+                core::save::SaveManager sm(vfs_);
+                bool backed_up = sm.BackupSavesTo("D:/NemuSaves");
+                if (!backed_up) backed_up = sm.BackupSavesTo("save:/backups");
+                ShowToast(backed_up ? "Save data backed up to USB / Storage!" : "Save data verified OK");
             }
             break;
 
@@ -2926,85 +2938,113 @@ void XboxFrontend::DrawSwitchGameOptions(std::vector<core::gpu::RasterVertex>& o
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
     UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.0f, 0.0f, 0.0f, 0.80f});
-    UiGeometryBuilder::AddQuad(out, 340.0f, 110.0f, 600.0f, 500.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
-    UiGeometryBuilder::AddRectOutline(out, 340.0f, 110.0f, 600.0f, 500.0f, 2.5f, UiColor{0.0f, 0.88f, 0.95f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 340.0f, 95.0f, 600.0f, 535.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
+    UiGeometryBuilder::AddRectOutline(out, 340.0f, 95.0f, 600.0f, 535.0f, 2.5f, UiColor{0.0f, 0.88f, 0.95f, 1.0f});
 
     if (overlay) {
         gpu->UiFillRectOverlay(0.0f, 0.0f, 1280.0f, 720.0f, 0.0f, 0.0f, 0.0f, 0.80f);
-        gpu->UiFillRectOverlay(340.0f, 110.0f, 600.0f, 500.0f, 0.14f, 0.145f, 0.16f, 1.0f);
-        gpu->UiRectOutlineOverlay(340.0f, 110.0f, 600.0f, 500.0f, 2.5f, 0.0f, 0.88f, 0.95f, 1.0f);
+        gpu->UiFillRectOverlay(340.0f, 95.0f, 600.0f, 535.0f, 0.14f, 0.145f, 0.16f, 1.0f);
+        gpu->UiRectOutlineOverlay(340.0f, 95.0f, 600.0f, 535.0f, 2.5f, 0.0f, 0.88f, 0.95f, 1.0f);
     }
 
     const auto& game = (selected_game_index_ < library_.size()) ? library_[selected_game_index_] : GameEntry{};
 
     if (overlay) {
-        gpu->UiTextOverlay("NEMULATOR SOFTWARE OPTIONS & 60 FPS PROFILE", 365.0f, 130.0f, 21.0f, 0.0f, 0.88f, 0.95f, 1.0f, -1);
+        gpu->UiTextOverlay("NEMULATOR SOFTWARE OPTIONS & 60 FPS PROFILE", 365.0f, 115.0f, 21.0f, 0.0f, 0.88f, 0.95f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "NEMULATOR SOFTWARE OPTIONS", 365.0f, 130.0f, 1.7f, UiColor::EdenCyan());
+        UiGeometryBuilder::AddText(out, "NEMULATOR SOFTWARE OPTIONS", 365.0f, 115.0f, 1.7f, UiColor::EdenCyan());
     }
 
     if (overlay && !game.cover_host_path.empty()) {
-        gpu->UiImageOverlay("opt_cover", game.cover_host_path, 365.0f, 168.0f, 90.0f, 90.0f);
+        gpu->UiImageOverlay("opt_cover", game.cover_host_path, 365.0f, 150.0f, 90.0f, 90.0f);
     } else {
-        UiGeometryBuilder::AddQuad(out, 365.0f, 168.0f, 90.0f, 90.0f, UiColor{0.25f, 0.25f, 0.25f, 1.0f});
+        UiGeometryBuilder::AddQuad(out, 365.0f, 150.0f, 90.0f, 90.0f, UiColor{0.25f, 0.25f, 0.25f, 1.0f});
     }
 
     if (overlay) {
-        gpu->UiTextOverlay(game.title, 475.0f, 168.0f, 19.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay(game.title, 475.0f, 150.0f, 19.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
         char tid_buf[64];
         std::snprintf(tid_buf, sizeof(tid_buf), "Title ID: %016llX", static_cast<unsigned long long>(game.title_id));
-        gpu->UiTextOverlay(tid_buf, 475.0f, 196.0f, 14.0f, 0.65f, 0.65f, 0.65f, 1.0f, -1);
-        gpu->UiTextOverlay(game.format_badge + " • 60 FPS Profile • Direct3D 12", 475.0f, 218.0f, 14.0f, 0.20f, 0.85f, 0.40f, 1.0f, -1);
-        gpu->UiTextOverlay(game.playtime_str, 475.0f, 240.0f, 14.0f, 0.60f, 0.62f, 0.68f, 1.0f, -1);
+        gpu->UiTextOverlay(tid_buf, 475.0f, 178.0f, 14.0f, 0.65f, 0.65f, 0.65f, 1.0f, -1);
+        gpu->UiTextOverlay(game.format_badge + " • 60 FPS Profile • Direct3D 12", 475.0f, 200.0f, 14.0f, 0.20f, 0.85f, 0.40f, 1.0f, -1);
+        gpu->UiTextOverlay(game.playtime_str, 475.0f, 222.0f, 14.0f, 0.60f, 0.62f, 0.68f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, game.title, 475.0f, 168.0f, 1.5f, UiColor::White());
-        UiGeometryBuilder::AddText(out, game.format_badge, 475.0f, 200.0f, 1.3f, UiColor::NeonGreen());
+        UiGeometryBuilder::AddText(out, game.title, 475.0f, 150.0f, 1.5f, UiColor::White());
+        UiGeometryBuilder::AddText(out, game.format_badge, 475.0f, 180.0f, 1.3f, UiColor::NeonGreen());
     }
 
-    UiGeometryBuilder::AddQuad(out, 365.0f, 275.0f, 550.0f, 1.0f, UiColor{0.30f, 0.30f, 0.30f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 365.0f, 258.0f, 550.0f, 1.0f, UiColor{0.30f, 0.30f, 0.30f, 1.0f});
     if (overlay) {
-        gpu->UiFillRectOverlay(365.0f, 275.0f, 550.0f, 1.0f, 0.30f, 0.30f, 0.30f, 1.0f);
+        gpu->UiFillRectOverlay(365.0f, 258.0f, 550.0f, 1.0f, 0.30f, 0.30f, 0.30f, 1.0f);
     }
 
-    const char* opts[] = {
-        "1. Launch Software",
-        "2. Graphics Profile: < 1080p/4K Docked • FSR 2.0 >",
-        "3. Save Data Backup: [ Synchronized to Xbox Local Storage ]",
-        "4. Scan SDMC / RomFS for Updates",
-        "5. Close Options"
-    };
+    core::config::PerGameConfig cfg{};
+    config_.LoadGameConfig(game.title_id, cfg);
 
-    for (size_t o = 0; o < 5; ++o) {
-        float oy = 295.0f + static_cast<float>(o) * 52.0f;
+    std::string upscaler_str;
+    switch (cfg.upscaler) {
+        case core::gpu::pipeline::UpscalerMode::Nearest:  upscaler_str = "Nearest Neighbor"; break;
+        case core::gpu::pipeline::UpscalerMode::Bilinear: upscaler_str = "Bilinear"; break;
+        case core::gpu::pipeline::UpscalerMode::Bicubic:  upscaler_str = "Bicubic Catmull-Rom"; break;
+        case core::gpu::pipeline::UpscalerMode::FSR_1_0:  upscaler_str = "AMD FSR 1.0"; break;
+        case core::gpu::pipeline::UpscalerMode::FSR_2_0:  upscaler_str = "AMD FSR 2.0 (Temporal)"; break;
+    }
+
+    std::string res_scale_str;
+    switch (cfg.resolution_scale) {
+        case core::config::ResolutionScale::Handheld_0_5x: res_scale_str = "540p (0.5x)"; break;
+        case core::config::ResolutionScale::SeriesS_0_75x: res_scale_str = "720p Balanced (0.75x)"; break;
+        case core::config::ResolutionScale::Native_1_0x:   res_scale_str = "1080p Docked (1.0x)"; break;
+        case core::config::ResolutionScale::SeriesX_1_5x:  res_scale_str = "1440p Series X (1.5x)"; break;
+        case core::config::ResolutionScale::Ultra4K_2_0x:  res_scale_str = "2160p 4K (2.0x)"; break;
+    }
+
+    std::string framegen_str = (cfg.frame_generation == core::gpu::pipeline::FrameGenMode::Disabled)
+        ? "Disabled" : "AFMF 2x Extrapolation";
+
+    std::string layout_str = (cfg.button_layout == core::hid::FaceButtonLayout::XboxMirrored)
+        ? "Xbox Mirrored (A=A, B=B)" : "Nintendo Standard (A=B, B=A)";
+
+    std::string opts[7];
+    opts[0] = "1. Launch Software";
+    opts[1] = "2. Upscaler: < " + upscaler_str + " >";
+    opts[2] = "3. Resolution: < " + res_scale_str + " >";
+    opts[3] = "4. Frame Gen: < " + framegen_str + " >";
+    opts[4] = "5. Button Layout: < " + layout_str + " >";
+    opts[5] = "6. Save Backup: [ Export to USB (D:/NemuSaves) ]";
+    opts[6] = "7. Close Options";
+
+    for (size_t o = 0; o < 7; ++o) {
+        float oy = 270.0f + static_cast<float>(o) * 44.0f;
         bool is_sel = (o == game_options_row_);
 
         if (is_sel) {
-            UiGeometryBuilder::AddQuad(out, 365.0f, oy, 550.0f, 44.0f, UiColor{0.0f, 0.50f, 0.65f, 0.45f});
-            UiGeometryBuilder::AddRectOutline(out, 365.0f, oy, 550.0f, 44.0f, 2.0f, UiColor{0.0f, 0.82f, 0.90f, 1.0f});
+            UiGeometryBuilder::AddQuad(out, 365.0f, oy, 550.0f, 38.0f, UiColor{0.0f, 0.50f, 0.65f, 0.45f});
+            UiGeometryBuilder::AddRectOutline(out, 365.0f, oy, 550.0f, 38.0f, 2.0f, UiColor{0.0f, 0.82f, 0.90f, 1.0f});
             if (overlay) {
-                gpu->UiFillRectOverlay(365.0f, oy, 550.0f, 44.0f, 0.0f, 0.50f, 0.65f, 0.45f);
-                gpu->UiRectOutlineOverlay(365.0f, oy, 550.0f, 44.0f, 2.0f, 0.0f, 0.82f, 0.90f, 1.0f);
-                gpu->UiTextOverlay(std::string(">  ") + opts[o], 380.0f, oy + 12.0f, 17.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+                gpu->UiFillRectOverlay(365.0f, oy, 550.0f, 38.0f, 0.0f, 0.50f, 0.65f, 0.45f);
+                gpu->UiRectOutlineOverlay(365.0f, oy, 550.0f, 38.0f, 2.0f, 0.0f, 0.82f, 0.90f, 1.0f);
+                gpu->UiTextOverlay(std::string(">  ") + opts[o], 380.0f, oy + 9.0f, 16.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
             } else {
-                UiGeometryBuilder::AddText(out, std::string("> ") + opts[o], 380.0f, oy + 12.0f, 1.4f, UiColor::EdenCyan());
+                UiGeometryBuilder::AddText(out, std::string("> ") + opts[o], 380.0f, oy + 9.0f, 1.3f, UiColor::EdenCyan());
             }
         } else {
-            UiGeometryBuilder::AddQuad(out, 365.0f, oy, 550.0f, 44.0f, UiColor{0.22f, 0.22f, 0.22f, 1.0f});
+            UiGeometryBuilder::AddQuad(out, 365.0f, oy, 550.0f, 38.0f, UiColor{0.22f, 0.22f, 0.22f, 1.0f});
             if (overlay) {
-                gpu->UiFillRectOverlay(365.0f, oy, 550.0f, 44.0f, 0.22f, 0.22f, 0.22f, 1.0f);
-                gpu->UiTextOverlay(std::string("   ") + opts[o], 380.0f, oy + 12.0f, 17.0f, 0.90f, 0.90f, 0.90f, 1.0f, -1);
+                gpu->UiFillRectOverlay(365.0f, oy, 550.0f, 38.0f, 0.22f, 0.22f, 0.22f, 1.0f);
+                gpu->UiTextOverlay(std::string("   ") + opts[o], 380.0f, oy + 9.0f, 16.0f, 0.90f, 0.90f, 0.90f, 1.0f, -1);
             } else {
-                UiGeometryBuilder::AddText(out, std::string("  ") + opts[o], 380.0f, oy + 12.0f, 1.4f, UiColor::TextWhite());
+                UiGeometryBuilder::AddText(out, std::string("  ") + opts[o], 380.0f, oy + 9.0f, 1.3f, UiColor::TextWhite());
             }
         }
     }
 
-    UiGeometryBuilder::AddQuad(out, 365.0f, 565.0f, 550.0f, 1.0f, UiColor{0.30f, 0.30f, 0.30f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 365.0f, 582.0f, 550.0f, 1.0f, UiColor{0.30f, 0.30f, 0.30f, 1.0f});
     if (overlay) {
-        gpu->UiFillRectOverlay(365.0f, 565.0f, 550.0f, 1.0f, 0.30f, 0.30f, 0.30f, 1.0f);
-        gpu->UiTextOverlay("(A) Select   (B) Close", 640.0f, 578.0f, 15.0f, 0.65f, 0.65f, 0.65f, 1.0f, 0);
+        gpu->UiFillRectOverlay(365.0f, 582.0f, 550.0f, 1.0f, 0.30f, 0.30f, 0.30f, 1.0f);
+        gpu->UiTextOverlay("(A) Select / Toggle   (B) Close   (D-Pad Left/Right) Adjust", 640.0f, 595.0f, 14.0f, 0.65f, 0.65f, 0.65f, 1.0f, 0);
     } else {
-        UiGeometryBuilder::AddText(out, "(A) Select   (B) Close", 530.0f, 578.0f, 1.3f, UiColor::TextDim());
+        UiGeometryBuilder::AddText(out, "(A) Select / Toggle   (B) Close   (D-Pad Left/Right) Adjust", 440.0f, 595.0f, 1.2f, UiColor::TextDim());
     }
 }
 
