@@ -12,6 +12,8 @@ set(GPU_SOURCES
     maxwell_3d.cpp
     maxwell_dma.hpp
     maxwell_dma.cpp
+    fermi_2d.hpp
+    fermi_2d.cpp
     gpu_factory.hpp
     gpu_factory.cpp
     nvhost/nvmap.hpp

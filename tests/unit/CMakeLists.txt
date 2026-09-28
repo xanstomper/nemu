@@ -394,6 +394,21 @@ target_link_libraries(test_maxwell_dma PRIVATE
 target_compile_features(test_maxwell_dma PRIVATE cxx_std_20)
 add_test(NAME test_maxwell_dma COMMAND test_maxwell_dma)
 
+add_executable(test_fermi_2d
+    gpu/test_fermi_2d.cpp
+)
+
+target_include_directories(test_fermi_2d PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_fermi_2d PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_fermi_2d PRIVATE cxx_std_20)
+add_test(NAME test_fermi_2d COMMAND test_fermi_2d)
+
 add_executable(test_aligned_alloc
     common/test_aligned_alloc.cpp
 )
