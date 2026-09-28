@@ -39,6 +39,50 @@ enum class ActiveSubView : u32 {
     UserProfile = 9
 };
 
+enum class GameListMode : u32 {
+    Carousel = 0,
+    Grid = 1,
+    List = 2
+};
+
+struct TopMenuItem {
+    std::string text;
+    std::string shortcut;
+    std::string action_id;
+    bool enabled{true};
+    bool checked{false};
+};
+
+struct TopMenuCategory {
+    std::string name;
+    std::vector<TopMenuItem> items;
+};
+
+struct TopMenuBar {
+    std::vector<TopMenuCategory> categories;
+    bool is_open{false};
+    int active_category{-1};
+    int active_item{-1};
+};
+
+struct AmiiboEntry {
+    std::string name;
+    std::string series;
+    std::string uuid;
+    std::string nfc_id;
+    std::string icon_char;
+};
+
+struct AmiiboScanner {
+    bool is_open{false};
+    std::vector<AmiiboEntry> presets;
+    size_t selected_index{0};
+    std::string status_msg{"Ready to Scan NFC Tag"};
+    float status_timer{0.0f};
+    bool custom_file_mode{false};
+    std::vector<std::string> custom_amiibo_files;
+};
+
 struct GameEntry {
     std::string title;
     std::string filename;
@@ -171,6 +215,24 @@ public:
     [[nodiscard]] std::string GetConsoleModeString() const;
     [[nodiscard]] std::string_view GetToastMessage() const noexcept { return toast_message_; }
 
+    [[nodiscard]] GameListMode GetGameListMode() const noexcept { return game_list_mode_; }
+    void SetGameListMode(GameListMode mode) noexcept { game_list_mode_ = mode; }
+    void CycleGameListMode() noexcept {
+        game_list_mode_ = static_cast<GameListMode>((static_cast<u32>(game_list_mode_) + 1) % 3);
+    }
+
+    [[nodiscard]] bool IsTopMenuOpen() const noexcept { return menu_bar_.is_open; }
+    void ToggleTopMenu() noexcept {
+        menu_bar_.is_open = !menu_bar_.is_open;
+        if (!menu_bar_.is_open) {
+            menu_bar_.active_category = -1;
+            menu_bar_.active_item = -1;
+        }
+    }
+    [[nodiscard]] bool IsAmiiboScannerOpen() const noexcept { return amiibo_scanner_.is_open; }
+    void ToggleAmiiboScanner() noexcept { amiibo_scanner_.is_open = !amiibo_scanner_.is_open; }
+    void LoadAmiiboNfc(const std::string& tag_name);
+
     /// Live emulator telemetry for the Diagnostics category (pushed by main loop).
     struct LiveDiagnostics {
         u64 frame_count{0};
@@ -256,6 +318,15 @@ private:
     void HandleSettingsInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b);
     void HandleControllersSubInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b, core::hid::XboxControllerDriver* driver);
     void HandlePowerMenuInput(bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b);
+
+    void InitTopMenuBar();
+    void InitAmiiboScanner();
+    void HandleTopMenuBarInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b);
+    void HandleAmiiboInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b);
+    void DrawEdenTopMenuBar(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawSwitchGridView(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawSwitchListView(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawAmiiboScanner(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
 
     /// Resolve cover art for a library entry (rom-sidecar jpg/png, or a
     /// covers/ directory lookup by title id). Empty result = placeholder tile.
@@ -378,6 +449,33 @@ private:
     // Frame timing & animations
     u64 ui_frame_count_{0};
     float focus_animation_timer_{0.0f};
+
+    // Eden UI Mode & Components
+    GameListMode game_list_mode_{GameListMode::Carousel};
+    TopMenuBar menu_bar_{};
+    AmiiboScanner amiibo_scanner_{};
+
+    // Eden 16-Category Settings State
+    std::string settings_theme_{"Dark (Eden Switch)"};
+    std::string settings_astc_mode_{"Direct3D 12 Compute (Zero Copy)"};
+    std::string settings_fastmem_mode_{"Hardware VEH Fault Trap"};
+    std::string settings_gpu_accuracy_{"High (Bit-Exact FP16/32)"};
+    std::string settings_audio_backend_{"XAudio2 5.1 Surround Spatial"};
+    std::string settings_controller_type_{"Pro Controller (Mirrored Xbox Layout)"};
+    std::string settings_region_{"USA (North America)"};
+    std::string settings_language_{"English (American)"};
+    std::string settings_clock_sync_{"Network Time Protocol (NTP RTC Synchronized)"};
+    std::string settings_hotkey_profile_{"Xbox Series X|S Dev Mode Default"};
+    std::string settings_amiibo_source_{"Internal Virtual NFC Antenna (sdmc:/amiibo)"};
+    std::string settings_fsr_sharpness_{"0.85 (Ultra-Crisp 4K)"};
+    std::string settings_anisotropic_{"16x (Highest Texture Clarity)"};
+    std::string settings_vsync_mode_{"Mailbox / FreeSync Variable Refresh Rate"};
+    std::string settings_log_level_{"Info / Warnings / Errors (Trace to Terminal)"};
+    std::string settings_ldn_passphrase_{"nemu-mesh-private"};
+    bool settings_enable_discord_rpc_{true};
+    bool settings_enable_afmf_{true};
+    bool settings_enable_reactive_flushing_{true};
+    bool settings_enable_shader_cache_{true};
 };
 
 } // namespace nemu::frontend

@@ -49,21 +49,30 @@ int main() {
     {
         core::hid::XboxGamepadState input{};
 
-        // Press X -> FileManager tab
+        // Press X on Library tab -> Cycles GameListMode (Carousel -> Grid)
         input.x = true;
         fe.ProcessInput(input);
-        NEMU_TEST_ASSERT(fe.GetCurrentTab() == FrontendTab::FileManager, "Switched to FileManager via X");
+        NEMU_TEST_ASSERT(fe.GetCurrentTab() == FrontendTab::Library, "Still on Library after X (view cycle)");
+        NEMU_TEST_ASSERT(fe.GetGameListMode() == GameListMode::Grid, "Cycled to Grid view via X");
 
         // Release X
         input.x = false;
         fe.ProcessInput(input);
 
-        // Press B -> Return to Library
-        input.b = true;
+        // Press X again -> Cycles GameListMode (Grid -> List)
+        input.x = true;
         fe.ProcessInput(input);
-        NEMU_TEST_ASSERT(fe.GetCurrentTab() == FrontendTab::Library, "Returned to Library via B");
+        NEMU_TEST_ASSERT(fe.GetGameListMode() == GameListMode::List, "Cycled to List view via X");
 
-        input.b = false;
+        input.x = false;
+        fe.ProcessInput(input);
+
+        // Press X again -> Cycles GameListMode (List -> Carousel)
+        input.x = true;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(fe.GetGameListMode() == GameListMode::Carousel, "Cycled back to Carousel via X");
+
+        input.x = false;
         fe.ProcessInput(input);
 
         // Press RB -> FileManager tab
