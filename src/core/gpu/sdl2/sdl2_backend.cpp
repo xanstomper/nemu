@@ -55,7 +55,7 @@ bool Sdl2GpuBackend::Initialize(u32 render_width, u32 render_height) {
 
     // Render everything in UI coordinates (1280x720); SDL scales to the actual
     // window size proportionally and centers with letterboxing/pillarboxing.
-    SDL_RenderSetLogicalSize(renderer_, static_cast<int>(width_), static_cast<int>(height_));
+    SDL_RenderSetLogicalSize(renderer_, 1280, 720);
 
 #ifdef NEMU_SDL2_UI
     // Crisp UI overlay: TrueType text + cover images.
