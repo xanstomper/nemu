@@ -314,16 +314,12 @@ public:
     void ToggleModManager() noexcept { mod_manager_open_ = !mod_manager_open_; }
 
     [[nodiscard]] LibraryFilterCategory GetFilterCategory() const noexcept { return filter_category_; }
-    void SetFilterCategory(LibraryFilterCategory cat) noexcept { filter_category_ = cat; }
-    void CycleFilterCategory() noexcept {
-        filter_category_ = static_cast<LibraryFilterCategory>((static_cast<u32>(filter_category_) + 1) % 5);
-    }
+    void SetFilterCategory(LibraryFilterCategory cat);
+    void CycleFilterCategory();
 
     [[nodiscard]] LibrarySortMode GetSortMode() const noexcept { return sort_mode_; }
-    void SetSortMode(LibrarySortMode sort) noexcept { sort_mode_ = sort; }
-    void CycleSortMode() noexcept {
-        sort_mode_ = static_cast<LibrarySortMode>((static_cast<u32>(sort_mode_) + 1) % 4);
-    }
+    void SetSortMode(LibrarySortMode sort);
+    void CycleSortMode();
     [[nodiscard]] std::string GetFilterCategoryString() const;
     [[nodiscard]] std::string GetSortModeString() const;
 
@@ -331,7 +327,16 @@ public:
     [[nodiscard]] const std::vector<std::string>& GetRecentFiles() const noexcept { return recent_files_; }
 
     [[nodiscard]] const std::string& GetSearchQuery() const noexcept { return search_query_; }
-    void SetSearchQuery(std::string q) { search_query_ = std::move(q); }
+    void SetSearchQuery(std::string q);
+
+    [[nodiscard]] bool IsInFilterBar() const noexcept { return home_in_filter_bar_; }
+    void SetInFilterBar(bool in_bar) noexcept { home_in_filter_bar_ = in_bar; }
+    [[nodiscard]] size_t GetFilterBarItem() const noexcept { return filter_bar_item_; }
+    void SetFilterBarItem(size_t item) noexcept { filter_bar_item_ = item; }
+    [[nodiscard]] bool IsNewsReadingArticle() const noexcept { return news_reading_article_; }
+    void SetNewsReadingArticle(bool reading) noexcept { news_reading_article_ = reading; }
+    [[nodiscard]] bool IsAlbumFullscreen() const noexcept { return album_fullscreen_; }
+    void SetAlbumFullscreen(bool fs) noexcept { album_fullscreen_ = fs; }
 
     [[nodiscard]] std::string GetCompatString(CompatRating rating) const;
     [[nodiscard]] UiColor GetCompatColor(CompatRating rating) const;
@@ -455,6 +460,7 @@ private:
     /// Resolve cover art for a library entry (rom-sidecar jpg/png, or a
     /// covers/ directory lookup by title id). Empty result = placeholder tile.
     void AttachCover(GameEntry& entry);
+    void ApplyLibraryFilters();
 
     /// Real data providers for Switch subviews (no mock strings).
     /// Storage stats of the host volume backing the given mount prefix.
@@ -507,6 +513,7 @@ private:
 
     FrontendTab current_tab_{FrontendTab::Library};
     std::vector<GameEntry> library_;
+    std::vector<GameEntry> raw_library_;
     size_t selected_game_index_{0};
     size_t selected_setting_row_{0};
     std::optional<std::string> launch_requested_;
@@ -514,6 +521,8 @@ private:
     // Switch HOME view state: tile row vs. bottom shortcut bar
     bool home_in_shortcuts_{false};
     size_t home_shortcut_index_{0};
+    bool home_in_filter_bar_{false};
+    size_t filter_bar_item_{0};
     float home_scroll_offset_{0.0f}; // animated tile-row offset (tiles)
     size_t home_last_selected_{SIZE_MAX};
     float home_title_alpha_{1.0f};   // fades in when the selection changes
@@ -600,6 +609,44 @@ private:
     bool settings_enable_afmf_{true};
     bool settings_enable_reactive_flushing_{true};
     bool settings_enable_shader_cache_{true};
+
+    // Full 16-Category Dynamic Settings State
+    std::string settings_speed_limit_{"100% (Normal Speed)"};
+    bool settings_confirm_exit_{true};
+    bool settings_pause_background_{true};
+    std::string settings_mouse_hide_timer_{"3 Seconds (Auto-Fade)"};
+    std::string settings_timezone_{"UTC+00:00 (Coordinated Universal Time)"};
+    std::string settings_cpu_accuracy_{"Auto-Balanced (Adaptive Block Size)"};
+    std::string settings_address_space_{"39-Bit Virtual (512 GiB)"};
+    std::string settings_aspect_ratio_{"16:9 Standard Widescreen"};
+    std::string settings_memory_cap_{"5120 MiB (Strict Enforcement)"};
+    std::string settings_audio_stretching_{"Enabled (Buffer Underrun Guard)"};
+    bool settings_show_title_ids_{true};
+    std::string settings_oled_dimmer_{"Enabled (5 Minutes)"};
+    std::string settings_gdb_stub_{"Listening on TCP 24689"};
+    std::string settings_directstorage_{"Enabled (Async Win32 File IO)"};
+    std::string settings_profile_nickname_{"Player 1"};
+    std::string settings_mii_avatar_{"Default Switch Blue Mii"};
+    std::string settings_swkbd_mode_{"Horizon OS Built-in Virtual Keyboard"};
+    std::string settings_web_sandbox_{"Embedded WebKit Sandboxed Offline View"};
+    std::string settings_network_adapter_{"0.0.0.0 (All Host Interfaces)"};
+    std::string settings_hotkey_guide_{"Open Nintendo Switch Home Menu"};
+    std::string settings_hotkey_fullscreen_{"Alt+Enter / Double Click Window"};
+    std::string settings_hotkey_ff_{"R3 Click / Tab Key"};
+    std::string settings_hotkey_screenshot_{"Xbox Share Button / F12"};
+    std::string settings_hotkey_quickmenu_{"Xbox Back / Select Button"};
+
+    // Interactive News Reader State
+    bool news_reading_article_{false};
+    size_t news_selected_idx_{0};
+
+    // Interactive Album Fullscreen Viewer State
+    bool album_fullscreen_{false};
+    size_t album_selected_idx_{0};
+
+    // Interactive User Profile State
+    size_t profile_row_{0};
+    size_t profile_avatar_idx_{0};
 
     // Eden About Dialog
     bool about_dialog_open_{false};
