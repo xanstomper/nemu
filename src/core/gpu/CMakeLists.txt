@@ -28,6 +28,13 @@ set(GPU_SOURCES
     nvhost/nvhost_channel.cpp
     nvhost/nvdevice.hpp
     nvhost/nvdevice.cpp
+    nvhost/nvdec_common.hpp
+    nvhost/nvdec.hpp
+    nvhost/nvdec.cpp
+    nvhost/nvhost_nvdec.hpp
+    nvhost/nvhost_nvdec.cpp
+    nvhost/h264.hpp
+    nvhost/h264.cpp
     presentation/buffer_queue.hpp
     presentation/buffer_queue.cpp
     presentation/nvnflinger.hpp

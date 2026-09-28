@@ -1,4 +1,6 @@
 #include "nvdevice.hpp"
+#include "nvhost_nvdec.hpp"
+#include "nvmap.hpp"
 #include "platform/logger.hpp"
 #include <cstring>
 #include <vector>
@@ -373,8 +375,10 @@ s32 NvDeviceManager::Open(std::string_view path) {
         file = std::make_shared<NvHostCtrlDevice>(syncpoints_);
     } else if (path == "/dev/nvhost-as-gpu") {
         file = std::make_shared<NvHostAsGpuDevice>(address_space_);
+    } else if (path == "/dev/nvhost-nvdec") {
+        file = std::make_shared<NvHostNvdecDevice>(nvmap_, syncpoints_, memory_);
     } else if (path == "/dev/nvhost-gpu" || path == "/dev/nvhost-ctrl-gpu" ||
-               path == "/dev/nvhost-nvdec" || path == "/dev/nvhost-vic" ||
+               path == "/dev/nvhost-vic" ||
                path == "/dev/nvhost-nvjpg" || path == "/dev/nvhost-prof-gpu" ||
                path == "/dev/nvhost-tsec" || path == "/dev/nvhost-tsecb") {
         file = std::make_shared<NvHostGpuDevice>(channel_, memory_);
