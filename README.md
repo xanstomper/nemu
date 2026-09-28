@@ -200,6 +200,14 @@ copyrighted firmware. To run encrypted retail media, supply your own
 `prod.keys` / `title.keys` (extracted from hardware you own) in the `keys/`
 directory.
 
+## 🤝 Community
+
+- **Get involved** — read [`CONTRIBUTING.md`](CONTRIBUTING.md) and pick a
+  `good first issue`.
+- **Ask questions / share ideas** — [GitHub Discussions](https://github.com/xanstomper/nemu/discussions).
+- **Report bugs** — open an [Issue](https://github.com/xanstomper/nemu/issues).
+- **Security** — see [`SECURITY.md`](SECURITY.md) for responsible disclosure.
+
 ---
 
 <div align="center">
