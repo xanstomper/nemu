@@ -251,6 +251,9 @@ public:
         game_list_mode_ = static_cast<GameListMode>((static_cast<u32>(game_list_mode_) + 1) % 3);
     }
 
+    [[nodiscard]] size_t GetSettingsCategory() const noexcept { return settings_category_; }
+    void SetSettingsCategory(size_t cat) noexcept { settings_category_ = cat % 16; }
+
     [[nodiscard]] bool IsTopMenuOpen() const noexcept { return menu_bar_.is_open; }
     void ToggleTopMenu() noexcept {
         menu_bar_.is_open = !menu_bar_.is_open;

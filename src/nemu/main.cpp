@@ -83,6 +83,7 @@ static int MainInternal(int argc, char** argv) {
     std::string initial_sort;
     std::string initial_menu;
     size_t initial_prop_tab = 0;
+    size_t initial_settings_cat = 0;
     u64 ui_target_frames = 60;
 
     for (int i = 1; i < argc; ++i) {
@@ -105,6 +106,8 @@ static int MainInternal(int argc, char** argv) {
             initial_menu = arg.substr(7);
         } else if (arg.rfind("--prop-tab=", 0) == 0) {
             initial_prop_tab = std::strtoull(arg.substr(11).c_str(), nullptr, 10);
+        } else if (arg.rfind("--settings-cat=", 0) == 0) {
+            initial_settings_cat = std::strtoull(arg.substr(15).c_str(), nullptr, 10);
         } else if (arg.rfind("--ui-frames=", 0) == 0) {
             ui_target_frames = std::max<u64>(1, std::strtoull(arg.substr(12).c_str(), nullptr, 10));
         } else if (arg == "--run") {
@@ -186,7 +189,10 @@ static int MainInternal(int argc, char** argv) {
     frontend.SetLdnNetwork(emulator.GetLdnNetwork());
 
     if (!initial_subview.empty()) {
-        if (initial_subview == "settings") frontend.SetActiveSubView(frontend::ActiveSubView::SystemSettings);
+        if (initial_subview == "settings") {
+            frontend.SetActiveSubView(frontend::ActiveSubView::SystemSettings);
+            frontend.SetSettingsCategory(initial_settings_cat);
+        }
         else if (initial_subview == "controllers") frontend.SetActiveSubView(frontend::ActiveSubView::Controllers);
         else if (initial_subview == "powermenu") frontend.SetActiveSubView(frontend::ActiveSubView::PowerMenu);
         else if (initial_subview == "gameoptions") frontend.SetActiveSubView(frontend::ActiveSubView::GameOptions);
