@@ -1474,7 +1474,7 @@ std::vector<std::pair<std::string, std::string>> XboxFrontend::ListCaptureFiles(
 }
 
 std::string XboxFrontend::GetEmulatorVersionString() {
-    return "Nemu v0.8.4-preview (Horizon OS 18.1.0 compatibility layer)";
+    return "NEMULATOR v1.0.0-uwp (Xbox Series X|S \u2022 Horizon OS 18.1.0)";
 }
 
 void XboxFrontend::SetLdnNetwork(std::shared_ptr<nemu::core::network::LdnUdpNetwork> net) {
@@ -3108,15 +3108,19 @@ void XboxFrontend::DrawSwitchNso(std::vector<core::gpu::RasterVertex>& out, core
 void XboxFrontend::DrawSwitchNews(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu) {
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.1765f, 0.1765f, 0.1765f, 1.0f});
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 80, UiColor{0.93f, 0.42f, 0.40f, 1.0f});
+    // Deep NEMULATOR background
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.11f, 0.115f, 0.125f, 1.0f});
+    // Header accent bar (NEMULATOR News)
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 80, UiColor{0.85f, 0.32f, 0.28f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 0, 78, 1280, 2, UiColor{0.95f, 0.45f, 0.40f, 0.6f});
 
     std::string icon_path = FindAsset("ui/icon_news.png");
     if (overlay && !icon_path.empty()) {
         gpu->UiImageOverlay("hdr_news", icon_path, 60.0f, 18.0f, 44.0f, 44.0f);
-        gpu->UiTextOverlay("News & Updates", 120.0f, 26.0f, 26.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("NEMULATOR News & Updates", 120.0f, 22.0f, 24.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("XBOX UWP \u2022 CHANGELOG & SYSTEM ADVISORIES", 120.0f, 52.0f, 13.0f, 1.0f, 0.85f, 0.82f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "NEWS & UPDATES", 60.0f, 26.0f, 2.2f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "NEMULATOR NEWS & UPDATES", 60.0f, 26.0f, 2.0f, UiColor::White());
     }
 
     // Real news: emulator changelog from the local repository
@@ -3141,23 +3145,23 @@ void XboxFrontend::DrawSwitchNews(std::vector<core::gpu::RasterVertex>& out, cor
 
     for (size_t i = 0; i < 3 && i < news_items.size(); ++i) {
         float ny = 110.0f + static_cast<float>(i) * 165.0f;
-        UiGeometryBuilder::AddQuad(out, 60.0f, ny, 540.0f, 145.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
-        UiGeometryBuilder::AddRectOutline(out, 60.0f, ny, 540.0f, 145.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+        UiGeometryBuilder::AddQuad(out, 60.0f, ny, 540.0f, 145.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
+        UiGeometryBuilder::AddRectOutline(out, 60.0f, ny, 540.0f, 145.0f, 1.5f, UiColor{0.20f, 0.21f, 0.23f, 1.0f});
 
         if (overlay) {
-            gpu->UiTextOverlay(news_items[i][0], 85.0f, ny + 18.0f, 19.0f, 0.93f, 0.42f, 0.40f, 1.0f, -1);
+            gpu->UiTextOverlay(news_items[i][0], 85.0f, ny + 18.0f, 19.0f, 0.95f, 0.48f, 0.45f, 1.0f, -1);
             gpu->UiTextOverlay(news_items[i][1], 85.0f, ny + 46.0f, 13.0f, 0.60f, 0.60f, 0.60f, 1.0f, -1);
         } else {
             UiGeometryBuilder::AddText(out, news_items[i][0], 85.0f, ny + 18.0f, 1.5f, UiColor::SwitchRed());
         }
     }
 
-    UiGeometryBuilder::AddQuad(out, 630.0f, 110.0f, 590.0f, 495.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
-    UiGeometryBuilder::AddRectOutline(out, 630.0f, 110.0f, 590.0f, 495.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 630.0f, 110.0f, 590.0f, 495.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
+    UiGeometryBuilder::AddRectOutline(out, 630.0f, 110.0f, 590.0f, 495.0f, 1.5f, UiColor{0.20f, 0.21f, 0.23f, 1.0f});
 
     if (overlay) {
         // Real system status panel (live values, no marketing mock)
-        gpu->UiTextOverlay("SYSTEM STATUS", 660.0f, 135.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("NEMULATOR SYSTEM STATUS", 660.0f, 135.0f, 20.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
         gpu->UiTextOverlay(GetEmulatorVersionString(), 660.0f, 180.0f, 16.0f, 0.0f, 0.82f, 0.90f, 1.0f, -1);
         const auto& cfg = config_.GetConfig();
         std::string cpu_str = "CPU: " + std::string(cfg.cpu_backend == core::config::CpuBackendMode::Jit ? "ARM64 JIT" : "Interpreter")
@@ -3165,54 +3169,60 @@ void XboxFrontend::DrawSwitchNews(std::vector<core::gpu::RasterVertex>& out, cor
         std::string gfx_str = "GPU: FSR " + std::string(cfg.upscaler == core::gpu::pipeline::UpscalerMode::FSR_2_0 ? "2.0" :
                                                        cfg.upscaler == core::gpu::pipeline::UpscalerMode::FSR_1_0 ? "1.0" : "Bicubic");
         std::string lib_str = "Library: " + std::to_string(library_.size()) + " titles installed";
+        std::string arch_str = "Platform: Xbox Series X|S (Direct3D 12 \u2022 5GB RAM Cap)";
         gpu->UiTextOverlay(cpu_str, 660.0f, 220.0f, 15.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
         gpu->UiTextOverlay(gfx_str, 660.0f, 245.0f, 15.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
         gpu->UiTextOverlay(lib_str, 660.0f, 280.0f, 15.0f, 0.85f, 0.85f, 0.85f, 1.0f, -1);
+        gpu->UiTextOverlay(arch_str, 660.0f, 310.0f, 14.0f, 0.10f, 0.85f, 0.45f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "SYSTEM STATUS", 660.0f, 140.0f, 1.6f, UiColor::EdenCyan());
+        UiGeometryBuilder::AddText(out, "NEMULATOR SYSTEM STATUS", 660.0f, 140.0f, 1.6f, UiColor::EdenCyan());
     }
 
-    UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.20f, 0.21f, 0.23f, 1.0f});
 
     std::string btn_b = FindAsset("ui/btn_b.png");
     if (overlay && !btn_b.empty()) {
         gpu->UiImageOverlay("btn_b_news", btn_b, 1140.0f, 674.0f, 24.0f, 24.0f);
-        gpu->UiTextOverlay("Back to HOME", 1172.0f, 678.0f, 17.0f, 0.95f, 0.95f, 0.95f, 1.0f, -1);
+        gpu->UiTextOverlay("Back to NEMULATOR", 1172.0f, 678.0f, 17.0f, 0.90f, 0.90f, 0.92f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "(B) Back to HOME", 1100.0f, 678.0f, 1.4f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "(B) Back to NEMULATOR", 1100.0f, 678.0f, 1.4f, UiColor::White());
     }
 }
 
 void XboxFrontend::DrawSwitchEShop(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu) {
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.1765f, 0.1765f, 0.1765f, 1.0f});
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 80, UiColor{1.0f, 0.74f, 0.20f, 1.0f});
+    // Deep NEMULATOR background
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.11f, 0.115f, 0.125f, 1.0f});
+    // Golden amber accent bar (NEMULATOR Content Manager)
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 80, UiColor{0.92f, 0.65f, 0.10f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 0, 78, 1280, 2, UiColor{1.0f, 0.80f, 0.25f, 0.6f});
 
     std::string icon_path = FindAsset("ui/icon_eshop.png");
     if (overlay && !icon_path.empty()) {
         gpu->UiImageOverlay("hdr_eshop", icon_path, 60.0f, 18.0f, 44.0f, 44.0f);
-        gpu->UiTextOverlay("Game Manager", 120.0f, 26.0f, 26.0f, 0.15f, 0.15f, 0.15f, 1.0f, -1);
+        gpu->UiTextOverlay("NEMULATOR Content Manager", 120.0f, 22.0f, 24.0f, 0.12f, 0.12f, 0.12f, 1.0f, -1);
+        gpu->UiTextOverlay("SDMC & ROM BROWSER \u2022 XBOX STORAGE DISCOVERY", 120.0f, 52.0f, 13.0f, 0.35f, 0.25f, 0.05f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "GAME MANAGER", 60.0f, 26.0f, 2.2f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "NEMULATOR CONTENT MANAGER", 60.0f, 26.0f, 2.0f, UiColor::White());
     }
 
-    UiGeometryBuilder::AddQuad(out, 60.0f, 105.0f, 1160.0f, 80.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
-    UiGeometryBuilder::AddRectOutline(out, 60.0f, 105.0f, 1160.0f, 80.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 60.0f, 105.0f, 1160.0f, 80.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
+    UiGeometryBuilder::AddRectOutline(out, 60.0f, 105.0f, 1160.0f, 80.0f, 1.5f, UiColor{0.20f, 0.21f, 0.23f, 1.0f});
     // Real storage stats from the host volume backing sdmc:/
     auto st = QueryStorageStats("sdmc:/");
     auto gb = [](uintmax_t b) { return static_cast<double>(b) / (1000.0 * 1000.0 * 1000.0); };
     if (overlay) {
-        gpu->UiTextOverlay("Game Manager - Storage / Browser (RetroArch style)", 85.0f, 120.0f, 18.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("NEMULATOR Storage & ROM Explorer (Xbox UWP)", 85.0f, 120.0f, 18.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
         if (st.valid) {
             char st_buf[96];
-            std::snprintf(st_buf, sizeof(st_buf), "Free Space: %.1f GB / %.1f GB Available", gb(st.free_bytes), gb(st.capacity_bytes));
-            gpu->UiTextOverlay(st_buf, 85.0f, 150.0f, 15.0f, 0.20f, 0.85f, 0.40f, 1.0f, -1);
+            std::snprintf(st_buf, sizeof(st_buf), "Free Space: %.1f GB / %.1f GB Available (sdmc:/)", gb(st.free_bytes), gb(st.capacity_bytes));
+            gpu->UiTextOverlay(st_buf, 85.0f, 150.0f, 15.0f, 0.10f, 0.85f, 0.45f, 1.0f, -1);
         } else {
             gpu->UiTextOverlay("Free Space: unknown (mount not found)", 85.0f, 150.0f, 15.0f, 0.85f, 0.55f, 0.20f, 1.0f, -1);
         }
     } else {
-        UiGeometryBuilder::AddText(out, "Internal Storage", 85.0f, 135.0f, 1.5f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "Internal Storage (sdmc:/)", 85.0f, 135.0f, 1.5f, UiColor::White());
     }
 
     // Live file browser: real dir_entries_ from the FileManager backend + action rows
@@ -3223,18 +3233,18 @@ void XboxFrontend::DrawSwitchEShop(std::vector<core::gpu::RasterVertex>& out, co
     auto draw_row = [&](size_t idx, const std::string& t1, const std::string& t2, bool highlight) {
         float ay = 205.0f + static_cast<float>(idx) * 102.0f;
         if (ay > 560.0f) return;
-        UiGeometryBuilder::AddQuad(out, 60.0f, ay, 1160.0f, 86.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
+        UiGeometryBuilder::AddQuad(out, 60.0f, ay, 1160.0f, 86.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
         UiGeometryBuilder::AddRectOutline(out, 60.0f, ay, 1160.0f, 86.0f, 1.5f,
-                                          highlight ? UiColor{0.0f, 0.82f, 0.90f, 1.0f} : UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+                                          highlight ? UiColor{0.0f, 0.82f, 0.90f, 1.0f} : UiColor{0.20f, 0.21f, 0.23f, 1.0f});
         if (overlay) {
             gpu->UiTextOverlay(t1, 85.0f, ay + 18.0f, 19.0f, 1.0f, 0.74f, 0.20f, 1.0f, -1);
             gpu->UiTextOverlay(t2, 85.0f, ay + 48.0f, 14.0f, 0.75f, 0.75f, 0.75f, 1.0f, -1);
         }
     };
 
-    draw_row(0, "Scan Storage / Install Content", "Recursive scan of all drives for NSP / XCI / NRO / ROMs (X)", false);
+    draw_row(0, "Scan Storage / Install Content", "Recursive scan of all drives for NSP / XCI / NRO / ROMs  \xEE\x80\x82 (X)", false);
     if (library_.empty()) {
-        draw_row(1, "Installed Applications (0 Games)", "No titles found yet", false);
+        draw_row(1, "Installed Applications (0 Games)", "No titles found yet \u2022 Press (X) to scan drives", false);
     } else {
         std::string list = library_[0].title;
         for (size_t i = 1; i < library_.size() && i < 3; ++i) list += ", " + library_[i].title;
@@ -3253,18 +3263,18 @@ void XboxFrontend::DrawSwitchEShop(std::vector<core::gpu::RasterVertex>& out, co
                  current_dir_path_ + sz, a == selected_file_index_);
     }
 
-    UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.20f, 0.21f, 0.23f, 1.0f});
 
     std::string btn_a = FindAsset("ui/btn_a.png");
     std::string btn_b = FindAsset("ui/btn_b.png");
     std::string btn_x = FindAsset("ui/btn_x.png");
     if (overlay && !btn_a.empty() && !btn_b.empty()) {
         gpu->UiImageOverlay("btn_b_eshop", btn_b, 850.0f, 674.0f, 24.0f, 24.0f);
-        gpu->UiTextOverlay("Back", 882.0f, 678.0f, 17.0f, 0.95f, 0.95f, 0.95f, 1.0f, -1);
+        gpu->UiTextOverlay("Back", 882.0f, 678.0f, 17.0f, 0.90f, 0.90f, 0.92f, 1.0f, -1);
         if (!btn_x.empty()) gpu->UiImageOverlay("btn_x_eshop", btn_x, 960.0f, 674.0f, 24.0f, 24.0f);
-        gpu->UiTextOverlay("Scan Storage", 992.0f, 678.0f, 17.0f, 0.95f, 0.95f, 0.95f, 1.0f, -1);
+        gpu->UiTextOverlay("Scan Storage", 992.0f, 678.0f, 17.0f, 0.90f, 0.90f, 0.92f, 1.0f, -1);
         gpu->UiImageOverlay("btn_a_eshop", btn_a, 1140.0f, 674.0f, 24.0f, 24.0f);
-        gpu->UiTextOverlay("Select", 1172.0f, 678.0f, 17.0f, 0.95f, 0.95f, 0.95f, 1.0f, -1);
+        gpu->UiTextOverlay("Select", 1172.0f, 678.0f, 17.0f, 0.90f, 0.90f, 0.92f, 1.0f, -1);
     } else {
         UiGeometryBuilder::AddText(out, "(B) Back   (X) Scan Storage   (A) Select", 850.0f, 678.0f, 1.4f, UiColor::White());
     }
@@ -3273,15 +3283,19 @@ void XboxFrontend::DrawSwitchEShop(std::vector<core::gpu::RasterVertex>& out, co
 void XboxFrontend::DrawSwitchAlbum(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu) {
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.1765f, 0.1765f, 0.1765f, 1.0f});
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 80, UiColor{0.24f, 0.54f, 0.96f, 1.0f});
+    // Deep NEMULATOR background
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.11f, 0.115f, 0.125f, 1.0f});
+    // Royal blue accent bar (NEMULATOR Media Gallery)
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 80, UiColor{0.15f, 0.45f, 0.85f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 0, 78, 1280, 2, UiColor{0.30f, 0.65f, 1.0f, 0.6f});
 
     std::string icon_path = FindAsset("ui/icon_album.png");
     if (overlay && !icon_path.empty()) {
         gpu->UiImageOverlay("hdr_album", icon_path, 60.0f, 18.0f, 44.0f, 44.0f);
-        gpu->UiTextOverlay("Album (Screenshots & Captures)", 120.0f, 26.0f, 26.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("NEMULATOR Media Gallery", 120.0f, 22.0f, 24.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("SCREENSHOTS & IN-GAME CAPTURES \u2022 4K/HDR", 120.0f, 52.0f, 13.0f, 0.75f, 0.88f, 1.0f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "ALBUM (SCREENSHOTS & CAPTURES)", 60.0f, 26.0f, 2.2f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "NEMULATOR MEDIA GALLERY", 60.0f, 26.0f, 2.0f, UiColor::White());
     }
 
     // Real captures: list files under save:/screenshots on the host
@@ -3292,13 +3306,13 @@ void XboxFrontend::DrawSwitchAlbum(std::vector<core::gpu::RasterVertex>& out, co
 
     for (size_t s = 0; s < 3; ++s) {
         float sx = 60.0f + static_cast<float>(s) * 395.0f;
-        UiGeometryBuilder::AddQuad(out, sx, 120.0f, 370.0f, 490.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
-        UiGeometryBuilder::AddRectOutline(out, sx, 120.0f, 370.0f, 490.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+        UiGeometryBuilder::AddQuad(out, sx, 120.0f, 370.0f, 490.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
+        UiGeometryBuilder::AddRectOutline(out, sx, 120.0f, 370.0f, 490.0f, 1.5f, UiColor{0.20f, 0.21f, 0.23f, 1.0f});
 
         if (s < shots.size() && overlay) {
             gpu->UiImageOverlay("shot_" + std::to_string(s), shots[s].first, sx + 20.0f, 140.0f, 330.0f, 330.0f);
         } else {
-            UiGeometryBuilder::AddQuad(out, sx + 20.0f, 140.0f, 330.0f, 330.0f, UiColor{0.25f, 0.25f, 0.25f, 1.0f});
+            UiGeometryBuilder::AddQuad(out, sx + 20.0f, 140.0f, 330.0f, 330.0f, UiColor{0.18f, 0.185f, 0.20f, 1.0f});
         }
 
         if (overlay) {
@@ -3306,50 +3320,51 @@ void XboxFrontend::DrawSwitchAlbum(std::vector<core::gpu::RasterVertex>& out, co
                 gpu->UiTextOverlay(shots[s].second, sx + 20.0f, 490.0f, 16.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
                 gpu->UiTextOverlay("Captured in-game (save:/screenshots/)", sx + 20.0f, 520.0f, 13.0f, 0.65f, 0.65f, 0.65f, 1.0f, -1);
             } else {
-                gpu->UiTextOverlay("No capture", sx + 20.0f, 490.0f, 16.0f, 0.55f, 0.55f, 0.55f, 1.0f, -1);
+                gpu->UiTextOverlay("No capture", sx + 20.0f, 490.0f, 16.0f, 0.50f, 0.52f, 0.55f, 1.0f, -1);
             }
         }
     }
 
-    UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.20f, 0.21f, 0.23f, 1.0f});
 
     std::string btn_b = FindAsset("ui/btn_b.png");
     if (overlay && !btn_b.empty()) {
         gpu->UiImageOverlay("btn_b_alb", btn_b, 1140.0f, 674.0f, 24.0f, 24.0f);
-        gpu->UiTextOverlay("Back to HOME", 1172.0f, 678.0f, 17.0f, 0.95f, 0.95f, 0.95f, 1.0f, -1);
+        gpu->UiTextOverlay("Back to NEMULATOR", 1172.0f, 678.0f, 17.0f, 0.90f, 0.90f, 0.92f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "(B) Back to HOME", 1100.0f, 678.0f, 1.4f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "(B) Back to NEMULATOR", 1100.0f, 678.0f, 1.4f, UiColor::White());
     }
 }
 
 void XboxFrontend::DrawSwitchProfile(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu) {
     const bool overlay = gpu && gpu->SupportsUiOverlay();
 
-    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.1765f, 0.1765f, 0.1765f, 1.0f});
+    // Deep NEMULATOR background
+    UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.11f, 0.115f, 0.125f, 1.0f});
 
     std::string icon_path = FindAsset("ui/avatar_link.png");
     if (overlay && !icon_path.empty()) {
-        gpu->UiImageOverlay("prof_av", icon_path, 60.0f, 30.0f, 64.0f, 64.0f);
-        gpu->UiTextOverlay("Player 1", 140.0f, 36.0f, 28.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
-        gpu->UiTextOverlay("Friend Code: SW-4829-1048-2849 • Xbox Full Trust", 140.0f, 70.0f, 15.0f, 0.20f, 0.85f, 0.90f, 1.0f, -1);
+        gpu->UiImageOverlay("prof_av", icon_path, 60.0f, 26.0f, 64.0f, 64.0f);
+        gpu->UiTextOverlay("Player 1 \u2022 NEMULATOR Profile", 140.0f, 30.0f, 26.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("Xbox Gamertag: Player 1 \u2022 UWP Full Trust Mode \u2022 Series X|S", 140.0f, 64.0f, 14.0f, 0.0f, 0.82f, 0.90f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "Player 1 (Profile)", 60.0f, 36.0f, 2.0f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "Player 1 (NEMULATOR Profile)", 60.0f, 36.0f, 2.0f, UiColor::White());
     }
 
-    UiGeometryBuilder::AddQuad(out, 40.0f, 105.0f, 1200.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 40.0f, 105.0f, 1200.0f, 2.0f, UiColor{0.20f, 0.21f, 0.23f, 1.0f});
 
     if (overlay) {
-        gpu->UiTextOverlay("Play Activity", 60.0f, 125.0f, 22.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+        gpu->UiTextOverlay("Play Activity & Title History", 60.0f, 125.0f, 22.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "PLAY ACTIVITY", 60.0f, 125.0f, 1.6f, UiColor::EdenCyan());
+        UiGeometryBuilder::AddText(out, "PLAY ACTIVITY & TITLE HISTORY", 60.0f, 125.0f, 1.6f, UiColor::EdenCyan());
     }
 
     // Real play activity: installed library entries with real file size + format
     for (size_t a = 0; a < 4 && a < library_.size(); ++a) {
         const auto& g = library_[a];
         float ay = 165.0f + static_cast<float>(a) * 105.0f;
-        UiGeometryBuilder::AddQuad(out, 60.0f, ay, 1160.0f, 90.0f, UiColor{0.21f, 0.21f, 0.21f, 1.0f});
-        UiGeometryBuilder::AddRectOutline(out, 60.0f, ay, 1160.0f, 90.0f, 1.5f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+        UiGeometryBuilder::AddQuad(out, 60.0f, ay, 1160.0f, 90.0f, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
+        UiGeometryBuilder::AddRectOutline(out, 60.0f, ay, 1160.0f, 90.0f, 1.5f, UiColor{0.20f, 0.21f, 0.23f, 1.0f});
 
         if (overlay && !g.cover_host_path.empty()) {
             gpu->UiImageOverlay("act_cov_" + std::to_string(a), g.cover_host_path, 80.0f, ay + 10.0f, 70.0f, 70.0f);
@@ -3363,7 +3378,7 @@ void XboxFrontend::DrawSwitchProfile(std::vector<core::gpu::RasterVertex>& out, 
             std::snprintf(b, sizeof(b), "%.2f GB", static_cast<double>(sz) / 1e9);
             size_str = std::string(b);
         }
-        std::string sub = g.format_badge + " - " + (size_str.empty() ? "Installed" : size_str);
+        std::string sub = g.format_badge + " \u2022 " + (size_str.empty() ? "Installed" : size_str) + " \u2022 Direct3D 12";
 
         if (overlay) {
             gpu->UiTextOverlay(g.title, 175.0f, ay + 20.0f, 19.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
@@ -3376,14 +3391,14 @@ void XboxFrontend::DrawSwitchProfile(std::vector<core::gpu::RasterVertex>& out, 
         gpu->UiTextOverlay("No installed titles. Press (Y) on HOME to scan storage.", 175.0f, 200.0f, 17.0f, 0.6f, 0.6f, 0.6f, 1.0f, -1);
     }
 
-    UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.28f, 0.28f, 0.28f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 30.0f, 646.0f, 1220.0f, 2.0f, UiColor{0.20f, 0.21f, 0.23f, 1.0f});
 
     std::string btn_b = FindAsset("ui/btn_b.png");
     if (overlay && !btn_b.empty()) {
         gpu->UiImageOverlay("btn_b_prof", btn_b, 1140.0f, 674.0f, 24.0f, 24.0f);
-        gpu->UiTextOverlay("Back to HOME", 1172.0f, 678.0f, 17.0f, 0.95f, 0.95f, 0.95f, 1.0f, -1);
+        gpu->UiTextOverlay("Back to NEMULATOR", 1172.0f, 678.0f, 17.0f, 0.90f, 0.90f, 0.92f, 1.0f, -1);
     } else {
-        UiGeometryBuilder::AddText(out, "(B) Back to HOME", 1100.0f, 678.0f, 1.4f, UiColor::White());
+        UiGeometryBuilder::AddText(out, "(B) Back to NEMULATOR", 1100.0f, 678.0f, 1.4f, UiColor::White());
     }
 }
 
@@ -3412,8 +3427,14 @@ void XboxFrontend::BuildUiGeometry(std::vector<core::gpu::RasterVertex>& out, co
         DrawSwitchProfile(out, gpu);
     } else {
         if (library_.empty()) {
-            UiGeometryBuilder::AddText(out, "No software found.", 500, 330, 1.9f, UiColor::TextWhite());
-            UiGeometryBuilder::AddText(out, "Copy games to sdmc:/ then press (Y) to scan.", 420, 372, 1.4f, UiColor::TextDim());
+            UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor{0.11f, 0.115f, 0.125f, 1.0f});
+            UiGeometryBuilder::AddQuad(out, 340, 240, 600, 220, UiColor{0.14f, 0.145f, 0.16f, 1.0f});
+            UiGeometryBuilder::AddRectOutline(out, 340, 240, 600, 220, 1.5f, UiColor{0.20f, 0.21f, 0.23f, 1.0f});
+
+            UiGeometryBuilder::AddText(out, "NEMULATOR XBOX UWP", 460, 270, 2.0f, UiColor::EdenCyan());
+            UiGeometryBuilder::AddText(out, "No titles installed in sdmc:/ or games/", 410, 315, 1.4f, UiColor::TextWhite());
+            UiGeometryBuilder::AddText(out, "Copy NSP / XCI / NRO to sdmc:/ then press (Y) to scan.", 360, 355, 1.3f, UiColor::TextDim());
+            UiGeometryBuilder::AddText(out, "Press (X) to open Content Manager / Storage Browser", 370, 395, 1.2f, UiColor{0.10f, 0.85f, 0.45f, 1.0f});
             DrawSwitchHomeChrome(out, gpu, false);
         } else {
             DrawSwitchHomeView(out, gpu);
@@ -3422,8 +3443,8 @@ void XboxFrontend::BuildUiGeometry(std::vector<core::gpu::RasterVertex>& out, co
 
     // Floating toast notification if any
     if (toast_timer_ > 0.0f && !toast_message_.empty() && active_subview_ == ActiveSubView::None) {
-        UiGeometryBuilder::AddQuad(out, 390.0f, 14.0f, 500.0f, 36.0f, UiColor{0.10f, 0.10f, 0.115f, 0.95f});
-        UiGeometryBuilder::AddRectOutline(out, 390.0f, 14.0f, 500.0f, 36.0f, 1.5f, UiColor{0.0f, 0.82f, 0.90f, 0.8f});
+        UiGeometryBuilder::AddQuad(out, 390.0f, 14.0f, 500.0f, 36.0f, UiColor{0.10f, 0.105f, 0.12f, 0.95f});
+        UiGeometryBuilder::AddRectOutline(out, 390.0f, 14.0f, 500.0f, 36.0f, 1.5f, UiColor{0.0f, 0.82f, 0.90f, 0.9f});
         if (gpu && gpu->SupportsUiOverlay()) {
             gpu->UiTextOverlay(toast_message_, 640.0f, 22.0f, 16.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
         } else {
@@ -3438,13 +3459,13 @@ void XboxFrontend::BuildQuickMenuGeometry(std::vector<core::gpu::RasterVertex>& 
     // Full screen dimming overlay
     UiGeometryBuilder::AddQuad(out, 0, 0, 1280, 720, UiColor::ModalDark());
 
-    // Centered modal box
-    UiGeometryBuilder::AddQuad(out, 360, 90, 560, 540, UiColor::CardFocus());
-    UiGeometryBuilder::AddRectOutline(out, 360, 90, 560, 540, 2.5f, UiColor::EdenCyan());
+    // Centered modal box with dark glassmorphic styling
+    UiGeometryBuilder::AddQuad(out, 360, 85, 560, 550, UiColor{0.12f, 0.125f, 0.14f, 0.98f});
+    UiGeometryBuilder::AddRectOutline(out, 360, 85, 560, 550, 2.0f, UiColor{0.0f, 0.82f, 0.90f, 0.9f});
 
-    UiGeometryBuilder::AddText(out, "RETROARCH QUICK MENU", 480, 115, 1.8f, UiColor::EdenCyan());
-    UiGeometryBuilder::AddText(out, "IN-GAME OVERLAY", 565, 142, 1.2f, UiColor::TextDim());
-    UiGeometryBuilder::AddQuad(out, 380, 165, 520, 1, UiColor::CardBorder());
+    UiGeometryBuilder::AddText(out, "NEMULATOR QUICK MENU", 480, 110, 1.8f, UiColor::EdenCyan());
+    UiGeometryBuilder::AddText(out, "XBOX UWP IN-GAME CONTROLS \u2022 DIRECT3D 12", 440, 138, 1.2f, UiColor{0.70f, 0.72f, 0.76f, 1.0f});
+    UiGeometryBuilder::AddQuad(out, 380, 162, 520, 1, UiColor{0.22f, 0.24f, 0.28f, 1.0f});
 
     const char* qm_items[] = {
         "Resume Game",
@@ -3455,18 +3476,19 @@ void XboxFrontend::BuildQuickMenuGeometry(std::vector<core::gpu::RasterVertex>& 
         "Core Options (Resolution / FSR)",
         "Controls (Nintendo / Xbox Layout)",
         "Take Screenshot",
-        "Close Content (Return to Eden UI)",
+        "Close Content (Return to NEMULATOR)",
         "Fast Forward (Toggle 2x)"
     };
 
     auto& cfg = config_.GetConfig();
 
     for (size_t i = 0; i < 10; ++i) {
-        float iy = 185.0f + static_cast<float>(i) * 44.0f;
+        float iy = 180.0f + static_cast<float>(i) * 44.0f;
         bool is_sel = (i == quick_menu_row_);
 
         if (is_sel) {
-            UiGeometryBuilder::AddQuad(out, 380, iy - 4, 520, 36, UiColor::SelectedRow());
+            UiGeometryBuilder::AddQuad(out, 380, iy - 4, 520, 36, UiColor{0.0f, 0.82f, 0.90f, 0.25f});
+            UiGeometryBuilder::AddRectOutline(out, 380, iy - 4, 520, 36, 1.5f, UiColor::EdenCyan());
             UiGeometryBuilder::AddText(out, ">", 395, iy + 4, 1.5f, UiColor::EdenCyan());
         }
 
@@ -3475,15 +3497,15 @@ void XboxFrontend::BuildQuickMenuGeometry(std::vector<core::gpu::RasterVertex>& 
         else if (i == 3) label += " (Slot " + std::to_string(current_state_slot_) + ")";
         else if (i == 4) label += ": < " + std::to_string(current_state_slot_) + " >";
         else if (i == 5) {
-            label = "Resolution: " + std::string((cfg.resolution_scale == core::config::ResolutionScale::Ultra4K_2_0x) ? "2x (4K)" : "1x (1080p)");
+            label = "Resolution: " + std::string((cfg.resolution_scale == core::config::ResolutionScale::Ultra4K_2_0x) ? "2x (4K UHD)" : "1x (1080p FHD)");
         } else if (i == 6) {
-            label = "Layout: " + std::string((cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard) ? "Nintendo (B/A/Y/X)" : "Xbox (A/B/X/Y)");
+            label = "Layout: " + std::string((cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard) ? "Nintendo (B/A/Y/X)" : "Xbox Native (A/B/X/Y)");
         }
 
-        UiGeometryBuilder::AddText(out, label, 420, iy + 4, 1.4f, is_sel ? UiColor::White() : UiColor::TextWhite());
+        UiGeometryBuilder::AddText(out, label, 420, iy + 4, 1.4f, is_sel ? UiColor::White() : UiColor{0.88f, 0.90f, 0.92f, 1.0f});
     }
 
-    UiGeometryBuilder::AddQuad(out, 380, 580, 520, 1, UiColor::CardBorder());
+    UiGeometryBuilder::AddQuad(out, 380, 580, 520, 1, UiColor{0.22f, 0.24f, 0.28f, 1.0f});
     UiGeometryBuilder::AddText(out, "(A) Select   (B) Close Quick Menu   (D-Pad) Navigate", 410, 595, 1.3f, UiColor::EdenCyan());
 }
 
