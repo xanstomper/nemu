@@ -1,0 +1,77 @@
+#pragma once
+
+#include "core/types.hpp"
+#include <span>
+#include <memory>
+
+namespace nemu::core::memory {
+class VirtualMemory;
+}
+
+namespace nemu::core::gpu {
+
+// ---------------------------------------------------------------------------
+// Maxwell DMA (engine class 0xB0B7) — GPU-side copy engine, ported from yuzu's
+// maxwell_dma.cpp (GPL-2.0). Commercial games use this for texture streaming,
+// mipmap-generation inputs, and render-target copies. Compact HLE: the copy
+// executes through guest virtual memory immediately when the Launch register
+// (method 0x06C0) is written. GPU VA -> guest VA resolution happens upstream in
+// the nvhost channel (AddressSpace::GpuVaToGuestVa), matching how the pushbuffer
+// itself is read.
+// ---------------------------------------------------------------------------
+class MaxwellDma {
+public:
+    // Register offsets within the DMA engine's method space (yuzu Regs layout).
+    enum Reg : u32 {
+        REG_LINE_LENGTH_IN = 0x060C,   // bytes for pitch copies
+        REG_LINE_COUNT = 0x0638,       // lines
+        REG_OFFSET_IN = 0x063C,        // src guest address (upper 32 bits at +1)
+        REG_OFFSET_OUT = 0x0644,       // dst guest address
+        REG_PITCH_IN = 0x0650,
+        REG_PITCH_OUT = 0x0658,
+        REG_LAUNCH = 0x06C0,           // LaunchDMA config
+    };
+
+    // LaunchDMA bit fields (yuzu launch_dma union).
+    struct Launch {
+        u32 raw{};
+        // bit 2: src_memory_layout (0 = BLOCK_LINEAR, 1 = PITCH)
+        // bit 4: dst_memory_layout (0 = BLOCK_LINEAR, 1 = PITCH)
+        static constexpr u32 kSrcPitchBit = 2;
+        static constexpr u32 kDstPitchBit = 4;
+        [[nodiscard]] bool SrcIsPitch() const noexcept { return raw & (1u << kSrcPitchBit); }
+        [[nodiscard]] bool DstIsPitch() const noexcept { return raw & (1u << kDstPitchBit); }
+    };
+
+    explicit MaxwellDma(memory::VirtualMemory* memory);
+
+    // Method write from the pushbuffer command stream.
+    void CallMethod(u32 method, u32 argument);
+
+    // Reset per-copy register state (channel re-use).
+    void Reset();
+
+    [[nodiscard]] u64 GetCopyCount() const noexcept { return copy_count_; }
+
+private:
+    void DoLaunch();
+    void CopyPitchToPitch();
+    void CopyPitchToBlockLinear();
+    void CopyBlockLinearToPitch();
+    void CopyBlockLinearToBlockLinear();
+
+    memory::VirtualMemory* memory_;
+
+    // Copy parameters (registers latched from the command stream).
+    u32 line_length_in_{0};
+    u32 line_count_{0};
+    u64 offset_in_{0};
+    u64 offset_out_{0};
+    u32 pitch_in_{0};
+    u32 pitch_out_{0};
+    Launch launch_{};
+
+    u64 copy_count_{0};
+};
+
+} // namespace nemu::core::gpu

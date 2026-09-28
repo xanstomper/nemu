@@ -4,6 +4,7 @@
 #include "nvhost_as_gpu.hpp"
 #include "nvhost_ctrl.hpp"
 #include "core/gpu/maxwell_3d.hpp"
+#include "core/gpu/maxwell_dma.hpp"
 #include "core/memory/virtual_memory.hpp"
 #include <memory>
 #include <vector>
@@ -56,9 +57,11 @@ private:
     u32 syncpoint_id_{0};
     u32 host_pid_{0};
     u32 priority_{0};
+    u32 bound_class_{0};          // engine class bound via AllocObjCtx
     std::shared_ptr<SyncpointManager> syncpoints_;
     std::shared_ptr<AddressSpace> address_space_;
     std::shared_ptr<Maxwell3D> maxwell_3d_;
+    std::shared_ptr<MaxwellDma> maxwell_dma_;  // engine class 0xB0B7
     memory::VirtualMemory* memory_{nullptr};
 };
 

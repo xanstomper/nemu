@@ -39,7 +39,23 @@ std::pair<u32, u32> Channel::SubmitGpfifo(std::span<const u64> gpfifo_raw, u32 f
                 const size_t byte_count = static_cast<size_t>(num_words) * sizeof(u32);
                 pushbuffer.resize(num_words);
                 if (memory_->ReadBlock(guest_va, pushbuffer.data(), byte_count)) {
-                    if (maxwell_3d_) {
+                    // Route by the engine class bound via AllocObjCtx:
+                    // 0xB0B7 -> Maxwell DMA copy engine; otherwise Maxwell 3D.
+                    constexpr u32 kMaxwellDmaClass = 0xB0B7;
+                    if (bound_class_ == kMaxwellDmaClass && maxwell_dma_) {
+                        size_t i = 0;
+                        while (i + 1 < pushbuffer.size()) {
+                            const u32 hdr = pushbuffer[i++];
+                            const u32 m = hdr & 0x1FFF;
+                            const u32 n = (hdr >> 16) & 0x1FFF;
+                            const u32 md = (hdr >> 29) & 0x07;
+                            for (u32 k = 0; k < n && i < pushbuffer.size(); ++k) {
+                                const u32 arg = pushbuffer[i++];
+                                maxwell_dma_->CallMethod(
+                                    (md == 1) ? m : (m + k), arg);
+                            }
+                        }
+                    } else if (maxwell_3d_) {
                         maxwell_3d_->SubmitPushbuffer(pushbuffer);
                     }
                 } else {
@@ -65,6 +81,14 @@ std::pair<u32, u32> Channel::SubmitGpfifo(std::span<const u64> gpfifo_raw, u32 f
 u64 Channel::AllocObjCtx(u32 class_num, u32 flags) {
     (void)flags;
     NEMU_LOG_DEBUG("NvChannel", "Channel {} AllocObjCtx: class 0x{:X}", channel_id_, class_num);
+
+    // Bind the engine class for this channel's subsequent GPFIFO submissions.
+    // 0xB0B7 = Maxwell DMA; everything else falls through to Maxwell 3D.
+    constexpr u32 kMaxwellDmaClass = 0xB0B7;
+    bound_class_ = class_num;
+    if (class_num == kMaxwellDmaClass && !maxwell_dma_) {
+        maxwell_dma_ = std::make_shared<MaxwellDma>(memory_);
+    }
     return static_cast<u64>(class_num);
 }
 

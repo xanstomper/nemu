@@ -10,6 +10,8 @@ set(GPU_SOURCES
     buffer_cache.cpp
     maxwell_3d.hpp
     maxwell_3d.cpp
+    maxwell_dma.hpp
+    maxwell_dma.cpp
     gpu_factory.hpp
     gpu_factory.cpp
     nvhost/nvmap.hpp

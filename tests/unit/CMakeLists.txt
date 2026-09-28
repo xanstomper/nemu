@@ -379,6 +379,21 @@ target_link_libraries(test_render_pipeline PRIVATE
 target_compile_features(test_render_pipeline PRIVATE cxx_std_20)
 add_test(NAME test_render_pipeline COMMAND test_render_pipeline)
 
+add_executable(test_maxwell_dma
+    gpu/test_maxwell_dma.cpp
+)
+
+target_include_directories(test_maxwell_dma PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_maxwell_dma PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_maxwell_dma PRIVATE cxx_std_20)
+add_test(NAME test_maxwell_dma COMMAND test_maxwell_dma)
+
 add_executable(test_aligned_alloc
     common/test_aligned_alloc.cpp
 )
