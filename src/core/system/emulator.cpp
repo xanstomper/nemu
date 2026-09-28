@@ -283,10 +283,13 @@ bool Emulator::LoadTitle(const std::string& path) {
         ApplyRuntimeConfig();
     }
 
-    // Check Title Compatibility Database (685 verified titles)
+    // Title Compatibility Database (685 verified titles): consume the tweak
+    // set for the loaded title. Downstream consumers (arbiter wake bias,
+    // GPU shader-storm hints) read cpu::ActiveTitleTweaks().
     if (loaded->title_id != 0) {
         const auto* compat = cpu::FindTitleCompat(loaded->title_id);
         if (compat) {
+            cpu::ApplyTitleTweaks(compat->tweaks);
             NEMU_LOG_INFO("System", "Title Compat Registry Match: '{}' [0x{:016X}] (sync_relaxed={}, ue4_shader_storm={}, gpu_strict={}, nvdec={})",
                           compat->name, compat->title_id,
                           compat->tweaks.sync_relaxed,

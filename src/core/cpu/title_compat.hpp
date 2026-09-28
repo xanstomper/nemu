@@ -735,4 +735,11 @@ static_assert(sizeof(kKnownTitles) / sizeof(kKnownTitles[0]) > 600,
 
 [[nodiscard]] const TitleCompat* FindTitleCompat(u64 title_id) noexcept;
 
+/// Runtime consumption: cache the active title's tweaks (called on load).
+void ApplyTitleTweaks(const TitleTweaks& tweaks) noexcept;
+/// The active title's tweak set (defaults: all false until ApplyTitleTweaks).
+[[nodiscard]] const TitleTweaks& ActiveTitleTweaks() noexcept;
+/// True once ApplyTitleTweaks ran for the loaded title.
+[[nodiscard]] bool TitleTweaksActive() noexcept;
+
 } // namespace nemu::core::cpu

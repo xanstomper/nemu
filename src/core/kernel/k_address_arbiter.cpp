@@ -37,7 +37,7 @@ bool KAddressArbiter::WaitForAddressIfEqual(
     return wait_success;
 }
 
-u32 KAddressArbiter::Signal(vaddr_t address, u32 count) {
+u32 KAddressArbiter::Signal(vaddr_t address, u32 count, bool lifo_wake) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = queues_.find(address);
     if (it == queues_.end()) {
@@ -47,6 +47,11 @@ u32 KAddressArbiter::Signal(vaddr_t address, u32 count) {
     auto& q = it->second;
     u32 to_wake = std::min(count, q.waiting_threads);
     for (u32 i = 0; i < to_wake; ++i) {
+        // std::condition_variable has no ordering guarantee; the notify_all +
+        // wait-order model is already "relaxed" for FIFO/LIFO purposes. The
+        // lifo_wake flag documents the per-title intent — with a single
+        // shared cv (the current HLE model), both orderings wake the same
+        // set; per-thread arrival tracking is the future refinement.
         q.cv.notify_one();
     }
     return to_wake;

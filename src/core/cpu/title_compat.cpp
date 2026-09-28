@@ -3,9 +3,24 @@
 
 #include "title_compat.hpp"
 #include <algorithm>
+#include <atomic>
 #include <iterator>
 
 namespace nemu::core::cpu {
+
+namespace {
+TitleTweaks s_active{};
+std::atomic<bool> s_active_valid{false};
+}
+
+void ApplyTitleTweaks(const TitleTweaks& tweaks) noexcept {
+    s_active = tweaks;
+    s_active_valid.store(true, std::memory_order_release);
+}
+
+const TitleTweaks& ActiveTitleTweaks() noexcept { return s_active; }
+
+bool TitleTweaksActive() noexcept { return s_active_valid.load(std::memory_order_acquire); }
 
 const TitleCompat* FindTitleCompat(u64 title_id) noexcept {
     static constexpr size_t kCount = sizeof(kKnownTitles) / sizeof(kKnownTitles[0]);

@@ -6,6 +6,7 @@
 #include "ipc/ipc_service.hpp"
 #include "ipc/service_registry.hpp"
 #include "platform/logger.hpp"
+#include "core/cpu/title_compat.hpp"
 #include <thread>
 #include <vector>
 #include <memory>
@@ -428,7 +429,7 @@ void SvcDispatcher::SvcArbitrateLock(cpu::CpuState& state, KProcess& process) {
 void SvcDispatcher::SvcArbitrateUnlock(cpu::CpuState& state, KProcess& process) {
     const vaddr_t mutex_addr = state.GetX(0);
     process.GetVirtualMemory().Write32(mutex_addr, 0);
-    process.GetAddressArbiter().Signal(mutex_addr, 1);
+    process.GetAddressArbiter().Signal(mutex_addr, 1, cpu::ActiveTitleTweaks().sync_relaxed);
     state.SetX(0, static_cast<u64>(Result::Success));
 }
 
@@ -439,7 +440,7 @@ void SvcDispatcher::SvcWaitProcessWideKeyAtomic(cpu::CpuState& state, KProcess& 
 
     // Release mutex
     process.GetVirtualMemory().Write32(mutex_addr, 0);
-    process.GetAddressArbiter().Signal(mutex_addr, 1);
+    process.GetAddressArbiter().Signal(mutex_addr, 1, cpu::ActiveTitleTweaks().sync_relaxed);
 
     // Wait on key
     u32 cur_key = process.GetVirtualMemory().Read32(key_addr);
@@ -450,7 +451,7 @@ void SvcDispatcher::SvcWaitProcessWideKeyAtomic(cpu::CpuState& state, KProcess& 
 void SvcDispatcher::SvcSignalProcessWideKey(cpu::CpuState& state, KProcess& process) {
     const vaddr_t key_addr = state.GetX(0);
     const u32 count = static_cast<u32>(state.GetX(1));
-    u32 woken = process.GetAddressArbiter().Signal(key_addr, count);
+    u32 woken = process.GetAddressArbiter().Signal(key_addr, count, cpu::ActiveTitleTweaks().sync_relaxed);
     state.SetX(0, static_cast<u64>(Result::Success));
     state.SetX(1, woken);
 }
@@ -869,7 +870,7 @@ void SvcDispatcher::SvcSignalToAddress(cpu::CpuState& state, KProcess& process) 
         default: // SignalAndModifyByWaitingCountMinus1
             break; // HLE: no waiting-count tracking; leave value intact
     }
-    const u32 woken = process.GetAddressArbiter().Signal(addr, count);
+    const u32 woken = process.GetAddressArbiter().Signal(addr, count, cpu::ActiveTitleTweaks().sync_relaxed);
     state.SetX(0, static_cast<u64>(Result::Success));
     state.SetX(1, woken);
 }

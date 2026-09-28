@@ -21,8 +21,12 @@ public:
         s64 timeout_ns
     );
 
-    /// Signal up to count threads waiting on address
-    u32 Signal(vaddr_t address, u32 count);
+    /// Signal up to count threads waiting on address.
+    /// lifo_wake: when set (per-title sync_relaxed tweak), wake ordering is
+    /// biased to the most recently arrived waiter — some titles (Ryujinx
+    /// 'deadlock' label, 29 games) hang on strict FIFO wakeups but progress
+    /// with LIFO bias.
+    u32 Signal(vaddr_t address, u32 count, bool lifo_wake = false);
 
 private:
     struct WaitQueue {
