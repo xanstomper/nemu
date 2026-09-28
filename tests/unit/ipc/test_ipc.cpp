@@ -42,7 +42,7 @@
 #include <memory>
 #include <string>
 
-#define NEMU_IPC_ASSERT(cond) do { \
+#define NEMU_IPC_ASSERT(cond, ...) do { \
     if (!(cond)) { \
         std::cerr << "[FAIL] Assertion failed: " #cond " at " \
                   << __FILE__ << ":" << __LINE__ << std::endl; \
@@ -1501,6 +1501,62 @@ void TestAppletStorageAndLibraryAppletAccessor() {
     std::cout << "  PASSED.\n";
 }
 
+// ---------------------------------------------------------------------------
+// Test: commercial-game SVC essentials (thread-affinity, handle dup, memory).
+// These are the syscalls real titles exercise constantly; returning proper
+// results instead of Unimplemented keeps multi-threaded games from stalling.
+// ---------------------------------------------------------------------------
+void TestCommercialGameSyscalls() {
+    std::cout << "[TEST] Commercial-game SVC essentials ...\n";
+    auto proc = std::make_shared<KProcess>(200, "CommercialSyscalls");
+    KThread thread(200, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+
+    // svcGetCurrentProcessorNumber (0x33) -> X1 = valid core [0..3].
+    {
+        cpu::CpuState st;
+        SvcDispatcher::Dispatch(st, *proc, thread, 0x33);
+        NEMU_IPC_ASSERT(st.GetX(0) == static_cast<u64>(kernel::Result::Success));
+        const u64 core = st.GetX(1);
+        NEMU_IPC_ASSERT(core < 4);
+        std::cout << "  GetCurrentProcessorNumber -> core " << core << "\n";
+    }
+
+    // svcDuplicateHandle (0x20) with a valid handle -> same handle, success.
+    {
+        cpu::CpuState st;
+        auto ev = std::make_shared<KEvent>(false);
+        const Handle h = proc->GetHandleTable().CreateHandle(ev);
+        vaddr_t out_slot = 0x0080000000ULL;
+        NEMU_IPC_ASSERT(proc->GetVirtualMemory().Map(out_slot, 0x1000, memory::MemoryPermission::All));
+        st.SetX(0, out_slot);
+        st.SetX(1, h);
+        SvcDispatcher::Dispatch(st, *proc, thread, 0x20);
+        NEMU_IPC_ASSERT(st.GetX(0) == static_cast<u64>(kernel::Result::Success));
+        Handle out_h{};
+        NEMU_IPC_ASSERT(proc->GetVirtualMemory().ReadBlock(out_slot, &out_h, sizeof(out_h)));
+        NEMU_IPC_ASSERT(out_h == h);
+    }
+
+    // svcQueryProcessMemory (0x28) on a mapped page -> type Normal(3).
+    {
+        cpu::CpuState st;
+        const vaddr_t mem_addr = 0x0081000000ULL;
+        NEMU_IPC_ASSERT(proc->GetVirtualMemory().Map(mem_addr, 0x1000, memory::MemoryPermission::All));
+        vaddr_t out_slot = 0x0082000000ULL;
+        NEMU_IPC_ASSERT(proc->GetVirtualMemory().Map(out_slot, 0x1000, memory::MemoryPermission::All));
+        st.SetX(0, out_slot);
+        st.SetX(2, proc->GetPid());
+        st.SetX(3, mem_addr);
+        SvcDispatcher::Dispatch(st, *proc, thread, 0x28);
+        NEMU_IPC_ASSERT(st.GetX(0) == static_cast<u64>(kernel::Result::Success));
+        u8 mi_raw[0x40]{};
+        NEMU_IPC_ASSERT(proc->GetVirtualMemory().ReadBlock(out_slot, mi_raw, sizeof(mi_raw)));
+        NEMU_IPC_ASSERT(*reinterpret_cast<u32*>(mi_raw + 16) == 3);
+    }
+
+    std::cout << "  PASS\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "   NEMU HORIZON OS IPC ENGINE TESTS     \n";
@@ -1527,6 +1583,7 @@ int main() {
     TestAppletStorageAndLibraryAppletAccessor();
     TestServiceBootstrap();
     TestDomainsAndBufferDescriptors();
+    TestCommercialGameSyscalls();
 
     std::cout << "ALL IPC TESTS PASSED SUCCESSFULLY!\n";
     return 0;
