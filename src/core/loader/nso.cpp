@@ -1,4 +1,5 @@
 #include "nso.hpp"
+#include "patch_manager.hpp"
 #include "platform/logger.hpp"
 #include <fstream>
 #include <cstring>
@@ -69,7 +70,9 @@ bool NsoLoader::DecompressLZ4(std::span<const u8> src, std::span<u8> dst) {
 std::optional<NsoLoadedImage> NsoLoader::Load(
     std::span<const u8> data,
     memory::VirtualMemory& vm,
-    vaddr_t base_address
+    vaddr_t base_address,
+    filesystem::VirtualFileSystem* vfs,
+    u64 title_id
 ) {
     if (data.size() < sizeof(NsoHeader)) {
         NEMU_LOG_ERROR("Loader", "NSO data too small for header ({} bytes)", data.size());
@@ -124,6 +127,34 @@ std::optional<NsoLoadedImage> NsoLoader::Load(
 
     constexpr size_t PAGE_SIZE = 0x1000;
     u64 aligned_size = (total_span + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+
+    // Apply Atmosphere IPS / IPS32 patches if available
+    if (vfs != nullptr && title_id != 0) {
+        PatchManager pm(*vfs);
+        std::vector<u8> mapped_image(static_cast<size_t>(aligned_size), 0);
+        if (hdr->text.memory_offset + text_bytes.size() <= mapped_image.size()) {
+            std::memcpy(mapped_image.data() + hdr->text.memory_offset, text_bytes.data(), text_bytes.size());
+        }
+        if (hdr->rodata.memory_offset + rodata_bytes.size() <= mapped_image.size()) {
+            std::memcpy(mapped_image.data() + hdr->rodata.memory_offset, rodata_bytes.data(), rodata_bytes.size());
+        }
+        if (hdr->data.memory_offset + data_bytes.size() <= mapped_image.size()) {
+            std::memcpy(mapped_image.data() + hdr->data.memory_offset, data_bytes.data(), data_bytes.size());
+        }
+
+        if (pm.ApplyExeFsPatches(title_id, hdr->module_id, mapped_image)) {
+            NEMU_LOG_INFO("Loader", "Successfully applied Atmosphere IPS patches to NSO module");
+            if (hdr->text.memory_offset + text_bytes.size() <= mapped_image.size()) {
+                std::memcpy(text_bytes.data(), mapped_image.data() + hdr->text.memory_offset, text_bytes.size());
+            }
+            if (hdr->rodata.memory_offset + rodata_bytes.size() <= mapped_image.size()) {
+                std::memcpy(rodata_bytes.data(), mapped_image.data() + hdr->rodata.memory_offset, rodata_bytes.size());
+            }
+            if (hdr->data.memory_offset + data_bytes.size() <= mapped_image.size()) {
+                std::memcpy(data_bytes.data(), mapped_image.data() + hdr->data.memory_offset, data_bytes.size());
+            }
+        }
+    }
 
     if (!vm.Map(base_address, aligned_size, memory::MemoryPermission::ReadWrite)) {
         NEMU_LOG_ERROR("Loader", "Failed to map NSO virtual memory at 0x{:016X}", base_address);
@@ -260,7 +291,9 @@ size_t NsoLoader::ApplyRelocations(
 std::optional<NsoLoadedImage> NsoLoader::LoadFromFile(
     const std::string& host_path,
     memory::VirtualMemory& vm,
-    vaddr_t base_address
+    vaddr_t base_address,
+    filesystem::VirtualFileSystem* vfs,
+    u64 title_id
 ) {
     std::ifstream file(host_path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
@@ -277,7 +310,7 @@ std::optional<NsoLoadedImage> NsoLoader::LoadFromFile(
     file.seekg(0, std::ios::beg);
     file.read(reinterpret_cast<char*>(buffer.data()), file_size);
 
-    return Load(buffer, vm, base_address);
+    return Load(buffer, vm, base_address, vfs, title_id);
 }
 
 } // namespace nemu::core::loader

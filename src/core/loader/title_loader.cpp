@@ -4,6 +4,7 @@
 #include "pfs0.hpp"
 #include "nca.hpp"
 #include "romfs.hpp"
+#include "core/cpu/title_compat.hpp"
 #include "platform/logger.hpp"
 #include <fstream>
 #include <cstring>
@@ -378,6 +379,18 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
         }
     }
 
+    std::string title_display_name = std::string(name_hint);
+    if (title_id != 0) {
+        const auto* compat = cpu::FindTitleCompat(title_id);
+        if (compat) {
+            NEMU_LOG_INFO("Loader", "Matched Title ID 0x{:016X} to compat database: '{}'",
+                          title_id, compat->name);
+            if (title_display_name.empty()) {
+                title_display_name = std::string(compat->name);
+            }
+        }
+    }
+
     // Determine module loading order: rtld, main, subsdk0..subsdk9, sdk
     std::vector<std::string> load_order;
     if (exefs.HasFile("rtld")) load_order.push_back("rtld");
@@ -422,7 +435,7 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
         constexpr u64 MODULE_ALIGN = 0x10000;
         curr_base = (curr_base + MODULE_ALIGN - 1) & ~(MODULE_ALIGN - 1);
 
-        auto loaded = NsoLoader::Load(*mod_data, vm, curr_base);
+        auto loaded = NsoLoader::Load(*mod_data, vm, curr_base, &vfs_, title_id);
         if (!loaded) {
             NEMU_LOG_ERROR("Loader", "Failed to load module '{}' at 0x{:016X}", mod_name, curr_base);
             continue;
@@ -462,7 +475,7 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
         .base_address = base_address,
         .entry_point = primary_entry,
         .total_size = total_size,
-        .title_name = std::string(name_hint),
+        .title_name = title_display_name,
         .title_id = title_id,
         .is_nro = false,
         .modules = std::move(loaded_modules)

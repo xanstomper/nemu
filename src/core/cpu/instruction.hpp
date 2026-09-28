@@ -45,6 +45,10 @@ enum class Opcode : u16 {
     MSUB,
     SMULL,
     UMULL,
+    UDIV,
+    SDIV,
+    SBFM,   // signed bitfield move (covers SXTB/SXTH/SXTW/ASR imm)
+    UBFM,   // unsigned bitfield move (covers UXTB/UXTH/Lsr imm/Lsl imm)
 
     // Branches & Control Flow
     B,

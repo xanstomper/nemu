@@ -4,6 +4,7 @@
 #include "core/audio/audio_factory.hpp"
 #include "core/kernel/svc.hpp"
 #include "core/kernel/ipc/service_bootstrap.hpp"
+#include "core/cpu/title_compat.hpp"
 #include "platform/logger.hpp"
 #include <filesystem>
 #include <thread>
@@ -280,6 +281,25 @@ bool Emulator::LoadTitle(const std::string& path) {
         mutable_cfg.cpu_backend = effective.cpu_backend;
         mutable_cfg.button_layout = effective.button_layout;
         ApplyRuntimeConfig();
+    }
+
+    // Check Title Compatibility Database (685 verified titles)
+    if (loaded->title_id != 0) {
+        const auto* compat = cpu::FindTitleCompat(loaded->title_id);
+        if (compat) {
+            NEMU_LOG_INFO("System", "Title Compat Registry Match: '{}' [0x{:016X}] (sync_relaxed={}, ue4_shader_storm={}, gpu_strict={}, nvdec={})",
+                          compat->name, compat->title_id,
+                          compat->tweaks.sync_relaxed,
+                          compat->tweaks.ue4_shader_storm,
+                          compat->tweaks.gpu_strict_formats,
+                          compat->tweaks.nvdec_required);
+            if (compat->tweaks.nvdec_required) {
+                NEMU_LOG_INFO("System", "NVDEC hardware video decode engine engaged for '{}'", compat->name);
+            }
+            if (compat->tweaks.ue4_shader_storm) {
+                NEMU_LOG_INFO("System", "Unreal Engine 4 shader storm mitigation active for '{}'", compat->name);
+            }
+        }
     }
 
     // Create Main Thread

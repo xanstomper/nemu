@@ -6,6 +6,9 @@
 namespace nemu::core::cpu {
 
 Interpreter::Interpreter(CpuState& state, memory::IMemory& memory)
+    : state_(state), memory_(&memory) {}
+
+Interpreter::Interpreter(CpuState& state, memory::IMemory* memory)
     : state_(state), memory_(memory) {}
 
 u64 Interpreter::ApplyShift(u64 value, u8 shift_type, u8 amount, bool is_64bit) {
@@ -38,12 +41,12 @@ StepResult Interpreter::Step() {
         return StepResult::Halted;
     }
 
-    if (!memory_.IsValidAddress(state_.pc, 4)) {
+    if (!memory_ || !memory_->IsValidAddress(state_.pc, 4)) {
         NEMU_LOG_ERROR("CPU", "PC 0x{:016X} is not valid memory", state_.pc);
         return StepResult::MemoryFault;
     }
 
-    const u32 raw_inst = memory_.Read32(state_.pc);
+    const u32 raw_inst = memory_->Read32(state_.pc);
     const DecodedInstruction inst = Decoder::Decode(raw_inst);
 
     if (inst.opcode == Opcode::UNDEFINED) {
@@ -334,6 +337,78 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             break;
         }
 
+        case Opcode::SMULL:
+        case Opcode::UMULL: {
+            // 32-bit multiply long: Rd = sign/zero-extend(Rn) * Rm (64-bit result).
+            if (inst.opcode == Opcode::SMULL) {
+                const s64 a = static_cast<s32>(state_.GetW(inst.rn));
+                const s64 b = static_cast<s32>(state_.GetW(inst.rm));
+                state_.SetX(inst.rd, static_cast<u64>(a * b));
+            } else {
+                const u64 a = state_.GetW(inst.rn);
+                const u64 b = state_.GetW(inst.rm);
+                state_.SetX(inst.rd, a * b);
+            }
+            break;
+        }
+
+        case Opcode::UDIV:
+        case Opcode::SDIV: {
+            // A64: division by zero yields 0 (no trap).
+            if (inst.opcode == Opcode::SDIV) {
+                const s64 a = inst.is_64bit ? static_cast<s64>(state_.GetX(inst.rn))
+                                            : static_cast<s32>(state_.GetW(inst.rn));
+                const s64 b = inst.is_64bit ? static_cast<s64>(state_.GetX(inst.rm))
+                                            : static_cast<s32>(state_.GetW(inst.rm));
+                const s64 q = (b == 0) ? 0 : (a / b);
+                if (inst.is_64bit) state_.SetX(inst.rd, static_cast<u64>(q));
+                else state_.SetW(inst.rd, static_cast<u32>(q));
+            } else {
+                const u64 a = inst.is_64bit ? state_.GetX(inst.rn) : state_.GetW(inst.rn);
+                const u64 b = inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm);
+                const u64 q = (b == 0) ? 0 : (a / b);
+                if (inst.is_64bit) state_.SetX(inst.rd, q);
+                else state_.SetW(inst.rd, static_cast<u32>(q));
+            }
+            break;
+        }
+
+        case Opcode::SBFM:
+        case Opcode::UBFM: {
+            // A64 unified bitfield op (verified encodings via GNU as):
+            //   ubfm w1,w2,#13,#0 -> 0x530D0041 => immr=bits[15:10], imms=bits[5:0]
+            // Rd = f(Rn ROR immr) with mask from DecodeBitMasks; the game-relevant
+            // forms (UBFX/BFI/SXTx/LSL-imm/LSR-imm/ASR-imm) all produce a
+            // contiguous field, so the mask is the imms..immr span.
+            const u32 immr = inst.shift_amount;
+            const u32 imms = static_cast<u32>(inst.imm);
+            const u32 ds = inst.is_64bit ? 64 : 32;
+            const u64 srcval = inst.is_64bit ? state_.GetX(inst.rn) : state_.GetW(inst.rn);
+
+            const u64 ones = ~0ULL;
+            const u64 ror = (immr == 0) ? srcval
+                          : ((srcval >> immr) | (srcval << (ds - immr)));
+            const u64 ror32 = (ds == 32) ? (ror & 0xFFFFFFFFULL) : ror;
+
+            const u32 nbits = (imms >= immr) ? (imms - immr + 1)
+                                             : (ds - immr + imms + 1);
+            const u64 mask = (nbits >= 64) ? ones
+                          : (((1ULL << nbits) - 1) & ((ds == 32) ? 0xFFFFFFFFULL : ones));
+
+            u64 result;
+            if (inst.opcode == Opcode::UBFM) {
+                result = ror32 & mask;
+            } else { // SBFM: extract field; sign-extend from its top bit
+                const u64 field = ror32 & mask;
+                const bool neg = nbits > 0 && ((field >> (nbits - 1)) & 1ULL);
+                const u64 sext = (ds == 64) ? ones : 0xFFFFFFFFULL;
+                result = neg ? (field | (sext & ~mask)) : field;
+            }
+            if (inst.is_64bit) state_.SetX(inst.rd, result);
+            else state_.SetW(inst.rd, static_cast<u32>(result));
+            break;
+        }
+
         case Opcode::MSUB: {
             if (inst.is_64bit) {
                 const u64 prod = state_.GetX(inst.rn) * state_.GetX(inst.rm);
@@ -421,9 +496,9 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         case Opcode::LDR_imm: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
             if (inst.is_64bit) {
-                state_.SetX(inst.rd, memory_.Read64(addr));
+                state_.SetX(inst.rd, memory_->Read64(addr));
             } else {
-                state_.SetW(inst.rd, memory_.Read32(addr));
+                state_.SetW(inst.rd, memory_->Read32(addr));
             }
             break;
         }
@@ -431,45 +506,45 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         case Opcode::STR_imm: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
             if (inst.is_64bit) {
-                memory_.Write64(addr, state_.GetX(inst.rd));
+                memory_->Write64(addr, state_.GetX(inst.rd));
             } else {
-                memory_.Write32(addr, state_.GetW(inst.rd));
+                memory_->Write32(addr, state_.GetW(inst.rd));
             }
             break;
         }
 
         case Opcode::LDRB_imm: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
-            state_.SetW(inst.rd, memory_.Read8(addr));
+            state_.SetW(inst.rd, memory_->Read8(addr));
             break;
         }
 
         case Opcode::STRB_imm: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
-            memory_.Write8(addr, static_cast<u8>(state_.GetW(inst.rd)));
+            memory_->Write8(addr, static_cast<u8>(state_.GetW(inst.rd)));
             break;
         }
 
         case Opcode::LDRH_imm: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
-            state_.SetW(inst.rd, memory_.Read16(addr));
+            state_.SetW(inst.rd, memory_->Read16(addr));
             break;
         }
 
         case Opcode::STRH_imm: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
-            memory_.Write16(addr, static_cast<u16>(state_.GetW(inst.rd)));
+            memory_->Write16(addr, static_cast<u16>(state_.GetW(inst.rd)));
             break;
         }
 
         case Opcode::LDP: {
             const vaddr_t base = state_.GetRegOrSP(inst.rn) + inst.imm;
             if (inst.is_64bit) {
-                state_.SetX(inst.rd, memory_.Read64(base));
-                state_.SetX(inst.rt2, memory_.Read64(base + 8));
+                state_.SetX(inst.rd, memory_->Read64(base));
+                state_.SetX(inst.rt2, memory_->Read64(base + 8));
             } else {
-                state_.SetW(inst.rd, memory_.Read32(base));
-                state_.SetW(inst.rt2, memory_.Read32(base + 4));
+                state_.SetW(inst.rd, memory_->Read32(base));
+                state_.SetW(inst.rt2, memory_->Read32(base + 4));
             }
             break;
         }
@@ -477,11 +552,11 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         case Opcode::STP: {
             const vaddr_t base = state_.GetRegOrSP(inst.rn) + inst.imm;
             if (inst.is_64bit) {
-                memory_.Write64(base, state_.GetX(inst.rd));
-                memory_.Write64(base + 8, state_.GetX(inst.rt2));
+                memory_->Write64(base, state_.GetX(inst.rd));
+                memory_->Write64(base + 8, state_.GetX(inst.rt2));
             } else {
-                memory_.Write32(base, state_.GetW(inst.rd));
-                memory_.Write32(base + 4, state_.GetW(inst.rt2));
+                memory_->Write32(base, state_.GetW(inst.rd));
+                memory_->Write32(base + 4, state_.GetW(inst.rt2));
             }
             break;
         }
@@ -710,10 +785,10 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         case Opcode::LDR_fp_imm: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
             if (inst.is_fp_double) {
-                state_.v[inst.rd].low = memory_.Read64(addr);
+                state_.v[inst.rd].low = memory_->Read64(addr);
                 state_.v[inst.rd].high = 0;
             } else {
-                state_.v[inst.rd].low = memory_.Read32(addr);
+                state_.v[inst.rd].low = memory_->Read32(addr);
                 state_.v[inst.rd].high = 0;
             }
             break;
@@ -722,9 +797,9 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         case Opcode::STR_fp_imm: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
             if (inst.is_fp_double) {
-                memory_.Write64(addr, state_.v[inst.rd].low);
+                memory_->Write64(addr, state_.v[inst.rd].low);
             } else {
-                memory_.Write32(addr, static_cast<u32>(state_.v[inst.rd].low));
+                memory_->Write32(addr, static_cast<u32>(state_.v[inst.rd].low));
             }
             break;
         }
@@ -732,14 +807,14 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         case Opcode::LDP_fp: {
             const vaddr_t base = state_.GetRegOrSP(inst.rn) + inst.imm;
             if (inst.is_fp_double) {
-                state_.v[inst.rd].low = memory_.Read64(base);
+                state_.v[inst.rd].low = memory_->Read64(base);
                 state_.v[inst.rd].high = 0;
-                state_.v[inst.rt2].low = memory_.Read64(base + 8);
+                state_.v[inst.rt2].low = memory_->Read64(base + 8);
                 state_.v[inst.rt2].high = 0;
             } else {
-                state_.v[inst.rd].low = memory_.Read32(base);
+                state_.v[inst.rd].low = memory_->Read32(base);
                 state_.v[inst.rd].high = 0;
-                state_.v[inst.rt2].low = memory_.Read32(base + 4);
+                state_.v[inst.rt2].low = memory_->Read32(base + 4);
                 state_.v[inst.rt2].high = 0;
             }
             break;
@@ -748,11 +823,11 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         case Opcode::STP_fp: {
             const vaddr_t base = state_.GetRegOrSP(inst.rn) + inst.imm;
             if (inst.is_fp_double) {
-                memory_.Write64(base, state_.v[inst.rd].low);
-                memory_.Write64(base + 8, state_.v[inst.rt2].low);
+                memory_->Write64(base, state_.v[inst.rd].low);
+                memory_->Write64(base + 8, state_.v[inst.rt2].low);
             } else {
-                memory_.Write32(base, static_cast<u32>(state_.v[inst.rd].low));
-                memory_.Write32(base + 4, static_cast<u32>(state_.v[inst.rt2].low));
+                memory_->Write32(base, static_cast<u32>(state_.v[inst.rd].low));
+                memory_->Write32(base + 4, static_cast<u32>(state_.v[inst.rt2].low));
             }
             break;
         }
@@ -943,9 +1018,9 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             state_.exclusive_addr = addr;
             state_.exclusive_active = true;
             if (inst.is_64bit) {
-                state_.SetX(inst.rd, memory_.Read64(addr));
+                state_.SetX(inst.rd, memory_->Read64(addr));
             } else {
-                state_.SetW(inst.rd, memory_.Read32(addr));
+                state_.SetW(inst.rd, memory_->Read32(addr));
             }
             break;
         }
@@ -954,9 +1029,9 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn);
             if (state_.exclusive_active && state_.exclusive_addr == addr) {
                 if (inst.is_64bit) {
-                    memory_.Write64(addr, state_.GetX(inst.rd));
+                    memory_->Write64(addr, state_.GetX(inst.rd));
                 } else {
-                    memory_.Write32(addr, state_.GetW(inst.rd));
+                    memory_->Write32(addr, state_.GetW(inst.rd));
                 }
                 state_.SetW(inst.rs, 0); // 0 = Success
                 state_.exclusive_active = false;
@@ -969,14 +1044,14 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         case Opcode::LDADD: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn);
             if (inst.is_64bit) {
-                const u64 old_val = memory_.Read64(addr);
+                const u64 old_val = memory_->Read64(addr);
                 const u64 add_val = state_.GetX(inst.rs);
-                memory_.Write64(addr, old_val + add_val);
+                memory_->Write64(addr, old_val + add_val);
                 state_.SetX(inst.rd, old_val);
             } else {
-                const u32 old_val = memory_.Read32(addr);
+                const u32 old_val = memory_->Read32(addr);
                 const u32 add_val = state_.GetW(inst.rs);
-                memory_.Write32(addr, old_val + add_val);
+                memory_->Write32(addr, old_val + add_val);
                 state_.SetW(inst.rd, old_val);
             }
             break;
@@ -985,17 +1060,17 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         case Opcode::CAS: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn);
             if (inst.is_64bit) {
-                const u64 cur = memory_.Read64(addr);
+                const u64 cur = memory_->Read64(addr);
                 const u64 cmp = state_.GetX(inst.rs);
                 if (cur == cmp) {
-                    memory_.Write64(addr, state_.GetX(inst.rd));
+                    memory_->Write64(addr, state_.GetX(inst.rd));
                 }
                 state_.SetX(inst.rs, cur);
             } else {
-                const u32 cur = memory_.Read32(addr);
+                const u32 cur = memory_->Read32(addr);
                 const u32 cmp = state_.GetW(inst.rs);
                 if (cur == cmp) {
-                    memory_.Write32(addr, state_.GetW(inst.rd));
+                    memory_->Write32(addr, state_.GetW(inst.rd));
                 }
                 state_.SetW(inst.rs, cur);
             }
@@ -1005,12 +1080,12 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         case Opcode::SWP: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn);
             if (inst.is_64bit) {
-                const u64 cur = memory_.Read64(addr);
-                memory_.Write64(addr, state_.GetX(inst.rs));
+                const u64 cur = memory_->Read64(addr);
+                memory_->Write64(addr, state_.GetX(inst.rs));
                 state_.SetX(inst.rd, cur);
             } else {
-                const u32 cur = memory_.Read32(addr);
-                memory_.Write32(addr, state_.GetW(inst.rs));
+                const u32 cur = memory_->Read32(addr);
+                memory_->Write32(addr, state_.GetW(inst.rs));
                 state_.SetW(inst.rd, cur);
             }
             break;

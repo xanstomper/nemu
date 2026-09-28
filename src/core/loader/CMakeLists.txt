@@ -11,6 +11,8 @@ add_library(Nemu.Loader STATIC
     romfs.cpp
     title_loader.hpp
     title_loader.cpp
+    patch_manager.hpp
+    patch_manager.cpp
 )
 
 target_include_directories(Nemu.Loader PUBLIC

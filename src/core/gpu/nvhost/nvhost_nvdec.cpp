@@ -174,7 +174,8 @@ u32 NvHostNvdecDevice::IoctlSubmit(std::span<const u8> in, std::span<u8> out) {
                 return kNvResultInvalidState;
             }
             size_t w = 0;
-            while (w + 1 < cb.word_count) {
+            const size_t max_words = cb.word_count > 0 ? static_cast<size_t>(cb.word_count) : 0;
+            while (w + 1 < max_words) {
                 u32 method = 0, arg = 0;
                 std::memcpy(&method, cmdbytes.data() + w * sizeof(u32), sizeof(u32));
                 std::memcpy(&arg, cmdbytes.data() + (w + 1) * sizeof(u32), sizeof(u32));
@@ -210,6 +211,7 @@ u32 NvHostNvdecDevice::IoctlSubmit(std::span<const u8> in, std::span<u8> out) {
 }
 
 u32 NvHostNvdecDevice::IoctlGetSyncpoint(std::span<const u8> in, std::span<u8> out) {
+    (void)in;
     // citron: params.value = channel_syncpoint (fixed base, real HW value).
     IoctlGetSyncpointOut out_val{channel_syncpoint_};
     CopyOut(out, out_val);
@@ -217,6 +219,7 @@ u32 NvHostNvdecDevice::IoctlGetSyncpoint(std::span<const u8> in, std::span<u8> o
 }
 
 u32 NvHostNvdecDevice::IoctlGetWaitbase(std::span<const u8> in, std::span<u8> out) {
+    (void)in;
     // Hard-coded 0 per citron (WAITBASE).
     IoctlGetSyncpointOut out_val{0};
     CopyOut(out, out_val);

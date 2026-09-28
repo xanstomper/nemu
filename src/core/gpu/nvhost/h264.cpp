@@ -28,17 +28,16 @@ constexpr std::array<u8, 16> kZigZagScan{
 } // namespace
 
 void H264BitWriter::WriteBits(s32 value, s32 bit_count) {
-    s32 value_pos = 0;
-    const s32 remainder = bit_count % kBufferSize != 0
-                              ? bit_count - bit_count % kBufferSize
-                              : bit_count;
-    for (s32 i = 0; i < remainder; i++) {
-        if (GetFreeBufferBits() < kBufferSize) Flush();
-        const s32 mask = 1 << (bit_count - i - 1);
-        const bool bit = value & mask;
-        if (bit) buffer_ |= 1 << (kBufferSize - 1 - buffer_pos_);
+    for (s32 i = 0; i < bit_count; ++i) {
+        const u32 mask = 1U << static_cast<u32>(bit_count - 1 - i);
+        const bool bit = (static_cast<u32>(value) & mask) != 0;
+        if (bit) {
+            buffer_ |= (1 << (kBufferSize - 1 - buffer_pos_));
+        }
         buffer_pos_++;
-        value_pos++;
+        if (buffer_pos_ == kBufferSize) {
+            Flush();
+        }
     }
 }
 

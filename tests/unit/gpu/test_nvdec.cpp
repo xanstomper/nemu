@@ -24,27 +24,34 @@ using nemu::u8;
 using nemu::s32;
 using nemu::vaddr_t;
 
+#define NEMU_TEST_ASSERT(cond) do { \
+    if (!(cond)) { \
+        std::fprintf(stderr, "[FAIL] Assertion failed: " #cond " at %s:%d\n", __FILE__, __LINE__); \
+        std::abort(); \
+    } \
+} while (0)
+
 static void TestNvdecRegisterWrite() {
     memory::VirtualMemory vmem;
     Nvdec nvdec(&vmem);
 
     // set_codec_id (register slot 0x80): write H264 (0x3).
     nvdec.CallMethod(NvdecRegisters::kRegSetCodecId, 0x3);
-    assert(nvdec.GetCodec() == VideoCodec::H264);
+    NEMU_TEST_ASSERT(nvdec.GetCodec() == VideoCodec::H264);
 
     nvdec.CallMethod(NvdecRegisters::kRegSetCodecId, 0x9);
-    assert(nvdec.GetCodec() == VideoCodec::VP9);
+    NEMU_TEST_ASSERT(nvdec.GetCodec() == VideoCodec::VP9);
 
     // execute triggers an attempt; unsupported-codec path must not crash.
     nvdec.CallMethod(NvdecRegisters::kRegExecute, 1);
-    assert(nvdec.GetStats().execute_calls == 1);
-    assert(nvdec.GetStats().decode_attempts == 1);
+    NEMU_TEST_ASSERT(nvdec.GetStats().execute_calls == 1);
+    NEMU_TEST_ASSERT(nvdec.GetStats().decode_attempts == 1);
 
     // An invalid codec enum must be counted, not decoded.
     nvdec.CallMethod(NvdecRegisters::kRegSetCodecId, 0x99);
     nvdec.CallMethod(NvdecRegisters::kRegExecute, 1);
-    assert(nvdec.GetStats().unsupported_codec_calls == 1);
-    assert(nvdec.GetStats().decode_attempts == 1); // unchanged
+    NEMU_TEST_ASSERT(nvdec.GetStats().unsupported_codec_calls == 1);
+    NEMU_TEST_ASSERT(nvdec.GetStats().decode_attempts == 1); // unchanged
     std::puts("  PASS TestNvdecRegisterWrite");
 }
 
@@ -63,7 +70,7 @@ static void TestNvdecDeviceIoctls() {
         const u32 res = dev.Ioctl(cmd,
             std::span<const u8>(reinterpret_cast<const u8*>(&fd_val), sizeof(fd_val)),
             std::span<u8>(reinterpret_cast<u8*>(&out), sizeof(out)));
-        assert(res == 0);
+        NEMU_TEST_ASSERT(res == 0);
     }
 
     // GetSyncpoint (group 0, cmd 0x2): returns the fixed channel syncpoint.
@@ -73,8 +80,8 @@ static void TestNvdecDeviceIoctls() {
         const u32 res = dev.Ioctl(cmd,
             std::span<const u8>(reinterpret_cast<const u8*>(&in), sizeof(in)),
             std::span<u8>(reinterpret_cast<u8*>(&out), sizeof(out)));
-        assert(res == 0);
-        assert(out == 0x41);
+        NEMU_TEST_ASSERT(res == 0);
+        NEMU_TEST_ASSERT(out == 0x41);
     }
 
     // GetWaitbase (group 0, cmd 0x3): hard-coded 0.
@@ -84,8 +91,8 @@ static void TestNvdecDeviceIoctls() {
         const u32 res = dev.Ioctl(cmd,
             std::span<const u8>(reinterpret_cast<const u8*>(&in), sizeof(in)),
             std::span<u8>(reinterpret_cast<u8*>(&out), sizeof(out)));
-        assert(res == 0);
-        assert(out == 0);
+        NEMU_TEST_ASSERT(res == 0);
+        NEMU_TEST_ASSERT(out == 0);
     }
 
     // Unimplemented ioctls must return a bad-parameter NvResult, not crash.
@@ -95,7 +102,7 @@ static void TestNvdecDeviceIoctls() {
         const u32 res = dev.Ioctl(cmd,
             std::span<const u8>(reinterpret_cast<const u8*>(&in), sizeof(in)),
             std::span<u8>(reinterpret_cast<u8*>(&out), sizeof(out)));
-        assert(res != 0);
+        NEMU_TEST_ASSERT(res != 0);
     }
     std::puts("  PASS TestNvdecDeviceIoctls");
 }
@@ -108,13 +115,13 @@ static void TestNvdecSubmitRouting() {
     // Guest memory backing: one page for the nvmap allocation, one for the
     // command buffer words.
     const vaddr_t buf_va = 0x00A0000000ULL;
-    assert(vmem.Map(buf_va, memory::VirtualMemory::PAGE_SIZE,
-                    memory::MemoryPermission::ReadWrite));
+    NEMU_TEST_ASSERT(vmem.Map(buf_va, memory::VirtualMemory::PAGE_SIZE,
+                              memory::MemoryPermission::ReadWrite));
 
     // Create + allocate an nvmap handle for the command buffer.
     const u32 handle = nvmap->Create(0x1000);
-    assert(handle != 0);
-    assert(nvmap->Alloc(handle, 0, 0, 4096, 0, buf_va));
+    NEMU_TEST_ASSERT(handle != 0);
+    NEMU_TEST_ASSERT(nvmap->Alloc(handle, 0, 0, 4096, 0, buf_va));
 
     NvHostNvdecDevice dev(nvmap, syncpoints, &vmem);
 
@@ -138,24 +145,24 @@ static void TestNvdecSubmitRouting() {
     const u32 res = dev.Ioctl(cmd,
         std::span<const u8>(reinterpret_cast<const u8*>(&packet), sizeof(packet)),
         std::span<u8>(out.data(), out.size()));
-    assert(res == 0);
+    NEMU_TEST_ASSERT(res == 0);
 
     // The submit must have routed to the engine: codec set + one decode attempt.
-    assert(dev.GetEngine().GetCodec() == VideoCodec::H264);
-    assert(dev.GetEngine().GetStats().execute_calls == 1);
-    assert(dev.GetEngine().GetStats().decode_attempts == 1);
+    NEMU_TEST_ASSERT(dev.GetEngine().GetCodec() == VideoCodec::H264);
+    NEMU_TEST_ASSERT(dev.GetEngine().GetStats().execute_calls == 1);
+    NEMU_TEST_ASSERT(dev.GetEngine().GetStats().decode_attempts == 1);
 
     // No frames can be produced yet (ffmpeg path absent) — PopFrame false.
     DecodedVideoFrame frame;
-    assert(!dev.GetEngine().PopFrame(frame));
+    NEMU_TEST_ASSERT(!dev.GetEngine().PopFrame(frame));
     std::puts("  PASS TestNvdecSubmitRouting");
 }
 
 static void TestH264Composer() {
     memory::VirtualMemory vmem;
     const vaddr_t mem_va = 0x00B0000000ULL;
-    assert(vmem.Map(mem_va, memory::VirtualMemory::PAGE_SIZE * 4,
-                    memory::MemoryPermission::ReadWrite));
+    NEMU_TEST_ASSERT(vmem.Map(mem_va, memory::VirtualMemory::PAGE_SIZE * 4,
+                              memory::MemoryPermission::ReadWrite));
 
     // Build a minimal H264DecoderContext at the picture_info offset.
     // Offsets per the HW struct: stream_len at +0x48, params at +0x58.
@@ -191,20 +198,20 @@ static void TestH264Composer() {
     std::vector<u8> packet;
     size_t config_size = 0;
     const bool ok = composer.ComposeFrame(regs, packet, &config_size, /*is_first=*/true);
-    assert(ok && "composer must succeed on well-formed registers");
+    NEMU_TEST_ASSERT(ok && "composer must succeed on well-formed registers");
     // Header must exist and start with the Annex-B start code prefix.
-    assert(config_size >= 4);
-    assert(packet.size() == config_size + 16);
-    assert(packet[0] == 0x00 && packet[1] == 0x00 && packet[2] == 0x01);
+    NEMU_TEST_ASSERT(config_size >= 4);
+    NEMU_TEST_ASSERT(packet.size() == config_size + 16);
+    NEMU_TEST_ASSERT(packet[0] == 0x00 && packet[1] == 0x00 && packet[2] == 0x01);
     // SPS NAL header: nal_ref_idc=3 << 5 | type 7 = 0x67.
-    assert(packet[3] == 0x67);
+    NEMU_TEST_ASSERT(packet[3] == 0x67);
     // PPS NAL follows: search for the second start code with type 8 (0x68).
     bool saw_pps = false;
     for (size_t i = config_size / 2; i + 3 < config_size; ++i) {
         if (packet[i] == 0x00 && packet[i + 1] == 0x00 && packet[i + 2] == 0x01 &&
             packet[i + 3] == 0x68) { saw_pps = true; break; }
     }
-    assert(saw_pps && "PPS NAL must be present in the composed header");
+    NEMU_TEST_ASSERT(saw_pps && "PPS NAL must be present in the composed header");
 
     // Pass-through path: second frame with frame_number != 0.
     u64 flags5 = flags | (5ULL << 46);
@@ -212,10 +219,10 @@ static void TestH264Composer() {
     std::vector<u8> packet2;
     size_t config2 = 0xFF;
     const bool ok2 = composer.ComposeFrame(regs, packet2, &config2, /*is_first=*/false);
-    assert(ok2);
-    assert(config2 == 0 && "pass-through frames have no header");
-    assert(packet2.size() == 16);
-    assert(packet2[0] == 0xA0 && packet2[15] == 0xAF);
+    NEMU_TEST_ASSERT(ok2);
+    NEMU_TEST_ASSERT(config2 == 0 && "pass-through frames have no header");
+    NEMU_TEST_ASSERT(packet2.size() == 16);
+    NEMU_TEST_ASSERT(packet2[0] == 0xA0 && packet2[15] == 0xAF);
     std::puts("  PASS TestH264Composer");
 }
 

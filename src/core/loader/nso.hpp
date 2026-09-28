@@ -9,6 +9,10 @@
 #include <optional>
 #include <array>
 
+namespace nemu::core::filesystem {
+class VirtualFileSystem;
+}
+
 namespace nemu::core::loader {
 
 #pragma pack(push, 1)
@@ -54,14 +58,18 @@ public:
     static std::optional<NsoLoadedImage> Load(
         std::span<const u8> data,
         memory::VirtualMemory& vm,
-        vaddr_t base_address = 0x0071000000ULL
+        vaddr_t base_address = 0x0071000000ULL,
+        filesystem::VirtualFileSystem* vfs = nullptr,
+        u64 title_id = 0
     );
 
     /// Load from host filesystem
     static std::optional<NsoLoadedImage> LoadFromFile(
         const std::string& host_path,
         memory::VirtualMemory& vm,
-        vaddr_t base_address = 0x0071000000ULL
+        vaddr_t base_address = 0x0071000000ULL,
+        filesystem::VirtualFileSystem* vfs = nullptr,
+        u64 title_id = 0
     );
 
     /// Decompress standard LZ4 block

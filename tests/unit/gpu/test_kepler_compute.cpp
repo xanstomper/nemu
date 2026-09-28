@@ -12,10 +12,10 @@ using namespace nemu;
 using namespace nemu::core;
 using namespace nemu::core::gpu;
 
-#define KC_ASSERT(...)                                                         \
+#define KC_ASSERT(cond, ...)                                                   \
     do {                                                                       \
-        if (!(__VA_ARGS__)) {                                                  \
-            std::cerr << "Assertion failed: " #__VA_ARGS__ << " at "           \
+        if (!(cond)) {                                                         \
+            std::cerr << "Assertion failed: " #cond << " at "                  \
                       << __FILE__ << ":" << __LINE__ << std::endl;             \
             std::exit(1);                                                      \
         }                                                                      \
@@ -50,15 +50,15 @@ int main() {
                       static_cast<u32>(kQmd & 0xFFFFFFFFULL));
     kepler.CallMethod(KeplerCompute::REG_LAUNCH_DESC_LOC + 1,
                       static_cast<u32>(kQmd >> 32));
-    KC_ASSERT(kepler.GetQmdAddress() == kQmd, "QMD address latched");
+    KC_ASSERT(kepler.GetQmdAddress() == kQmd);
 
     kepler.CallMethod(KeplerCompute::REG_LAUNCH, 1);
-    KC_ASSERT(kepler.GetDispatchCount() == 1, "one compute dispatch");
+    KC_ASSERT(kepler.GetDispatchCount() == 1);
 
     // Launch without QMD address must be rejected.
     kepler.Reset();
     kepler.CallMethod(KeplerCompute::REG_LAUNCH, 1);
-    KC_ASSERT(kepler.GetDispatchCount() == 1, "launch without QMD rejected");
+    KC_ASSERT(kepler.GetDispatchCount() == 1);
 
     std::cout << "  - Kepler Compute QMD launch (grid/block parse + dispatch + guards): PASSED" << std::endl;
     return 0;

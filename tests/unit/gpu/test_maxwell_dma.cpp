@@ -10,10 +10,10 @@ using namespace nemu;
 using namespace nemu::core;
 using namespace nemu::core::gpu;
 
-#define DMA_ASSERT(...)                                                        \
+#define DMA_ASSERT(cond, ...)                                                  \
     do {                                                                       \
-        if (!(__VA_ARGS__)) {                                                  \
-            std::cerr << "Assertion failed: " #__VA_ARGS__ << " at "           \
+        if (!(cond)) {                                                         \
+            std::cerr << "Assertion failed: " #cond << " at "                  \
                       << __FILE__ << ":" << __LINE__ << std::endl;             \
             std::exit(1);                                                      \
         }                                                                      \
