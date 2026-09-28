@@ -68,6 +68,10 @@ public:
     // Raw guest vertex-buffer bytes -> upload + bind for the translated PSO.
     void SetGuestVertexBuffer(std::span<const u8> data, u32 stride) override;
 
+    // NVDEC video-out (VIC path): upload the decoded NV12 frame into a dynamic
+    // texture and present it as a fullscreen quad on the next Present().
+    bool PresentNVDECFrame(const NVDECFrame& frame) override;
+
     // Guest rasterizer state block (Tier-A2)
     void SetRasterizerState(const RasterizerState& state) override;
     [[nodiscard]] const RasterizerState& GetRasterizerState() const noexcept { return current_rasterizer_state_; }
@@ -201,6 +205,15 @@ private:
     UINT guest_vertex_buffer_size_{0};
     UINT guest_vertex_stride_{0};
     bool guest_vertex_buffer_valid_{false};
+
+    // --- NVDEC video-out (VIC path) ---------------------------------------
+    // Dynamic NV12 texture + fullscreen-quad resources, created lazily on the
+    // first PresentNVDECFrame call at the frame's dimensions.
+    Microsoft::WRL::ComPtr<ID3D12Resource> nvdec_texture_;
+    Microsoft::WRL::ComPtr<ID3D12Resource> nvdec_upload_;
+    D3D12_RESOURCE_DESC nvdec_desc_{};
+    UINT64 nvdec_frame_number_{0};
+    bool nvdec_frame_pending_{false};   // Present() draws the quad when true
 
     // --- Compute (Tier-A3): translated compute shader + PSO. ------------
     Microsoft::WRL::ComPtr<ID3D12RootSignature> compute_root_signature_;

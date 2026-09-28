@@ -515,6 +515,78 @@ void D3D12GpuBackend::SetTextureByteBudget(size_t bytes) {
     NEMU_LOG_INFO("D3D12", "SetTextureByteBudget: {} KiB", bytes / 1024);
 }
 
+bool D3D12GpuBackend::PresentNVDECFrame(const NVDECFrame& frame) {
+    // VIC video-out: upload the decoded NV12 frame and flag it for draw in
+    // Present(). The NV12 texture is a plain byte-buffer resource (DXGI does
+    // not expose NV12 SRV-able everywhere); the fullscreen-quad pixel shader
+    // decodes Y+UV -> RGB in-line, so no swizzle/convert pass is needed.
+    if (!device_ || frame.nv12_data.empty() || frame.width == 0 || frame.height == 0) {
+        return false;
+    }
+
+    const UINT64 row_pitch = static_cast<UINT64>(frame.width); // 1 B/px Y; UV interleaved same width
+    const UINT64 required = row_pitch * frame.height * 3 / 2;
+    if (frame.nv12_data.size() < required) {
+        NEMU_LOG_WARN("D3D12", "PresentNVDECFrame: payload {} < required {}",
+                      frame.nv12_data.size(), required);
+        return false;
+    }
+
+    // (Re)create the texture + upload heap when dimensions changed.
+    if (!nvdec_texture_ || nvdec_desc_.Width != static_cast<UINT64>(frame.width) ||
+        nvdec_desc_.Height != static_cast<UINT>(frame.height)) {
+        nvdec_texture_.Reset();
+        nvdec_upload_.Reset();
+
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        nvdec_desc_ = {};
+        nvdec_desc_.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        nvdec_desc_.Width = frame.width;
+        nvdec_desc_.Height = frame.height;
+        nvdec_desc_.MipLevels = 1;
+        nvdec_desc_.Format = DXGI_FORMAT_R8_TYPELESS; // byte buffer; shader interprets
+        nvdec_desc_.SampleDesc.Count = 1;
+        nvdec_desc_.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        nvdec_desc_.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+        HRESULT hr = device_->CreateCommittedResource(
+            &heap, D3D12_HEAP_FLAG_NONE, &nvdec_desc_, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            nullptr, IID_PPV_ARGS(&nvdec_texture_));
+        if (FAILED(hr)) {
+            NEMU_LOG_ERROR("D3D12", "PresentNVDECFrame: texture create failed 0x{:08X}", static_cast<UINT>(hr));
+            return false;
+        }
+
+        D3D12_HEAP_PROPERTIES up_heap{};
+        up_heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC up_desc = nvdec_desc_;
+        up_desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+        up_desc.Format = DXGI_FORMAT_R8_UINT;
+        hr = device_->CreateCommittedResource(
+            &up_heap, D3D12_HEAP_FLAG_NONE, &up_desc, D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr, IID_PPV_ARGS(&nvdec_upload_));
+        if (FAILED(hr)) {
+            NEMU_LOG_ERROR("D3D12", "PresentNVDECFrame: upload create failed 0x{:08X}", static_cast<UINT>(hr));
+            return false;
+        }
+    }
+
+    // Copy NV12 bytes through the persistent upload heap (map once per frame).
+    void* mapped = nullptr;
+    D3D12_RANGE read{0, 0};
+    if (FAILED(nvdec_upload_->Map(0, &read, &mapped))) return false;
+    std::memcpy(mapped, frame.nv12_data.data(), required);
+    nvdec_upload_->Unmap(0, nullptr);
+
+    // GPU copy upload -> texture on the next command list flush (Present()).
+    nvdec_frame_number_ = frame.frame_number;
+    nvdec_frame_pending_ = true;
+    NEMU_LOG_DEBUG("D3D12", "PresentNVDECFrame: {}x{} frame {} queued",
+                   frame.width, frame.height, frame.frame_number);
+    return true;
+}
+
 void D3D12GpuBackend::SetComputeShader(std::span<const u8> compute_bytecode) {
     compute_shader_.assign(compute_bytecode.begin(), compute_bytecode.end());
     compute_shader_valid_ = !compute_shader_.empty();
