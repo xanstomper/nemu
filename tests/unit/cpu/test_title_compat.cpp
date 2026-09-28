@@ -12,12 +12,19 @@
 
 using namespace nemu::core::cpu;
 
+#define NEMU_TEST_ASSERT(cond) do { \
+    if (!(cond)) { \
+        std::fprintf(stderr, "[FAIL] Assertion failed: " #cond " at %s:%d\n", __FILE__, __LINE__); \
+        std::abort(); \
+    } \
+} while (0)
+
 static void TestSortedInvariant() {
     const size_t n = sizeof(kKnownTitles) / sizeof(kKnownTitles[0]);
     for (size_t i = 1; i < n; ++i) {
-        assert(kKnownTitles[i - 1].title_id < kKnownTitles[i].title_id &&
-               "table must be strictly sorted for binary search");
-        assert(!kKnownTitles[i].name.empty());
+        NEMU_TEST_ASSERT(kKnownTitles[i - 1].title_id < kKnownTitles[i].title_id &&
+                         "table must be strictly sorted for binary search");
+        NEMU_TEST_ASSERT(!kKnownTitles[i].name.empty());
     }
     std::printf("  PASS TestSortedInvariant (%zu titles)\n", n);
 }
@@ -25,22 +32,22 @@ static void TestSortedInvariant() {
 static void TestLookup() {
     // Hit: a known nvdec title from the seed.
     const TitleCompat* t = FindTitleCompat(0x0100ff500e34a000ULL); // Xenoblade DE
-    assert(t && t->tweaks.nvdec_required);
+    NEMU_TEST_ASSERT(t && t->tweaks.nvdec_required);
 
     // Miss: unknown title and null id.
-    assert(FindTitleCompat(0x0BAD0BAD0BAD0BADULL) == nullptr);
-    assert(FindTitleCompat(0) == nullptr);
+    NEMU_TEST_ASSERT(FindTitleCompat(0x0BAD0BAD0BAD0BADULL) == nullptr);
+    NEMU_TEST_ASSERT(FindTitleCompat(0) == nullptr);
 
     // 32-bit flagged titles exist in the seed.
     bool saw32 = false;
     const size_t n = sizeof(kKnownTitles) / sizeof(kKnownTitles[0]);
     for (size_t i = 0; i < n && !saw32; ++i) saw32 = kKnownTitles[i].tweaks.is_32bit;
-    assert(saw32);
+    NEMU_TEST_ASSERT(saw32);
 
     // Deadlock-flagged titles exist.
     bool sawDl = false;
     for (size_t i = 0; i < n && !sawDl; ++i) sawDl = kKnownTitles[i].tweaks.sync_relaxed;
-    assert(sawDl);
+    NEMU_TEST_ASSERT(sawDl);
     std::puts("  PASS TestLookup");
 }
 

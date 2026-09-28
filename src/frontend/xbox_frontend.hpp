@@ -197,6 +197,7 @@ public:
     }
 
     /// True once per quick-menu screenshot request (main loop captures the real frame).
+    void RequestScreenshot() noexcept { screenshot_requested_ = true; }
     [[nodiscard]] bool ConsumeScreenshotRequested() noexcept {
         bool r = screenshot_requested_;
         screenshot_requested_ = false;
@@ -393,7 +394,7 @@ public:
     [[nodiscard]] std::vector<std::string> GetLdnStatusLines() const;
 
 private:
-    void HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b, bool pressed_start, bool pressed_y);
+    void HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b, bool pressed_start, bool pressed_y, bool pressed_back = false);
     void HandleFileManagerInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b, bool pressed_x, bool pressed_y);
     void HandleOptimizersInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a);
     void HandleControllersInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, core::hid::XboxControllerDriver* driver);
@@ -574,6 +575,7 @@ private:
     bool prev_btn_lb_{false};
     bool prev_btn_rb_{false};
     bool prev_btn_start_{false};
+    bool prev_btn_back_{false};
 
     // Stick repeat timers
     s32 prev_stick_x_{0};

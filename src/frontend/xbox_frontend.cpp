@@ -675,6 +675,7 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
     const bool pressed_lb    = input.lb && !prev_btn_lb_;
     const bool pressed_rb    = input.rb && !prev_btn_rb_;
     const bool pressed_start = input.start && !prev_btn_start_;
+    const bool pressed_back  = input.back && !prev_btn_back_;
 
     // Stick navigation
     const bool stick_left  = (input.thumb_lx < -STICK_THRESHOLD) && (prev_stick_x_ >= -STICK_THRESHOLD);
@@ -699,6 +700,7 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
     prev_btn_lb_     = input.lb;
     prev_btn_rb_     = input.rb;
     prev_btn_start_  = input.start;
+    prev_btn_back_   = input.back;
     prev_stick_x_    = input.thumb_lx;
     prev_stick_y_    = input.thumb_ly;
 
@@ -1008,7 +1010,7 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
     // Dispatch input to current active tab
     switch (current_tab_) {
         case FrontendTab::Library:
-            HandleLibraryInput(input, nav_up, nav_down, nav_left, nav_right, pressed_a, pressed_b, pressed_start, pressed_y);
+            HandleLibraryInput(input, nav_up, nav_down, nav_left, nav_right, pressed_a, pressed_b, pressed_start, pressed_y, pressed_back);
             break;
         case FrontendTab::FileManager:
             HandleFileManagerInput(input, nav_up, nav_down, pressed_a, pressed_b, pressed_x, pressed_y);
@@ -1030,9 +1032,20 @@ void XboxFrontend::ProcessInput(const core::hid::XboxGamepadState& input, core::
     }
 }
 
-void XboxFrontend::HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b, bool pressed_start, bool pressed_y) {
+void XboxFrontend::HandleLibraryInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b, bool pressed_start, bool pressed_y, bool pressed_back) {
     (void)input;
     if (library_.empty()) return;
+
+    // View button (⧉) / (≡) opens the Game Context Menu directly on the selected title
+    if (pressed_back) {
+        if (!home_in_filter_bar_ && !home_in_shortcuts_) {
+            context_menu_open_ = true;
+            context_menu_row_ = 0;
+            context_menu_x_ = 450.0f;
+            context_menu_y_ = 180.0f;
+            return;
+        }
+    }
 
     if (pressed_y) {
         ScanDirectory("ROOT:/");
@@ -1275,7 +1288,7 @@ void XboxFrontend::HandleGameOptionsInput(const core::hid::XboxGamepadState& inp
         return;
     }
 
-    constexpr size_t TOTAL_OPTION_ROWS = 7;
+    constexpr size_t TOTAL_OPTION_ROWS = 8;
     if (pressed_up) {
         game_options_row_ = (game_options_row_ > 0) ? game_options_row_ - 1 : TOTAL_OPTION_ROWS - 1;
     }
@@ -1301,7 +1314,16 @@ void XboxFrontend::HandleGameOptionsInput(const core::hid::XboxGamepadState& inp
             }
             break;
 
-        case 1: // Per-Game Upscaler Mode
+        case 1: // Full Eden Software Properties (Add-ons, Cheats, Overrides)
+            if (pressed_a) {
+                show_game_options_ = false;
+                per_game_properties_open_ = true;
+                per_game_tab_ = 0;
+                per_game_row_ = 0;
+            }
+            break;
+
+        case 2: // Per-Game Upscaler Mode
             if (pressed_left || pressed_right || pressed_a) {
                 cfg.has_custom_settings = true;
                 u32 cur = static_cast<u32>(cfg.upscaler);
@@ -1314,7 +1336,7 @@ void XboxFrontend::HandleGameOptionsInput(const core::hid::XboxGamepadState& inp
             }
             break;
 
-        case 2: // Per-Game Resolution Scale
+        case 3: // Per-Game Resolution Scale
             if (pressed_left || pressed_right || pressed_a) {
                 cfg.has_custom_settings = true;
                 u32 cur = static_cast<u32>(cfg.resolution_scale);
@@ -1327,7 +1349,7 @@ void XboxFrontend::HandleGameOptionsInput(const core::hid::XboxGamepadState& inp
             }
             break;
 
-        case 3: // Per-Game Frame Generation
+        case 4: // Per-Game Frame Generation
             if (pressed_left || pressed_right || pressed_a) {
                 cfg.has_custom_settings = true;
                 cfg.frame_generation = (cfg.frame_generation == core::gpu::pipeline::FrameGenMode::Disabled) ?
@@ -1336,7 +1358,7 @@ void XboxFrontend::HandleGameOptionsInput(const core::hid::XboxGamepadState& inp
             }
             break;
 
-        case 4: // Per-Game Button Layout
+        case 5: // Per-Game Button Layout
             if (pressed_left || pressed_right || pressed_a) {
                 cfg.has_custom_settings = true;
                 cfg.button_layout = (cfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard) ?
@@ -1345,7 +1367,7 @@ void XboxFrontend::HandleGameOptionsInput(const core::hid::XboxGamepadState& inp
             }
             break;
 
-        case 5: // Save Data Backup to USB / Local Storage
+        case 6: // Save Data Backup to USB / Local Storage
             if (pressed_a) {
                 core::save::SaveManager sm(vfs_);
                 bool backed_up = sm.BackupSavesTo("D:/NemuSaves");
@@ -1354,7 +1376,7 @@ void XboxFrontend::HandleGameOptionsInput(const core::hid::XboxGamepadState& inp
             }
             break;
 
-        case 6: // Close Options
+        case 7: // Close Options
             if (pressed_a) {
                 show_game_options_ = false;
             }
@@ -2786,9 +2808,9 @@ void XboxFrontend::ProcessPointer(float mouse_x, float mouse_y, bool left_down, 
             active_subview_ = ActiveSubView::None;
             return;
         }
-        for (size_t o = 0; o < 5; ++o) {
-            float oy = 295.0f + static_cast<float>(o) * 52.0f;
-            if (mouse_x >= 365.0f && mouse_x <= 915.0f && mouse_y >= oy && mouse_y <= oy + 44.0f) {
+        for (size_t o = 0; o < 8; ++o) {
+            float oy = 262.0f + static_cast<float>(o) * 39.0f;
+            if (mouse_x >= 365.0f && mouse_x <= 915.0f && mouse_y >= oy && mouse_y <= oy + 36.0f) {
                 game_options_row_ = o;
                 if (left_click) {
                     if (o == 0) { // Launch
@@ -2797,29 +2819,61 @@ void XboxFrontend::ProcessPointer(float mouse_x, float mouse_y, bool left_down, 
                         if (selected_game_index_ < library_.size()) {
                             launch_requested_ = library_[selected_game_index_].virtual_path;
                         }
-                    } else if (o == 1) { // Cycle graphics profile
-                        auto& cfg = config_.GetConfig();
-                        using RS = core::config::ResolutionScale;
-                        cfg.resolution_scale = (cfg.resolution_scale == RS::Native_1_0x) ? RS::SeriesX_1_5x : RS::Native_1_0x;
-                        config_.Save();
-                        config_changed_ = true;
-                    } else if (o == 2) {
-                        // Real save-data check via VFS
+                    } else if (o == 1) { // Open Eden Software Properties
+                        show_game_options_ = false;
+                        active_subview_ = ActiveSubView::None;
+                        per_game_properties_open_ = true;
+                        per_game_tab_ = 0;
+                        per_game_row_ = 0;
+                    } else if (o == 2) { // Cycle upscaler
                         if (selected_game_index_ < library_.size()) {
-                            const auto& g = library_[selected_game_index_];
-                            if (auto sz = vfs_.GetFileSize("save:/" + std::to_string(g.title_id % 100000) + "/data.bin")) {
-                                ShowToast("Save data verified: " + std::to_string(*sz / 1024) + " KB");
-                            } else {
-                                ShowToast("No save data yet for this title");
-                            }
+                            auto& g = library_[selected_game_index_];
+                            core::config::PerGameConfig gcfg{};
+                            config_.LoadGameConfig(g.title_id, gcfg);
+                            gcfg.has_custom_settings = true;
+                            gcfg.upscaler = static_cast<core::gpu::pipeline::UpscalerMode>((static_cast<u32>(gcfg.upscaler) + 1) % 5);
+                            config_.SaveGameConfig(g.title_id, gcfg);
                         }
-                    } else if (o == 3) {
-                        ScanDirectory("ROOT:/");
-                    } else if (o == 4) {
+                    } else if (o == 3) { // Cycle resolution scale
+                        if (selected_game_index_ < library_.size()) {
+                            auto& g = library_[selected_game_index_];
+                            core::config::PerGameConfig gcfg{};
+                            config_.LoadGameConfig(g.title_id, gcfg);
+                            gcfg.has_custom_settings = true;
+                            gcfg.resolution_scale = static_cast<core::config::ResolutionScale>((static_cast<u32>(gcfg.resolution_scale) + 1) % 5);
+                            config_.SaveGameConfig(g.title_id, gcfg);
+                        }
+                    } else if (o == 4) { // Toggle framegen
+                        if (selected_game_index_ < library_.size()) {
+                            auto& g = library_[selected_game_index_];
+                            core::config::PerGameConfig gcfg{};
+                            config_.LoadGameConfig(g.title_id, gcfg);
+                            gcfg.has_custom_settings = true;
+                            gcfg.frame_generation = (gcfg.frame_generation == core::gpu::pipeline::FrameGenMode::Disabled)
+                                ? core::gpu::pipeline::FrameGenMode::AFMF_Extrapolation_2x : core::gpu::pipeline::FrameGenMode::Disabled;
+                            config_.SaveGameConfig(g.title_id, gcfg);
+                        }
+                    } else if (o == 5) { // Toggle button layout
+                        if (selected_game_index_ < library_.size()) {
+                            auto& g = library_[selected_game_index_];
+                            core::config::PerGameConfig gcfg{};
+                            config_.LoadGameConfig(g.title_id, gcfg);
+                            gcfg.has_custom_settings = true;
+                            gcfg.button_layout = (gcfg.button_layout == core::hid::FaceButtonLayout::NintendoStandard)
+                                ? core::hid::FaceButtonLayout::XboxMirrored : core::hid::FaceButtonLayout::NintendoStandard;
+                            config_.SaveGameConfig(g.title_id, gcfg);
+                        }
+                    } else if (o == 6) { // Save backup
+                        core::save::SaveManager sm(vfs_);
+                        bool backed_up = sm.BackupSavesTo("D:/NemuSaves");
+                        if (!backed_up) backed_up = sm.BackupSavesTo("save:/backups");
+                        ShowToast(backed_up ? "Save data backed up to USB / Storage!" : "Save data verified OK");
+                    } else if (o == 7) { // Close
                         show_game_options_ = false;
                         active_subview_ = ActiveSubView::None;
                     }
                 }
+                return;
             }
         }
         return;
@@ -4358,36 +4412,37 @@ void XboxFrontend::DrawSwitchGameOptions(std::vector<core::gpu::RasterVertex>& o
     std::string layout_str = (cfg.button_layout == core::hid::FaceButtonLayout::XboxMirrored)
         ? "Xbox Mirrored (A=A, B=B)" : "Nintendo Standard (A=B, B=A)";
 
-    std::string opts[7];
+    std::string opts[8];
     opts[0] = "1. Launch Software";
-    opts[1] = "2. Upscaler: < " + upscaler_str + " >";
-    opts[2] = "3. Resolution: < " + res_scale_str + " >";
-    opts[3] = "4. Frame Gen: < " + framegen_str + " >";
-    opts[4] = "5. Button Layout: < " + layout_str + " >";
-    opts[5] = "6. Save Backup: [ Export to USB (D:/NemuSaves) ]";
-    opts[6] = "7. Close Options";
+    opts[1] = "2. Software Properties (Add-ons, Cheats, Overrides)...";
+    opts[2] = "3. Upscaler: < " + upscaler_str + " >";
+    opts[3] = "4. Resolution: < " + res_scale_str + " >";
+    opts[4] = "5. Frame Gen: < " + framegen_str + " >";
+    opts[5] = "6. Button Layout: < " + layout_str + " >";
+    opts[6] = "7. Save Backup: [ Export to USB (D:/NemuSaves) ]";
+    opts[7] = "8. Close Options";
 
-    for (size_t o = 0; o < 7; ++o) {
-        float oy = 270.0f + static_cast<float>(o) * 44.0f;
+    for (size_t o = 0; o < 8; ++o) {
+        float oy = 262.0f + static_cast<float>(o) * 39.0f;
         bool is_sel = (o == game_options_row_);
 
         if (is_sel) {
-            UiGeometryBuilder::AddQuad(out, 365.0f, oy, 550.0f, 38.0f, UiColor{0.0f, 0.50f, 0.65f, 0.45f});
-            UiGeometryBuilder::AddRectOutline(out, 365.0f, oy, 550.0f, 38.0f, 2.0f, UiColor{0.0f, 0.82f, 0.90f, 1.0f});
+            UiGeometryBuilder::AddQuad(out, 365.0f, oy, 550.0f, 35.0f, UiColor{0.0f, 0.50f, 0.65f, 0.45f});
+            UiGeometryBuilder::AddRectOutline(out, 365.0f, oy, 550.0f, 35.0f, 2.0f, UiColor{0.0f, 0.82f, 0.90f, 1.0f});
             if (overlay) {
-                gpu->UiFillRectOverlay(365.0f, oy, 550.0f, 38.0f, 0.0f, 0.50f, 0.65f, 0.45f);
-                gpu->UiRectOutlineOverlay(365.0f, oy, 550.0f, 38.0f, 2.0f, 0.0f, 0.82f, 0.90f, 1.0f);
-                gpu->UiTextOverlay(std::string(">  ") + opts[o], 380.0f, oy + 9.0f, 16.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+                gpu->UiFillRectOverlay(365.0f, oy, 550.0f, 35.0f, 0.0f, 0.50f, 0.65f, 0.45f);
+                gpu->UiRectOutlineOverlay(365.0f, oy, 550.0f, 35.0f, 2.0f, 0.0f, 0.82f, 0.90f, 1.0f);
+                gpu->UiTextOverlay(std::string(">  ") + opts[o], 380.0f, oy + 8.0f, 15.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
             } else {
-                UiGeometryBuilder::AddText(out, std::string("> ") + opts[o], 380.0f, oy + 9.0f, 1.3f, UiColor::EdenCyan());
+                UiGeometryBuilder::AddText(out, std::string("> ") + opts[o], 380.0f, oy + 8.0f, 1.3f, UiColor::EdenCyan());
             }
         } else {
-            UiGeometryBuilder::AddQuad(out, 365.0f, oy, 550.0f, 38.0f, UiColor{0.22f, 0.22f, 0.22f, 1.0f});
+            UiGeometryBuilder::AddQuad(out, 365.0f, oy, 550.0f, 35.0f, UiColor{0.22f, 0.22f, 0.22f, 1.0f});
             if (overlay) {
-                gpu->UiFillRectOverlay(365.0f, oy, 550.0f, 38.0f, 0.22f, 0.22f, 0.22f, 1.0f);
-                gpu->UiTextOverlay(std::string("   ") + opts[o], 380.0f, oy + 9.0f, 16.0f, 0.90f, 0.90f, 0.90f, 1.0f, -1);
+                gpu->UiFillRectOverlay(365.0f, oy, 550.0f, 35.0f, 0.22f, 0.22f, 0.22f, 1.0f);
+                gpu->UiTextOverlay(std::string("   ") + opts[o], 380.0f, oy + 8.0f, 15.0f, 0.90f, 0.90f, 0.90f, 1.0f, -1);
             } else {
-                UiGeometryBuilder::AddText(out, std::string("  ") + opts[o], 380.0f, oy + 9.0f, 1.3f, UiColor::TextWhite());
+                UiGeometryBuilder::AddText(out, std::string("  ") + opts[o], 380.0f, oy + 8.0f, 1.3f, UiColor::TextWhite());
             }
         }
     }

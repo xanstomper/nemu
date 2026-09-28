@@ -200,6 +200,20 @@ public:
     /// this instead of the fixed RasterVertex buffer. Null/SDL2 ignore it.
     virtual void SetGuestVertexBuffer(std::span<const u8> /*data*/, u32 /*stride*/) {}
 
+    // --- NVDEC video presentation -------------------------------------------
+    // Carry a decoded video frame (NV12: Y plane + interleaved UV) to the
+    // backend for presentation via the VIC (video output compositor) path.
+    // The D3D12 backend uploads into a dynamic texture and draws it as a
+    // fullscreen quad; Null/SDL2 may rasterize to their framebuffer or ignore.
+    // Returns true when the backend consumed the frame.
+    struct NVDECFrame {
+        u32 width{0};
+        u32 height{0};
+        std::span<const u8> nv12_data; // width*height Y + width/2*height interleaved UV
+        u64 frame_number{0};
+    };
+    virtual bool PresentNVDECFrame(const NVDECFrame& /*frame*/) { return false; }
+
     // --- Vertex / material binding and host-observable frame capture ---
     // These are the software-rasterizable entry points. Backends that only
     // forward to a hardware API (e.g. D3D12) may leave them as no-ops; the

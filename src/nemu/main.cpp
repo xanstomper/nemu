@@ -46,7 +46,7 @@ static core::hid::XboxGamepadState PollSdlKeyboard() {
     out.lb         = k[SDL_SCANCODE_Q]     || k[SDL_SCANCODE_1];
     out.rb         = k[SDL_SCANCODE_E]     || k[SDL_SCANCODE_2];
     out.start      = (k[SDL_SCANCODE_RETURN] && k[SDL_SCANCODE_LCTRL]) || k[SDL_SCANCODE_P];
-    out.back       = k[SDL_SCANCODE_BACKSPACE] || k[SDL_SCANCODE_TAB] || k[SDL_SCANCODE_GRAVE];
+    out.back       = k[SDL_SCANCODE_BACKSPACE] || k[SDL_SCANCODE_GRAVE];
     return out;
 }
 #endif
@@ -297,6 +297,69 @@ static int MainInternal(int argc, char** argv) {
             input_state.rb         = input_state.rb         || kb.rb;
             input_state.start      = input_state.start      || kb.start;
             input_state.back       = input_state.back       || kb.back;
+
+            // Direct desktop keyboard shortcuts for Eden features
+            const Uint8* kstate = SDL_GetKeyboardState(nullptr);
+            if (kstate) {
+                bool ctrl = kstate[SDL_SCANCODE_LCTRL] || kstate[SDL_SCANCODE_RCTRL];
+                bool alt  = kstate[SDL_SCANCODE_LALT]  || kstate[SDL_SCANCODE_RALT];
+
+                static bool prev_f1{false}, prev_f6{false}, prev_f7{false}, prev_f8{false}, prev_f9{false}, prev_f11{false}, prev_f12{false};
+                static bool prev_ctrl_o{false}, prev_ctrl_i{false}, prev_ctrl_p{false}, prev_ctrl_m{false}, prev_ctrl_a{false}, prev_ctrl_c{false}, prev_ctrl_t{false};
+                static bool prev_tab{false}, prev_alt_enter{false};
+
+                // F1: About / Documentation dialog
+                if (kstate[SDL_SCANCODE_F1] && !prev_f1) frontend.ToggleAboutDialog();
+                // F6: Grid View
+                if (kstate[SDL_SCANCODE_F6] && !prev_f6) frontend.SetGameListMode(frontend::GameListMode::Grid);
+                // F7: List View
+                if (kstate[SDL_SCANCODE_F7] && !prev_f7) frontend.SetGameListMode(frontend::GameListMode::List);
+                // F8: Carousel View
+                if (kstate[SDL_SCANCODE_F8] && !prev_f8) frontend.SetGameListMode(frontend::GameListMode::Carousel);
+                // F9: LDN Multiplayer Lobby
+                if (kstate[SDL_SCANCODE_F9] && !prev_f9) frontend.ToggleMultiplayerLobby();
+                // F11: Fullscreen
+                if (kstate[SDL_SCANCODE_F11] && !prev_f11) frontend.ToggleFullscreen();
+                // F12: Screenshot
+                if (kstate[SDL_SCANCODE_F12] && !prev_f12) frontend.RequestScreenshot();
+
+                // Ctrl+O: Open Content Manager / File Browser (EShop)
+                if (ctrl && kstate[SDL_SCANCODE_O] && !prev_ctrl_o) frontend.SetActiveSubView(frontend::ActiveSubView::EShop);
+                // Ctrl+I: Install to NAND
+                if (ctrl && kstate[SDL_SCANCODE_I] && !prev_ctrl_i) frontend.ToggleInstallNandDialog();
+                // Ctrl+P: System Settings
+                if (ctrl && kstate[SDL_SCANCODE_P] && !prev_ctrl_p) frontend.SetActiveSubView(frontend::ActiveSubView::SystemSettings);
+                // Ctrl+M: Mod Manager
+                if (ctrl && kstate[SDL_SCANCODE_M] && !prev_ctrl_m) frontend.ToggleModManager();
+                // Ctrl+A: Virtual Amiibo Scanner
+                if (ctrl && kstate[SDL_SCANCODE_A] && !prev_ctrl_a) frontend.ToggleAmiiboScanner();
+                // Ctrl+C: Controllers Configuration
+                if (ctrl && kstate[SDL_SCANCODE_C] && !prev_ctrl_c) frontend.SetActiveSubView(frontend::ActiveSubView::Controllers);
+                // Ctrl+T: TAS Speedrun Overlay
+                if (ctrl && kstate[SDL_SCANCODE_T] && !prev_ctrl_t) frontend.ToggleTasOverlay();
+
+                // Alt+Enter: Fullscreen
+                if (alt && kstate[SDL_SCANCODE_RETURN] && !prev_alt_enter) frontend.ToggleFullscreen();
+                // Tab: Toggle Desktop Top Menu Bar
+                if (kstate[SDL_SCANCODE_TAB] && !prev_tab) frontend.ToggleTopMenu();
+
+                prev_f1 = kstate[SDL_SCANCODE_F1];
+                prev_f6 = kstate[SDL_SCANCODE_F6];
+                prev_f7 = kstate[SDL_SCANCODE_F7];
+                prev_f8 = kstate[SDL_SCANCODE_F8];
+                prev_f9 = kstate[SDL_SCANCODE_F9];
+                prev_f11 = kstate[SDL_SCANCODE_F11];
+                prev_f12 = kstate[SDL_SCANCODE_F12];
+                prev_ctrl_o = ctrl && kstate[SDL_SCANCODE_O];
+                prev_ctrl_i = ctrl && kstate[SDL_SCANCODE_I];
+                prev_ctrl_p = ctrl && kstate[SDL_SCANCODE_P];
+                prev_ctrl_m = ctrl && kstate[SDL_SCANCODE_M];
+                prev_ctrl_a = ctrl && kstate[SDL_SCANCODE_A];
+                prev_ctrl_c = ctrl && kstate[SDL_SCANCODE_C];
+                prev_ctrl_t = ctrl && kstate[SDL_SCANCODE_T];
+                prev_alt_enter = alt && kstate[SDL_SCANCODE_RETURN];
+                prev_tab = kstate[SDL_SCANCODE_TAB];
+            }
         }
 #endif
 
