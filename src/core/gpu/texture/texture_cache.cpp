@@ -65,6 +65,7 @@ void TextureCache::Shutdown() {
     samplers_.clear();
     next_srv_index_ = 0;
     next_sampler_index_ = 0;
+    total_resident_bytes_ = 0;
 #ifdef _WIN32
     srv_heap_.Reset();
     sampler_heap_.Reset();
@@ -87,6 +88,8 @@ std::shared_ptr<CachedTexture> TextureCache::GetOrCreateTexture(
 
     auto it = textures_.find(key);
     if (it != textures_.end()) {
+        // Touch the LRU timestamp so hot textures survive byte-budget eviction.
+        it->second->last_used_frame = frame_++;
         return it->second;
     }
 
@@ -253,7 +256,18 @@ std::shared_ptr<CachedTexture> TextureCache::GetOrCreateTexture(
     }
 #endif
 
+    cached->last_used_frame = frame_++;
     textures_[key] = cached;
+
+    // Byte-budget LRU (Tier-C5): account this texture's host footprint and, if
+    // the budget is exceeded, evict the least-recently-used textures until the
+    // cache fits. This is the primary defense against a streaming game filling
+    // the whole 5 GiB cap with resident textures.
+    total_resident_bytes_ += cached->linear_pixel_data.size();
+    if (total_resident_bytes_ > max_texture_bytes_) {
+        EvictLeastRecentlyUsed();
+    }
+
     return cached;
 }
 
@@ -329,10 +343,44 @@ void TextureCache::InvalidateRange(u64 gpu_address, size_t size) {
         const u64 tex_start = it->first.gpu_address;
         const u64 tex_end = tex_start + it->second->desc.CalculateLinearSize();
         if (tex_start < end && tex_end > gpu_address) {
+            if (total_resident_bytes_ >= it->second->linear_pixel_data.size()) {
+                total_resident_bytes_ -= it->second->linear_pixel_data.size();
+            }
             it = textures_.erase(it);
         } else {
             ++it;
         }
+    }
+}
+
+void TextureCache::EvictLeastRecentlyUsed() {
+    // Evict oldest last_used_frame textures until the resident byte count is
+    // back under budget. Keeps the hot working set (textures touched this frame
+    // or recently) while shedding stale/huge entries — protects the 5 GiB cap.
+    while (total_resident_bytes_ > max_texture_bytes_ && !textures_.empty()) {
+        auto oldest = textures_.begin();
+        for (auto it = textures_.begin(); it != textures_.end(); ++it) {
+            if (it->second->last_used_frame < oldest->second->last_used_frame) {
+                oldest = it;
+            }
+        }
+        if (total_resident_bytes_ >= oldest->second->linear_pixel_data.size()) {
+            total_resident_bytes_ -= oldest->second->linear_pixel_data.size();
+        }
+        textures_.erase(oldest);
+    }
+}
+
+size_t TextureCache::GetResidentBytes() const noexcept {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return total_resident_bytes_;
+}
+
+void TextureCache::SetByteBudget(size_t bytes) noexcept {
+    std::lock_guard<std::mutex> lock(mutex_);
+    max_texture_bytes_ = (bytes == 0) ? kDefaultMaxTextureBytes : bytes;
+    if (total_resident_bytes_ > max_texture_bytes_) {
+        EvictLeastRecentlyUsed();
     }
 }
 

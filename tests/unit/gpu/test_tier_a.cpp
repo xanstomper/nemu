@@ -508,6 +508,52 @@ void TestTextureCacheBc1Integration() {
 }
 
 // ---------------------------------------------------------------------------
+// TextureCache byte-budget LRU (Tier-C5, 5 GiB protection): when resident
+// texture bytes exceed the budget, the LRU-evicts until it fits — preventing a
+// streaming game from filling the whole 5 GiB cap with loose textures.
+// ---------------------------------------------------------------------------
+void TestTextureCacheByteBudget() {
+    using namespace nemu::core::gpu::texture;
+
+    auto mem = std::make_shared<memory::VirtualMemory>();
+    constexpr u64 base = 0x50000000ULL;
+    TextureCache cache;
+
+    // Tiny budget (64 KiB) so eviction triggers on a few 32x32 RGBA8 (4 KiB) texs.
+    cache.SetByteBudget(64 * 1024);
+
+    // Map + insert several distinct textures across guest addresses.
+    constexpr u32 W = 32, H = 32;              // 32*32*4 = 4096 B linear each
+    constexpr u64 per = 4096;
+    std::vector<u8> rgba(per, 0x7F);
+
+    // Insert 40 textures at distinct page-aligned addresses (40 * 4 KiB = 160 KiB).
+    constexpr u64 stride = 4096;               // page-aligned so Map succeeds
+    for (u32 i = 0; i < 40; ++i) {
+        const u64 addr = base + static_cast<u64>(i) * stride;
+        NEMU_TEST_ASSERT(mem->Map(addr, per, memory::MemoryPermission::All), "map");
+        mem->WriteBlock(addr, rgba.data(), rgba.size());
+        TextureDescriptor d{};
+        d.gpu_address = addr;
+        d.width = W; d.height = H; d.depth = 1; d.mip_levels = 1;
+        d.format = TextureFormat::RGBA8_UNORM;  // linear path (no ASTC)
+        d.bytes_per_pixel = 4;
+        d.is_block_linear = false;        // linear-pitch, simplest host path
+        auto t = cache.GetOrCreateTexture(d, mem.get());
+        NEMU_TEST_ASSERT(t && t->is_valid, "texture valid");
+    }
+
+    // Byte budget must cap resident bytes; count must be bounded well under 40.
+    const size_t resident = cache.GetResidentBytes();
+    NEMU_TEST_ASSERT(resident <= 64 * 1024, "resident bytes capped by budget");
+    NEMU_TEST_ASSERT(cache.GetTextureCount() < 20,
+                     "LRU evicted stale textures to respect byte budget");
+
+    std::cout << "  TextureCache byte budget PASS (resident=" << resident
+              << "B, count=" << cache.GetTextureCount() << ")\n";
+}
+
+// ---------------------------------------------------------------------------
 // Present-path optimizer pipeline (Tier-B UI wiring): settings -> Present()
 // ---------------------------------------------------------------------------
 void TestPresentOptimizerPipeline() {
@@ -815,6 +861,7 @@ int main() {
     TestBc1Encoder();
     TestBc1EncoderAlpha();
     TestTextureCacheBc1Integration();
+    TestTextureCacheByteBudget();
     TestPresentOptimizerPipeline();
     TestSassIdentifier();
     TestExtendedSassEmission();

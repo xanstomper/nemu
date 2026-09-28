@@ -29,6 +29,7 @@ struct CachedTexture {
     bool is_valid{false};
     std::vector<u8> linear_pixel_data{}; // Deswizzled/decompressed pixel buffer
     HostStorage host_storage{HostStorage::RGBA8};
+    u64 last_used_frame{0};              // LRU tie-breaker for byte-budget eviction
 
 #ifdef _WIN32
     Microsoft::WRL::ComPtr<ID3D12Resource> resource{};
@@ -89,6 +90,12 @@ public:
 
     /// Total number of active samplers in cache
     [[nodiscard]] size_t GetSamplerCount() const noexcept;
+
+    /// Total host-side bytes resident in the texture cache (typical cap).
+    [[nodiscard]] size_t GetResidentBytes() const noexcept;
+
+    /// Explicit byte budget for resident texture memory (0 = the constant cap).
+    void SetByteBudget(size_t bytes) noexcept;
 
 #ifdef _WIN32
     /// Bind descriptor heaps to the active command list
@@ -154,6 +161,15 @@ private:
     mutable std::mutex mutex_;
     std::unordered_map<TextureKey, std::shared_ptr<CachedTexture>, TextureKeyHash> textures_;
     std::unordered_map<SamplerDescriptor, std::shared_ptr<CachedSampler>, SamplerKeyHash, SamplerEqual> samplers_;
+
+    // Byte-budget LRU (Tier-C5, 5 GiB protection): cap total resident texture
+    // host bytes; evict least-recently-used textures when an insert would
+    // exceed it. Prevents a streaming game from filling the whole 5 GiB cap.
+    static constexpr size_t kDefaultMaxTextureBytes = (size_t)3072 * 1024 * 1024; // 3 GiB default budget
+    size_t max_texture_bytes_{kDefaultMaxTextureBytes};
+    size_t total_resident_bytes_{0};
+    u64 frame_{0};
+    void EvictLeastRecentlyUsed();
 
     u32 next_srv_index_{0};
     u32 next_sampler_index_{0};
