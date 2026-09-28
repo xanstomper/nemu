@@ -8,6 +8,7 @@
 #include "core/config/config_manager.hpp"
 #include "core/network/ldn_network.hpp"
 #include "core/gpu/pipeline/graphics_optimizer.hpp"
+#include "frontend/bitmap_font.hpp"
 #include <vector>
 #include <string>
 #include <string_view>
@@ -83,16 +84,45 @@ struct AmiiboScanner {
     std::vector<std::string> custom_amiibo_files;
 };
 
+enum class LibraryFilterCategory : u32 {
+    All = 0,
+    Installed = 1,
+    Favorites = 2,
+    Updates = 3,
+    DLC = 4
+};
+
+enum class LibrarySortMode : u32 {
+    TitleAsc = 0,
+    PlayTime = 1,
+    FileSize = 2,
+    Compatibility = 3
+};
+
+enum class CompatRating : u32 {
+    Perfect = 0,    // Runs flawlessly at full speed
+    Great   = 1,    // Fully playable with minor visual glitches
+    Okay    = 2,    // Playable but notable issues
+    Bad     = 3,    // Boots, heavy issues or low speed
+    Intro   = 4,    // Shows title screen, crashes or unplayable
+    Unknown = 5     // Not tested
+};
+
 struct GameEntry {
-    std::string title;
-    std::string filename;
-    std::string virtual_path;
-    std::string format_badge;   // "[NSP]", "[XCI]", "[NRO]"
-    std::string playtime_str;   // "Played 2h 15m" or "First Played Today"
-    std::string optimizer_tag;  // "FSR 2.0 • 4x MSAA • 60 FPS"
-    std::string cover_host_path; // host path to cover art (jpg/png), empty = placeholder tile
+    std::string title{};
+    std::string filename{};
+    std::string virtual_path{};
+    std::string format_badge{};   // "[NSP]", "[XCI]", "[NRO]"
+    std::string playtime_str{};   // "Played 2h 15m" or "First Played Today"
+    std::string optimizer_tag{};  // "FSR 2.0 • 4x MSAA • 60 FPS"
+    std::string cover_host_path{}; // host path to cover art (jpg/png), empty = placeholder tile
     size_t file_size{0};
     u64 title_id{0};
+    CompatRating compat{CompatRating::Unknown};
+    std::vector<std::string> addons{};   // DLC / Update title IDs
+    std::vector<std::string> cheats{};   // Active cheat names
+    bool favorite{false};
+    std::string developer{"Nintendo"};
 };
 
 struct FileEntry {
@@ -233,6 +263,68 @@ public:
     void ToggleAmiiboScanner() noexcept { amiibo_scanner_.is_open = !amiibo_scanner_.is_open; }
     void LoadAmiiboNfc(const std::string& tag_name);
 
+    [[nodiscard]] bool IsAboutDialogOpen() const noexcept { return about_dialog_open_; }
+    void SetAboutDialogOpen(bool open) noexcept { about_dialog_open_ = open; }
+    void ToggleAboutDialog() noexcept { about_dialog_open_ = !about_dialog_open_; }
+
+    [[nodiscard]] bool IsContextMenuOpen() const noexcept { return context_menu_open_; }
+    void SetContextMenuOpen(bool open) noexcept { context_menu_open_ = open; }
+    void ToggleContextMenu() noexcept { context_menu_open_ = !context_menu_open_; }
+
+    [[nodiscard]] bool IsMultiplayerLobbyOpen() const noexcept { return multiplayer_lobby_open_; }
+    void SetMultiplayerLobbyOpen(bool open) noexcept { multiplayer_lobby_open_ = open; }
+    void ToggleMultiplayerLobby() noexcept { multiplayer_lobby_open_ = !multiplayer_lobby_open_; }
+
+    [[nodiscard]] bool IsTasOverlayOpen() const noexcept { return tas_overlay_open_; }
+    void SetTasOverlayOpen(bool open) noexcept { tas_overlay_open_ = open; }
+    void ToggleTasOverlay() noexcept { tas_overlay_open_ = !tas_overlay_open_; }
+
+    [[nodiscard]] bool IsCheatManagerOpen() const noexcept { return cheat_manager_open_; }
+    void SetCheatManagerOpen(bool open) noexcept { cheat_manager_open_ = open; }
+    void ToggleCheatManager() noexcept { cheat_manager_open_ = !cheat_manager_open_; }
+
+    [[nodiscard]] bool IsStatusBarVisible() const noexcept { return status_bar_visible_; }
+    void SetStatusBarVisible(bool visible) noexcept { status_bar_visible_ = visible; }
+    void ToggleStatusBar() noexcept { status_bar_visible_ = !status_bar_visible_; }
+
+    [[nodiscard]] bool IsFullscreen() const noexcept { return fullscreen_; }
+    void SetFullscreen(bool fs) noexcept { fullscreen_ = fs; }
+    void ToggleFullscreen() noexcept { fullscreen_ = !fullscreen_; }
+
+    [[nodiscard]] bool IsPerGamePropertiesOpen() const noexcept { return per_game_properties_open_; }
+    void SetPerGamePropertiesOpen(bool open) noexcept { per_game_properties_open_ = open; }
+    void TogglePerGameProperties() noexcept { per_game_properties_open_ = !per_game_properties_open_; }
+    [[nodiscard]] size_t GetPerGameTab() const noexcept { return per_game_tab_; }
+    void SetPerGameTab(size_t tab) noexcept { per_game_tab_ = tab; }
+
+    [[nodiscard]] bool IsInstallNandDialogOpen() const noexcept { return install_nand_dialog_open_; }
+    void SetInstallNandDialogOpen(bool open) noexcept { install_nand_dialog_open_ = open; }
+    void ToggleInstallNandDialog() noexcept { install_nand_dialog_open_ = !install_nand_dialog_open_; }
+
+    [[nodiscard]] bool IsModManagerOpen() const noexcept { return mod_manager_open_; }
+    void SetModManagerOpen(bool open) noexcept { mod_manager_open_ = open; }
+    void ToggleModManager() noexcept { mod_manager_open_ = !mod_manager_open_; }
+
+    [[nodiscard]] LibraryFilterCategory GetFilterCategory() const noexcept { return filter_category_; }
+    void SetFilterCategory(LibraryFilterCategory cat) noexcept { filter_category_ = cat; }
+    void CycleFilterCategory() noexcept {
+        filter_category_ = static_cast<LibraryFilterCategory>((static_cast<u32>(filter_category_) + 1) % 5);
+    }
+
+    [[nodiscard]] LibrarySortMode GetSortMode() const noexcept { return sort_mode_; }
+    void SetSortMode(LibrarySortMode sort) noexcept { sort_mode_ = sort; }
+    void CycleSortMode() noexcept {
+        sort_mode_ = static_cast<LibrarySortMode>((static_cast<u32>(sort_mode_) + 1) % 4);
+    }
+    [[nodiscard]] std::string GetFilterCategoryString() const;
+    [[nodiscard]] std::string GetSortModeString() const;
+
+    void AddRecentFile(const std::string& path);
+    [[nodiscard]] const std::vector<std::string>& GetRecentFiles() const noexcept { return recent_files_; }
+
+    [[nodiscard]] std::string GetCompatString(CompatRating rating) const;
+    [[nodiscard]] UiColor GetCompatColor(CompatRating rating) const;
+
     /// Live emulator telemetry for the Diagnostics category (pushed by main loop).
     struct LiveDiagnostics {
         u64 frame_count{0};
@@ -327,6 +419,27 @@ private:
     void DrawSwitchGridView(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
     void DrawSwitchListView(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
     void DrawAmiiboScanner(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+
+    // Eden Additional Dialogs & Overlays
+    void DrawAboutDialog(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawEdenStatusBar(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawGameContextMenu(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawMultiplayerLobby(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawTasOverlay(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawCheatManager(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawPerGameProperties(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawInstallToNandDialog(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawModManager(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawLibraryFilterBar(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu, float y);
+
+    void HandleAboutInput(bool pressed_b);
+    void HandleContextMenuInput(bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b);
+    void HandleMultiplayerInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b);
+    void HandleTasInput(bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b);
+    void HandleCheatInput(bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b);
+    void HandlePerGamePropertiesInput(const core::hid::XboxGamepadState& input, bool pressed_up, bool pressed_down, bool pressed_left, bool pressed_right, bool pressed_a, bool pressed_b, bool pressed_lb, bool pressed_rb);
+    void HandleInstallNandInput(bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b);
+    void HandleModManagerInput(bool pressed_up, bool pressed_down, bool pressed_a, bool pressed_b);
 
     /// Resolve cover art for a library entry (rom-sidecar jpg/png, or a
     /// covers/ directory lookup by title id). Empty result = placeholder tile.
@@ -476,6 +589,95 @@ private:
     bool settings_enable_afmf_{true};
     bool settings_enable_reactive_flushing_{true};
     bool settings_enable_shader_cache_{true};
+
+    // Eden About Dialog
+    bool about_dialog_open_{false};
+
+    // Eden Game Context Menu (right-click / Start on game)
+    bool context_menu_open_{false};
+    size_t context_menu_row_{0};
+    float context_menu_x_{0.0f};
+    float context_menu_y_{0.0f};
+
+    // Eden Multiplayer / LDN Lobby Dialog
+    bool multiplayer_lobby_open_{false};
+    size_t multiplayer_tab_{0};      // 0=Browse, 1=Create, 2=Direct Connect
+    size_t multiplayer_row_{0};
+    std::string multiplayer_room_name_{"NEMU-MESH-01"};
+    std::string multiplayer_port_{"24872"};
+    size_t multiplayer_max_players_{8};
+
+    // Eden TAS (Tool-Assisted Speedrun) Overlay
+    bool tas_overlay_open_{false};
+    bool tas_recording_{false};
+    bool tas_playing_{false};
+    size_t tas_frame_{0};
+    size_t tas_total_frames_{0};
+
+    // Eden Cheat Manager
+    bool cheat_manager_open_{false};
+    size_t cheat_row_{0};
+    struct CheatEntry {
+        std::string name;
+        std::string description;
+        bool enabled{false};
+    };
+    std::vector<CheatEntry> cheat_list_;
+
+    // Eden Status Bar (bottom of window)
+    bool status_bar_visible_{true};
+    float emu_speed_percent_{100.0f};
+    float current_fps_{0.0f};
+    std::string status_game_title_{};
+    std::string status_gpu_backend_{"Direct3D 12"};
+    std::string firmware_version_{"18.1.0"};
+    bool fullscreen_{false};
+
+    // Eden Per-Game Properties (5 Tabs: Info, Add-ons, Cheats, Graphics, System)
+    bool per_game_properties_open_{false};
+    size_t per_game_tab_{0};
+    size_t per_game_row_{0};
+
+    // Eden Install Files to NAND Dialog
+    bool install_nand_dialog_open_{false};
+    size_t install_nand_row_{0};
+    float install_nand_progress_{0.0f};
+    bool install_nand_in_progress_{false};
+    std::string install_nand_status_{"Ready to Install Package to NAND"};
+    struct NandPackageEntry {
+        std::string name;
+        std::string type;
+        u64 title_id{0};
+        size_t size_bytes{0};
+        bool installed{false};
+    };
+    std::vector<NandPackageEntry> nand_packages_;
+
+    // Eden Mod & LayeredFS Manager Dialog
+    bool mod_manager_open_{false};
+    size_t mod_manager_row_{0};
+    struct ModEntry {
+        std::string name;
+        std::string type;
+        std::string author;
+        std::string version;
+        bool enabled{false};
+    };
+    std::vector<ModEntry> mod_list_;
+
+    // Eden Library Filter & Sort Bar
+    LibraryFilterCategory filter_category_{LibraryFilterCategory::All};
+    LibrarySortMode sort_mode_{LibrarySortMode::TitleAsc};
+    std::string search_query_{};
+
+    // Eden Recent Files
+    std::vector<std::string> recent_files_{
+        "sdmc:/games/The Legend of Zelda - Tears of the Kingdom.nsp",
+        "sdmc:/games/Super Mario Odyssey.nsp",
+        "sdmc:/games/Metroid Dread.nsp",
+        "sdmc:/games/Super Smash Bros Ultimate.nsp",
+        "sdmc:/games/Mario Kart 8 Deluxe.nsp"
+    };
 };
 
 } // namespace nemu::frontend

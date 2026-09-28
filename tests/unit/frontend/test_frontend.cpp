@@ -265,6 +265,8 @@ int main() {
         input.b = true;
         fe.ProcessInput(input);
         NEMU_TEST_ASSERT(!fe.IsGameOptionsOpen(), "Game Options modal closed via B");
+        input.b = false;
+        fe.ProcessInput(input);
         std::cout << "  - Switch Game Options (+) modal overlay & per-game settings: PASSED" << std::endl;
     }
 
@@ -506,6 +508,209 @@ int main() {
         fe.SetActiveSubView(ActiveSubView::None);
         null_gpu.Shutdown();
         std::cout << "  - All 10 Switch subviews & modal dialogs rendering passes: PASSED" << std::endl;
+    }
+
+    // Test 15: Eden Extended Modals, Overlays, and Top Menu Actions
+    {
+        core::hid::XboxGamepadState release_input{};
+        fe.ProcessInput(release_input);
+
+        // 15a. About Dialog
+        fe.SetAboutDialogOpen(true);
+        NEMU_TEST_ASSERT(fe.IsAboutDialogOpen(), "About dialog opened");
+        core::hid::XboxGamepadState input{};
+        input.b = true;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(!fe.IsAboutDialogOpen(), "About dialog dismissed via B button");
+        input.b = false;
+        fe.ProcessInput(input);
+
+        // 15b. Game Context Menu
+        fe.SetContextMenuOpen(true);
+        NEMU_TEST_ASSERT(fe.IsContextMenuOpen(), "Context menu opened");
+        input.b = true;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(!fe.IsContextMenuOpen(), "Context menu dismissed via B button");
+        input.b = false;
+        fe.ProcessInput(input);
+
+        // 15c. Multiplayer Lobby
+        fe.SetMultiplayerLobbyOpen(true);
+        NEMU_TEST_ASSERT(fe.IsMultiplayerLobbyOpen(), "Multiplayer lobby opened");
+        input.b = true;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(!fe.IsMultiplayerLobbyOpen(), "Multiplayer lobby dismissed via B button");
+        input.b = false;
+        fe.ProcessInput(input);
+
+        // 15d. TAS Overlay
+        fe.SetTasOverlayOpen(true);
+        NEMU_TEST_ASSERT(fe.IsTasOverlayOpen(), "TAS overlay opened");
+        input.b = true;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(!fe.IsTasOverlayOpen(), "TAS overlay dismissed via B button");
+        input.b = false;
+        fe.ProcessInput(input);
+
+        // 15e. Cheat Manager
+        fe.SetCheatManagerOpen(true);
+        NEMU_TEST_ASSERT(fe.IsCheatManagerOpen(), "Cheat manager opened");
+        input.b = true;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(!fe.IsCheatManagerOpen(), "Cheat manager dismissed via B button");
+        input.b = false;
+        fe.ProcessInput(input);
+
+        // 15f. Status Bar Toggle
+        bool initial_sb = fe.IsStatusBarVisible();
+        fe.ToggleStatusBar();
+        NEMU_TEST_ASSERT(fe.IsStatusBarVisible() != initial_sb, "Status bar toggled");
+        fe.SetStatusBarVisible(true);
+        NEMU_TEST_ASSERT(fe.IsStatusBarVisible(), "Status bar explicitly set visible");
+
+        // 15g. Fullscreen Toggle
+        bool initial_fs = fe.IsFullscreen();
+        fe.ToggleFullscreen();
+        NEMU_TEST_ASSERT(fe.IsFullscreen() != initial_fs, "Fullscreen toggled");
+        fe.SetFullscreen(false);
+        NEMU_TEST_ASSERT(!fe.IsFullscreen(), "Fullscreen reset to windowed");
+
+        // 15h. Compatibility Rating String & Color Helpers
+        NEMU_TEST_ASSERT(fe.GetCompatString(CompatRating::Perfect) == "Perfect", "Compat Perfect string");
+        NEMU_TEST_ASSERT(fe.GetCompatString(CompatRating::Great) == "Great", "Compat Great string");
+        NEMU_TEST_ASSERT(fe.GetCompatString(CompatRating::Okay) == "Okay", "Compat Okay string");
+        NEMU_TEST_ASSERT(fe.GetCompatString(CompatRating::Bad) == "Bad", "Compat Bad string");
+        NEMU_TEST_ASSERT(fe.GetCompatString(CompatRating::Intro) == "Intro", "Compat Intro string");
+        NEMU_TEST_ASSERT(fe.GetCompatString(CompatRating::Unknown) == "Unknown", "Compat Unknown string");
+
+        UiColor p_col = fe.GetCompatColor(CompatRating::Perfect);
+        NEMU_TEST_ASSERT(p_col.g > 0.8f, "Perfect compat color is green");
+
+        // 15i. Rendering pass with all Eden overlays enabled
+        core::gpu::NullGpuBackend null_gpu;
+        NEMU_TEST_ASSERT(null_gpu.Initialize(1280, 720), "Initialize null GPU for Eden overlays");
+
+        fe.SetAboutDialogOpen(true);
+        fe.SetMultiplayerLobbyOpen(true);
+        fe.SetCheatManagerOpen(true);
+        fe.SetTasOverlayOpen(true);
+        fe.SetContextMenuOpen(true);
+        fe.ToggleTopMenu();
+        fe.ToggleAmiiboScanner();
+
+        fe.Render(null_gpu);
+        NEMU_TEST_ASSERT(null_gpu.GetStats().draw_calls > 0, "Eden overlays rendered draw calls");
+
+        // Reset all modals
+        fe.SetAboutDialogOpen(false);
+        fe.SetMultiplayerLobbyOpen(false);
+        fe.SetCheatManagerOpen(false);
+        fe.SetTasOverlayOpen(false);
+        fe.SetContextMenuOpen(false);
+        fe.ToggleTopMenu();
+        fe.ToggleAmiiboScanner();
+        null_gpu.Shutdown();
+
+        std::cout << "  - Eden Extended Modals, Overlays, TAS, Cheats, and Top Menu: PASSED" << std::endl;
+    }
+
+    // Test 16: Eden Full 1:1 Parity Suite — Per-Game Properties, NAND Install, Mod Manager, Filter Bar & Recents
+    {
+        core::hid::XboxGamepadState input{};
+        // 16a. Per-Game Properties Dialog
+        NEMU_TEST_ASSERT(!fe.IsPerGamePropertiesOpen(), "Properties dialog initially closed");
+        fe.SetPerGamePropertiesOpen(true);
+        NEMU_TEST_ASSERT(fe.IsPerGamePropertiesOpen(), "Properties dialog opened");
+        fe.TogglePerGameProperties();
+        NEMU_TEST_ASSERT(!fe.IsPerGamePropertiesOpen(), "Properties dialog toggled closed");
+        fe.SetPerGamePropertiesOpen(true);
+
+        // Tab switching
+        fe.SetPerGameTab(0);
+        NEMU_TEST_ASSERT(fe.GetPerGameTab() == 0, "Initial tab: Info");
+        fe.SetPerGameTab(1);
+        NEMU_TEST_ASSERT(fe.GetPerGameTab() == 1, "Tab: Add-ons");
+        fe.SetPerGameTab(2);
+        NEMU_TEST_ASSERT(fe.GetPerGameTab() == 2, "Tab: Cheats");
+        fe.SetPerGameTab(3);
+        NEMU_TEST_ASSERT(fe.GetPerGameTab() == 3, "Tab: Graphics Override");
+        fe.SetPerGameTab(4);
+        NEMU_TEST_ASSERT(fe.GetPerGameTab() == 4, "Tab: System Override");
+
+        // Input dismiss with B
+        input.b = true;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(!fe.IsPerGamePropertiesOpen(), "Properties dialog dismissed via B button");
+        input.b = false;
+        fe.ProcessInput(input);
+
+        // 16b. Install Files to NAND Dialog
+        NEMU_TEST_ASSERT(!fe.IsInstallNandDialogOpen(), "Install to NAND initially closed");
+        fe.SetInstallNandDialogOpen(true);
+        NEMU_TEST_ASSERT(fe.IsInstallNandDialogOpen(), "Install to NAND opened");
+        fe.ToggleInstallNandDialog();
+        NEMU_TEST_ASSERT(!fe.IsInstallNandDialogOpen(), "Install to NAND toggled closed");
+        fe.SetInstallNandDialogOpen(true);
+
+        input.b = true;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(!fe.IsInstallNandDialogOpen(), "Install to NAND dismissed via B button");
+        input.b = false;
+        fe.ProcessInput(input);
+
+        // 16c. Mod & LayeredFS Manager
+        NEMU_TEST_ASSERT(!fe.IsModManagerOpen(), "Mod manager initially closed");
+        fe.SetModManagerOpen(true);
+        NEMU_TEST_ASSERT(fe.IsModManagerOpen(), "Mod manager opened");
+        fe.ToggleModManager();
+        NEMU_TEST_ASSERT(!fe.IsModManagerOpen(), "Mod manager toggled closed");
+        fe.SetModManagerOpen(true);
+
+        input.b = true;
+        fe.ProcessInput(input);
+        NEMU_TEST_ASSERT(!fe.IsModManagerOpen(), "Mod manager dismissed via B button");
+        input.b = false;
+        fe.ProcessInput(input);
+
+        // 16d. Library Filter & Sort Modes
+        fe.SetFilterCategory(LibraryFilterCategory::All);
+        NEMU_TEST_ASSERT(fe.GetFilterCategoryString() == "All Games", "Filter: All Games");
+        fe.CycleFilterCategory();
+        NEMU_TEST_ASSERT(fe.GetFilterCategory() == LibraryFilterCategory::Installed, "Filter cycled to Installed");
+        NEMU_TEST_ASSERT(fe.GetFilterCategoryString() == "Installed", "Filter string: Installed");
+        fe.CycleFilterCategory();
+        NEMU_TEST_ASSERT(fe.GetFilterCategory() == LibraryFilterCategory::Favorites, "Filter cycled to Favorites");
+        NEMU_TEST_ASSERT(fe.GetFilterCategoryString() == "Favorites", "Filter string: Favorites");
+
+        fe.SetSortMode(LibrarySortMode::TitleAsc);
+        NEMU_TEST_ASSERT(fe.GetSortModeString() == "Title (A-Z)", "Sort: Title (A-Z)");
+        fe.CycleSortMode();
+        NEMU_TEST_ASSERT(fe.GetSortMode() == LibrarySortMode::PlayTime, "Sort cycled to PlayTime");
+        NEMU_TEST_ASSERT(fe.GetSortModeString() == "Play Time", "Sort string: Play Time");
+
+        // 16e. Recent Files
+        fe.AddRecentFile("sdmc:/games/CustomGame.nsp");
+        const auto& recents = fe.GetRecentFiles();
+        NEMU_TEST_ASSERT(!recents.empty(), "Recents not empty");
+        NEMU_TEST_ASSERT(recents[0] == "sdmc:/games/CustomGame.nsp", "CustomGame inserted at top of recents");
+
+        // 16f. Rendering pass with Per-Game Properties, NAND Install, Mod Manager
+        core::gpu::NullGpuBackend null_gpu;
+        NEMU_TEST_ASSERT(null_gpu.Initialize(1280, 720), "Initialize null GPU for Eden complete pass");
+
+        fe.SetPerGamePropertiesOpen(true);
+        fe.SetInstallNandDialogOpen(true);
+        fe.SetModManagerOpen(true);
+
+        fe.Render(null_gpu);
+        NEMU_TEST_ASSERT(null_gpu.GetStats().draw_calls > 0, "Eden complete modals rendered draw calls");
+
+        fe.SetPerGamePropertiesOpen(false);
+        fe.SetInstallNandDialogOpen(false);
+        fe.SetModManagerOpen(false);
+        null_gpu.Shutdown();
+
+        std::cout << "  - Eden Per-Game Properties, NAND Install, Mod Manager, Filter/Sort & Recents: PASSED" << std::endl;
     }
 
     // Clean up
