@@ -9,6 +9,7 @@
 
 #include "nvdec.hpp"
 #include "h264.hpp"
+#include "ffmpeg.hpp"
 #include "core/memory/virtual_memory.hpp"
 #include "platform/logger.hpp"
 #include <cstring>

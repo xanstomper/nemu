@@ -35,6 +35,8 @@ set(GPU_SOURCES
     nvhost/nvhost_nvdec.cpp
     nvhost/h264.hpp
     nvhost/h264.cpp
+    nvhost/ffmpeg.hpp
+    nvhost/ffmpeg.cpp
     presentation/buffer_queue.hpp
     presentation/buffer_queue.cpp
     presentation/nvnflinger.hpp
@@ -119,3 +121,15 @@ if(SDL2_FOUND)
 endif()
 
 target_compile_features(Nemu.Gpu PUBLIC cxx_std_20)
+
+option(NEMU_FFMPEG "Enable NVDEC host video decoding via ffmpeg" ON)
+if(NEMU_FFMPEG AND NOT WIN32)
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(FFMPEG IMPORTED_TARGET libavcodec libavutil)
+        if(FFMPEG_FOUND)
+            target_compile_definitions(Nemu.Gpu PUBLIC NEMU_FFMPEG=1)
+            target_link_libraries(Nemu.Gpu PUBLIC PkgConfig::FFMPEG)
+        endif()
+    endif()
+endif()
