@@ -141,7 +141,13 @@ void Sdl2GpuBackend::Present() {
             static bool dumped = false;
             if (!dumped && stats_.frames_presented >= 30) {
                 dumped = true;
-                SDL_Surface* sshot = SDL_CreateRGBSurfaceWithFormat(0, static_cast<int>(width_), static_cast<int>(height_), 32, SDL_PIXELFORMAT_RGBA32);
+                int rw = 0, rh = 0;
+                SDL_GetRendererOutputSize(renderer_, &rw, &rh);
+                if (rw <= 0 || rh <= 0) {
+                    rw = static_cast<int>(width_);
+                    rh = static_cast<int>(height_);
+                }
+                SDL_Surface* sshot = SDL_CreateRGBSurfaceWithFormat(0, rw, rh, 32, SDL_PIXELFORMAT_RGBA32);
                 if (sshot) {
                     SDL_RenderReadPixels(renderer_, nullptr, SDL_PIXELFORMAT_RGBA32, sshot->pixels, sshot->pitch);
                     IMG_SavePNG(sshot, dump);
