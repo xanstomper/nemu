@@ -52,7 +52,7 @@ public:
     void Write(bool bit);
     void Write(bool bit, s32 probability);
     void End();
-    [[nodiscard]] const std::vector<u8>& GetBuffer() const noexcept;
+    [[nodiscard]] const std::vector<u8>& GetBuffer() const noexcept { return base_stream_.GetBuffer(); }
 
 private:
     u8 PeekByte();

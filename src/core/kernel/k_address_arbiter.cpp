@@ -38,6 +38,7 @@ bool KAddressArbiter::WaitForAddressIfEqual(
 }
 
 u32 KAddressArbiter::Signal(vaddr_t address, u32 count, bool lifo_wake) {
+    (void)lifo_wake; // single-shared-CV HLE: ordering-neutral; documented refinement
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = queues_.find(address);
     if (it == queues_.end()) {

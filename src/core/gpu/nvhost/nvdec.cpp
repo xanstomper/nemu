@@ -9,6 +9,7 @@
 
 #include "nvdec.hpp"
 #include "h264.hpp"
+#include "vp9.hpp"
 #include "ffmpeg.hpp"
 #include "core/memory/virtual_memory.hpp"
 #include "platform/logger.hpp"
@@ -54,25 +55,74 @@ bool Nvdec::ReadGuest(vaddr_t addr, u8* dst, size_t len) const {
 
 void Nvdec::Execute() {
     switch (codec_) {
-    case VideoCodec::H264:
+    case VideoCodec::H264: {
+        ++stats_.decode_attempts;
+        const bool is_first = !h264_.initialized;
+        std::vector<u8> packet;
+        size_t config_size = 0;
+        decoder::H264 composer(memory_);
+        if (composer.ComposeFrame(regs_, packet, &config_size, is_first)) {
+            h264_.initialized = true;
+#ifdef NEMU_FFMPEG
+            if (decode_api_.GetCodec() != codec_) (void)decode_api_.Initialize(codec_);
+            if (decode_api_.SendPacket(packet, config_size)) {
+                decode_api_.ReceiveFrames(decoded_frames_);
+                for (auto& df : decoded_frames_) {
+                    DecodedVideoFrame vf;
+                    vf.width = df.width;
+                    vf.height = df.height;
+                    vf.y_plane = std::move(df.data); // NV12 (VIC splits later)
+                    vf.frame_number = regs_.reg_array[NvdecRegisters::kRegFrameNumber] >> 8;
+                    frame_queue_.push_back(std::move(vf));
+                    ++stats_.frames_decoded;
+                }
+                decoded_frames_.clear();
+                while (frame_queue_.size() > 10) frame_queue_.erase(frame_queue_.begin());
+            }
+#else
+            DecodedVideoFrame vf;
+            vf.frame_number = regs_.reg_array[NvdecRegisters::kRegFrameNumber] >> 8;
+            vf.y_plane = std::move(packet); // raw packet until ffmpeg decode lands
+            vf.width = static_cast<u32>(config_size); // temporarily stores config size
+            frame_queue_.push_back(std::move(vf));
+            while (frame_queue_.size() > 10) frame_queue_.erase(frame_queue_.begin());
+            ++stats_.frames_decoded;
+#endif
+        }
+        break;
+    }
+    case VideoCodec::VP9: {
+        ++stats_.decode_attempts;
+        // VP9: compose via the ported composer, then feed the shared ffmpeg
+        // decode path (same packet surface as H264).
+        decoder::VP9 composer(memory_);
+        composer.ComposeFrame(regs_);
+#ifdef NEMU_FFMPEG
+        if (composer.GetFrameBytes().empty()) break;
+        if (decode_api_.GetCodec() != codec_) (void)decode_api_.Initialize(codec_);
+        if (decode_api_.SendPacket(composer.GetFrameBytes(), 0)) {
+            decode_api_.ReceiveFrames(decoded_frames_);
+            for (auto& df : decoded_frames_) {
+                DecodedVideoFrame vf;
+                vf.width = df.width;
+                vf.height = df.height;
+                vf.y_plane = std::move(df.data);
+                vf.frame_number = regs_.reg_array[NvdecRegisters::kRegFrameNumber] >> 8;
+                frame_queue_.push_back(std::move(vf));
+                ++stats_.frames_decoded;
+            }
+            decoded_frames_.clear();
+            while (frame_queue_.size() > 10) frame_queue_.erase(frame_queue_.begin());
+        }
+#endif
+        break;
+    }
     case VideoCodec::VP8:
     case VideoCodec::H265:
-    case VideoCodec::VP9:
         ++stats_.decode_attempts;
-        // NEMU-FFMPEG: the ffmpeg host decode path lands here. When the codec
-        // composer/decoder is not compiled in (no libavcodec in the appx yet),
-        // track the attempt and keep the guest progressing — the codec's
-        // syncpoint still increments (handled by the channel), so a video-
-        // heavy title continues with frozen video rather than hanging on a
-        // wait that never completes.
-        //
-        // Bitstream reads (frame_bitstream_offset etc.) are validated here so
-        // the ported composers have a working read path once wired:
-        {
-            const u64 bitstream_off =
-                regs_.reg_array[NvdecRegisters::kRegFrameBitstreamOffset];
-            (void)bitstream_off; // composer input once ffmpeg lands
-        }
+        // Composer ports pending (VP8 header rebuild + H265 via ffmpeg);
+        // keep the guest progressing (syncpoints still increment in the
+        // channel) — frozen video, never a hang.
         break;
     default:
         ++stats_.unsupported_codec_calls;

@@ -789,6 +789,56 @@ void VP9::ComposeFrame(const NvdecRegisters& state) {
               frame_.begin() + static_cast<std::ptrdiff_t>(uncompressed_header.size() + compressed_header.size()));
 }
 
+void VpxRangeEncoder::Write(bool bit) { Write(bit ? 1 : 0, half_probability_); }
+
+void VpxRangeEncoder::Write(bool bit, s32 probability) {
+    u32 local_range = range_;
+    const u32 split = 1 + (((local_range - 1) * static_cast<u32>(probability)) >> 8);
+    local_range = split;
+    if (bit) {
+        low_value_ += split;
+        local_range = range_ - split;
+    }
+    s32 shift = static_cast<s32>(norm_lut[local_range]);
+    local_range <<= shift;
+    count_ += shift;
+    if (count_ >= 0) {
+        const s32 offset = shift - count_;
+        if (((low_value_ << (offset - 1)) >> 31) != 0) {
+            const s32 current_pos = static_cast<s32>(base_stream_.Tell());
+            base_stream_.SeekRel(-1);
+            while (PeekByte() == 0xff) {
+                base_stream_.Write(0);
+                base_stream_.SeekRel(-2);
+            }
+            base_stream_.Write(static_cast<u8>(PeekByte() + 1));
+            base_stream_.SeekSet(static_cast<std::size_t>(current_pos));
+        }
+        base_stream_.Write(static_cast<u8>(low_value_ >> (24 - offset)));
+        low_value_ <<= offset;
+        shift = count_;
+        low_value_ &= 0xffffff;
+        count_ -= 8;
+    }
+    low_value_ <<= shift;
+    range_ = local_range;
+}
+
+
+void VpxBitStreamWriter::WriteS(s32 value, u32 value_size) {
+    const bool sign = value < 0;
+    if (sign) value = -value;
+    WriteBits(static_cast<u32>((value << 1) | (sign ? 1 : 0)), value_size + 1);
+}
+
+void VpxBitStreamWriter::WriteDeltaQ(u32 value) {
+    const bool delta_coded = value != 0;
+    WriteBit(delta_coded);
+    if (delta_coded) {
+        WriteBits(value, 4);
+    }
+}
+
 VpxRangeEncoder::VpxRangeEncoder() {
     Write(false);
 }
@@ -846,6 +896,8 @@ void VpxBitStreamWriter::WriteBits(u32 value, u32 bit_count) {
         remaining -= copy_size;
     }
 }
+
+void VpxBitStreamWriter::WriteU(u32 value, u32 bit_count) { WriteBits(value, bit_count); }
 
 void VpxBitStreamWriter::WriteBit(bool state) {
     WriteBits(state ? 1 : 0, 1);

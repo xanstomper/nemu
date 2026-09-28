@@ -7,6 +7,7 @@
 #pragma once
 
 #include "nvdec_common.hpp"
+#include "ffmpeg.hpp"
 #include "core/types.hpp"
 #include <span>
 #include <string>
@@ -79,6 +80,10 @@ private:
     struct H264State {
         bool initialized{false};
     } h264_;
+#ifdef NEMU_FFMPEG
+    ffmpeg::DecodeApi decode_api_;
+    std::vector<ffmpeg::Frame> decoded_frames_;
+#endif
 };
 
 } // namespace nemu::core::gpu::nvhost
