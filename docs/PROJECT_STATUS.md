@@ -21,7 +21,7 @@ D3D12 path renders correctly on a real Dev Mode Xbox.
 
 | Signal | Status |
 | :--- | :--- |
-| **Automated test suites** | **29/29 green** (`tests/unit/`) |
+| **Automated test suites** | **31/31 green** (`tests/unit/`) |
 | **Linux build (GCC)** | clean, warning-free for project code |
 | **Windows/Xbox cross-build (MinGW-w64)** | clean (`build-win/`) |
 | **PE32+ parity (Wine)** | key suites pass |
@@ -50,6 +50,10 @@ D3D12 path renders correctly on a real Dev Mode Xbox.
     binding; compute + `ComputeQmd` + D3D12 compute PSO.
   - GMMU (40-bit VA, 64 KiB big pages), BufferCache dedup, TextureCache
     ASTC→BC1 + byte-budget LRU.
+  - **GPU sub-engines ported from yuzu**: Maxwell DMA (0xB0B7) copy engine
+    (texture streaming / RT copies) + Fermi 2D (0xF1) blit engine (scaling /
+    compositing), with real Horizon sub-engine class routing in the nvhost
+    channel (`0xB0B7`/`0xF1`/3D).
 - [x] **M15 — Full Horizon OS HLE**
   - **49 syscalls** (threading, memory, handles, arbitration, IPC) including
     the commercial-game essentials (`GetCurrentProcessorNumber`,
