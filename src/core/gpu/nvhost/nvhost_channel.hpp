@@ -6,6 +6,7 @@
 #include "core/gpu/maxwell_3d.hpp"
 #include "core/gpu/maxwell_dma.hpp"
 #include "core/gpu/fermi_2d.hpp"
+#include "core/gpu/kepler_compute.hpp"
 #include "core/memory/virtual_memory.hpp"
 #include <memory>
 #include <vector>
@@ -64,6 +65,7 @@ private:
     std::shared_ptr<Maxwell3D> maxwell_3d_;
     std::shared_ptr<MaxwellDma> maxwell_dma_;  // engine class 0xB0B7
     std::shared_ptr<Fermi2D> fermi_2d_;        // engine class 0xF1 (blit)
+    std::shared_ptr<KeplerCompute> kepler_compute_; // engine class 0xB197
     memory::VirtualMemory* memory_{nullptr};
 };
 

@@ -39,13 +39,14 @@ std::pair<u32, u32> Channel::SubmitGpfifo(std::span<const u64> gpfifo_raw, u32 f
                 const size_t byte_count = static_cast<size_t>(num_words) * sizeof(u32);
                 pushbuffer.resize(num_words);
                 if (memory_->ReadBlock(guest_va, pushbuffer.data(), byte_count)) {
-                    // Route by the engine class bound via AllocObjCtx:
-                    // 0xB0B7 -> Maxwell DMA; 0xF1 -> Fermi 2D blit; else Maxwell 3D.
+                    // Route by the engine class bound via AllocObjCtx.
                     constexpr u32 kMaxwellDmaClass = 0xB0B7;
                     constexpr u32 kFermi2DClass = 0xF1;
+                    constexpr u32 kKeplerComputeClass = 0xB197;
                     const bool is_dma = (bound_class_ == kMaxwellDmaClass) && maxwell_dma_;
                     const bool is_blit = (bound_class_ == kFermi2DClass) && fermi_2d_;
-                    if (is_dma || is_blit) {
+                    const bool is_compute = (bound_class_ == kKeplerComputeClass) && kepler_compute_;
+                    if (is_dma || is_blit || is_compute) {
                         size_t i = 0;
                         while (i + 1 < pushbuffer.size()) {
                             const u32 hdr = pushbuffer[i++];
@@ -57,8 +58,10 @@ std::pair<u32, u32> Channel::SubmitGpfifo(std::span<const u64> gpfifo_raw, u32 f
                                 const u32 target = (md == 1) ? m : (m + k);
                                 if (is_dma) {
                                     maxwell_dma_->CallMethod(target, arg);
-                                } else {
+                                } else if (is_blit) {
                                     fermi_2d_->CallMethod(target, arg);
+                                } else {
+                                    kepler_compute_->CallMethod(target, arg);
                                 }
                             }
                         }
@@ -90,14 +93,17 @@ u64 Channel::AllocObjCtx(u32 class_num, u32 flags) {
     NEMU_LOG_DEBUG("NvChannel", "Channel {} AllocObjCtx: class 0x{:X}", channel_id_, class_num);
 
     // Bind the engine class for this channel's subsequent GPFIFO submissions.
-    // 0xB0B7 = Maxwell DMA, 0xF1 = Fermi 2D blit; everything else -> Maxwell 3D.
+    // 0xB0B7 = DMA, 0xF1 = Fermi 2D blit, 0xB197 = Kepler Compute; else 3D.
     constexpr u32 kMaxwellDmaClass = 0xB0B7;
     constexpr u32 kFermi2DClass = 0xF1;
+    constexpr u32 kKeplerComputeClass = 0xB197;
     bound_class_ = class_num;
     if (class_num == kMaxwellDmaClass && !maxwell_dma_) {
         maxwell_dma_ = std::make_shared<MaxwellDma>(memory_);
     } else if (class_num == kFermi2DClass && !fermi_2d_) {
         fermi_2d_ = std::make_shared<Fermi2D>(memory_);
+    } else if (class_num == kKeplerComputeClass && !kepler_compute_ && maxwell_3d_) {
+        kepler_compute_ = std::make_shared<KeplerCompute>(memory_, maxwell_3d_->GetBackend().get());
     }
     return static_cast<u64>(class_num);
 }

@@ -409,6 +409,21 @@ target_link_libraries(test_fermi_2d PRIVATE
 target_compile_features(test_fermi_2d PRIVATE cxx_std_20)
 add_test(NAME test_fermi_2d COMMAND test_fermi_2d)
 
+add_executable(test_kepler_compute
+    gpu/test_kepler_compute.cpp
+)
+
+target_include_directories(test_kepler_compute PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_kepler_compute PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_kepler_compute PRIVATE cxx_std_20)
+add_test(NAME test_kepler_compute COMMAND test_kepler_compute)
+
 add_executable(test_aligned_alloc
     common/test_aligned_alloc.cpp
 )
