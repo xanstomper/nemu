@@ -499,3 +499,51 @@ target_link_libraries(test_e2e_boot PRIVATE
 
 target_compile_features(test_e2e_boot PRIVATE cxx_std_20)
 add_test(NAME test_e2e_boot COMMAND test_e2e_boot WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+# NVDEC engine + nvhost-nvdec device (citron game-compat port phase 1)
+add_executable(test_nvdec
+    gpu/test_nvdec.cpp
+)
+
+target_include_directories(test_nvdec PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_nvdec PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_nvdec PRIVATE cxx_std_20)
+add_test(NAME test_nvdec COMMAND test_nvdec)
+
+# Integer division, bitfield move, and multiply-long differential test
+add_executable(test_div_bfm
+    cpu/test_div_bfm.cpp
+)
+
+target_include_directories(test_div_bfm PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_div_bfm PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_div_bfm PRIVATE cxx_std_20)
+add_test(NAME test_div_bfm COMMAND test_div_bfm)
+
+# Per-title compat registry (Ryujinx-data-seeded game tweaks)
+add_executable(test_title_compat
+    cpu/test_title_compat.cpp
+)
+
+target_include_directories(test_title_compat PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_title_compat PRIVATE
+    Nemu.Cpu
+)
+
+target_compile_features(test_title_compat PRIVATE cxx_std_20)
+add_test(NAME test_title_compat COMMAND test_title_compat)

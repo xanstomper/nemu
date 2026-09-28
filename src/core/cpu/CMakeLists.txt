@@ -6,6 +6,8 @@ add_library(Nemu.Cpu STATIC
     decoder.cpp
     interpreter.hpp
     interpreter.cpp
+    title_compat.hpp
+    title_compat.cpp
     jit/code_cache.hpp
     jit/code_cache.cpp
     jit/x64_emitter.hpp
