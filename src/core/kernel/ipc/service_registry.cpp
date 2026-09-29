@@ -16,6 +16,11 @@ bool ServiceRegistry::IsRegistered(const std::string& name) const {
     return services_.find(name) != services_.end();
 }
 
+bool ServiceRegistry::Unregister(const std::string& name) {
+    std::unique_lock lock(mutex_);
+    return services_.erase(name) != 0;
+}
+
 std::shared_ptr<IIpcService> ServiceRegistry::Find(const std::string& name) const {
     std::shared_lock lock(mutex_);
     auto it = services_.find(name);

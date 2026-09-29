@@ -123,20 +123,52 @@ u32 SmService::HandleGetServiceHandle(const IpcContext& ctx, const IpcRequestRea
 
 u32 SmService::HandleRegisterService(const IpcContext& ctx, const IpcRequestReader& request,
                                      IpcReplyWriter& reply) {
-    (void)ctx;
-    (void)request;
-    (void)reply;
-    // Guest-side dynamic service registration is not part of this HLE engine;
-    // services are statically registered at boot.
-    return static_cast<u32>(IpcResult::Unimplemented);
+    // Real Horizon sm:RegisterService(name[8], isLight, maxHandles) -> handle<move,port>.
+    // Commercial games register their own custom service controllers through
+    // this every boot. Register a dynamic GenericStubService and return its
+    // port handle so the game can connect + exchange commands.
+    if (!ctx.registry || !ctx.handle_table) {
+        return static_cast<u32>(IpcResult::InvalidBuffer);
+    }
+
+    const std::string name = ReadTrimmedServiceName(request);
+    if (name.empty()) {
+        return static_cast<u32>(IpcResult::InvalidRequest);
+    }
+
+    if (ctx.registry->IsRegistered(name)) {
+        NEMU_LOG_WARN("sm:", "RegisterService: '{}' already registered", name);
+        return static_cast<u32>(IpcResult::InvalidRequest); // AlreadyRegistered
+    }
+
+    ctx.registry->Register(std::make_shared<GenericStubService>(name));
+    auto port = ctx.registry->CreatePort(name);
+    if (!port || !*port) {
+        NEMU_LOG_WARN("sm:", "RegisterService: failed to create port for '{}'", name);
+        return static_cast<u32>(IpcResult::OutOfMemory);
+    }
+
+    const Handle port_handle = ctx.handle_table->CreateHandle(*port);
+    reply.Begin(static_cast<u32>(IpcCommandType::Request), sizeof(u32));
+    reply.Payload<u32>(0, port_handle);
+    NEMU_LOG_INFO("sm:", "RegisterService('{}') -> port handle {}", name, port_handle);
+    return static_cast<u32>(IpcResult::Success);
 }
 
 u32 SmService::HandleUnregisterService(const IpcContext& ctx, const IpcRequestReader& request,
                                        IpcReplyWriter& reply) {
-    (void)ctx;
-    (void)request;
-    (void)reply;
-    return static_cast<u32>(IpcResult::Unimplemented);
+    // Real Horizon sm:UnregisterService(name[8]).
+    if (!ctx.registry) {
+        return static_cast<u32>(IpcResult::InvalidBuffer);
+    }
+    const std::string name = ReadTrimmedServiceName(request);
+    reply.Begin(static_cast<u32>(IpcCommandType::Request), 0);
+    if (name.empty() || !ctx.registry->Unregister(name)) {
+        NEMU_LOG_WARN("sm:", "UnregisterService: '{}' not registered", name);
+        return static_cast<u32>(IpcResult::NotFound); // NotRegistered
+    }
+    NEMU_LOG_INFO("sm:", "UnregisterService('{}')", name);
+    return static_cast<u32>(IpcResult::Success);
 }
 
 } // namespace nemu::core::kernel::ipc

@@ -1599,6 +1599,73 @@ void TestCommercialGameSyscalls() {
     std::cout << "  PASS\n";
 }
 
+// ---------------------------------------------------------------------------
+// Test: sm: RegisterService / UnregisterService (dynamic services).
+// Commercial games register their own custom service controllers via sm:
+// every boot; NEMU must accept + return a port handle, then allow removal.
+// ---------------------------------------------------------------------------
+void TestSmRegisterService() {
+    std::cout << "[TEST] sm: RegisterService / UnregisterService ...\n";
+    auto reg = std::make_shared<ServiceRegistry>();
+    reg->Register(std::make_shared<SmService>());
+
+    auto proc = std::make_shared<KProcess>(210, "SmReg");
+    KThread thread(210, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+
+    auto sm_session = std::make_shared<KClientSession>();
+    sm_session->SetService(reg->Find("sm:"));
+    NEMU_IPC_ASSERT(sm_session->GetService());
+
+    // RegisterService("app:reg") -> success + a valid port handle.
+    WriteServiceNameRequest(proc->GetVirtualMemory(),
+                            static_cast<u32>(IpcCommandType::Request),
+                            SmService::RegisterService, "app:reg");
+    const u32 reg_res = DispatchSyncRequest(*proc, thread, *sm_session, *reg);
+    NEMU_IPC_ASSERT(reg_res == static_cast<u32>(IpcResult::Success));
+    const Handle port_handle = ReadReply<Handle>(proc->GetVirtualMemory());
+    NEMU_IPC_ASSERT(port_handle != InvalidHandle);
+    auto port = proc->GetHandleTable().GetObject<KClientPort>(port_handle);
+    NEMU_IPC_ASSERT(port && "RegisterService must return a valid port handle");
+    NEMU_IPC_ASSERT(port->GetServiceName() == "app:reg");
+
+    // The service is now resolvable via GetServiceHandle.
+    WriteServiceNameRequest(proc->GetVirtualMemory(),
+                            static_cast<u32>(IpcCommandType::Request),
+                            SmService::GetServiceHandle, "app:reg");
+    const u32 get_res = DispatchSyncRequest(*proc, thread, *sm_session, *reg);
+    NEMU_IPC_ASSERT(get_res == static_cast<u32>(IpcResult::Success));
+
+    // Duplicate registration -> AlreadyRegistered (non-Success).
+    WriteServiceNameRequest(proc->GetVirtualMemory(),
+                            static_cast<u32>(IpcCommandType::Request),
+                            SmService::RegisterService, "app:reg");
+    const u32 dup_res = DispatchSyncRequest(*proc, thread, *sm_session, *reg);
+    NEMU_IPC_ASSERT(dup_res != static_cast<u32>(IpcResult::Success));
+
+    // UnregisterService -> success.
+    WriteServiceNameRequest(proc->GetVirtualMemory(),
+                            static_cast<u32>(IpcCommandType::Request),
+                            SmService::UnregisterService, "app:reg");
+    const u32 unreg_res = DispatchSyncRequest(*proc, thread, *sm_session, *reg);
+    NEMU_IPC_ASSERT(unreg_res == static_cast<u32>(IpcResult::Success));
+
+    // After unregister, GetServiceHandle -> NotFound.
+    WriteServiceNameRequest(proc->GetVirtualMemory(),
+                            static_cast<u32>(IpcCommandType::Request),
+                            SmService::GetServiceHandle, "app:reg");
+    const u32 miss_res = DispatchSyncRequest(*proc, thread, *sm_session, *reg);
+    NEMU_IPC_ASSERT(miss_res == static_cast<u32>(IpcResult::NotFound));
+
+    // Unregistering an absent service -> NotFound.
+    WriteServiceNameRequest(proc->GetVirtualMemory(),
+                            static_cast<u32>(IpcCommandType::Request),
+                            SmService::UnregisterService, "nope:xx");
+    const u32 bad_unreg = DispatchSyncRequest(*proc, thread, *sm_session, *reg);
+    NEMU_IPC_ASSERT(bad_unreg == static_cast<u32>(IpcResult::NotFound));
+
+    std::cout << "  PASSED.\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "   NEMU HORIZON OS IPC ENGINE TESTS     \n";
@@ -1607,6 +1674,7 @@ int main() {
     TestJitSvcRouting();
     TestRegistry();
     TestSmGetServiceHandle();
+    TestSmRegisterService();
     TestTimeService();
     TestSetSys();
     TestHidService();

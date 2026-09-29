@@ -26,6 +26,9 @@ public:
     /// True if a service with the given name is registered.
     [[nodiscard]] bool IsRegistered(const std::string& name) const;
 
+    /// Remove a dynamically-registered service by name. Returns false if absent.
+    bool Unregister(const std::string& name);
+
     /// Look up a registered service by name.
     [[nodiscard]] std::shared_ptr<IIpcService> Find(const std::string& name) const;
 
