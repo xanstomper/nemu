@@ -1,4 +1,5 @@
 #include "applet_service.hpp"
+#include "mii_service.hpp"
 #include "core/kernel/k_handle_table.hpp"
 #include "core/kernel/ipc/ipc_service.hpp"
 #include "core/memory/virtual_memory.hpp"
@@ -493,6 +494,49 @@ u32 LibraryAppletAccessorService::HandleRequest(
                     std::memcpy(profile_resp.data() + 8, &uid_low, sizeof(uid_low));
                     std::memcpy(profile_resp.data() + 16, &uid_high, sizeof(uid_high));
                     out_queue_.push_back(std::make_shared<StorageService>(std::move(profile_resp)));
+                } else if (applet_id_ == 0x11) {
+                    // MiiEdit applet (0x11):
+                    // Header: u32 result = 0 (OK)
+                    // Followed by 88-byte MiiCharInfo
+                    std::vector<u8> mii_resp(sizeof(u32) + sizeof(MiiCharInfo), 0);
+                    const u32 ok_res = 0;
+                    std::memcpy(mii_resp.data(), &ok_res, sizeof(ok_res));
+                    MiiCharInfo char_info{};
+                    std::memcpy(mii_resp.data() + sizeof(u32), &char_info, sizeof(char_info));
+                    out_queue_.push_back(std::make_shared<StorageService>(std::move(mii_resp)));
+                } else if (applet_id_ == 0x16) {
+                    // Cabinet / Amiibo applet (0x16):
+                    // Header: u32 result = 0 (Amiibo loaded successfully)
+                    // Followed by standard NFC Tag / Amiibo metadata structure
+                    std::vector<u8> amiibo_resp(64, 0);
+                    const u32 ok_res = 0;
+                    std::memcpy(amiibo_resp.data(), &ok_res, sizeof(ok_res));
+                    // Standard Amiibo tag UID + ID prefix
+                    const u8 amiibo_tag[16] = {0x04, 0x58, 0x2A, 0x12, 0x34, 0x56, 0x78, 0x00,
+                                               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02};
+                    std::memcpy(amiibo_resp.data() + 8, amiibo_tag, sizeof(amiibo_tag));
+                    out_queue_.push_back(std::make_shared<StorageService>(std::move(amiibo_resp)));
+                } else if (applet_id_ == 0x17) {
+                    // Controller applet (0x17):
+                    // Header: u32 result = 0 (controllers configured)
+                    std::vector<u8> ctrl_resp(32, 0);
+                    const u32 ok_res = 0;
+                    std::memcpy(ctrl_resp.data(), &ok_res, sizeof(ok_res));
+                    out_queue_.push_back(std::make_shared<StorageService>(std::move(ctrl_resp)));
+                } else if (applet_id_ == 0x18) {
+                    // Error applet (0x18):
+                    // Header: u32 result = 0 (dismissed)
+                    std::vector<u8> err_resp(32, 0);
+                    const u32 ok_res = 0;
+                    std::memcpy(err_resp.data(), &ok_res, sizeof(ok_res));
+                    out_queue_.push_back(std::make_shared<StorageService>(std::move(err_resp)));
+                } else if (applet_id_ == 0x14) {
+                    // PhotoViewer / Album applet (0x14):
+                    // Header: u32 result = 0 (closed)
+                    std::vector<u8> photo_resp(32, 0);
+                    const u32 ok_res = 0;
+                    std::memcpy(photo_resp.data(), &ok_res, sizeof(ok_res));
+                    out_queue_.push_back(std::make_shared<StorageService>(std::move(photo_resp)));
                 } else {
                     // Generic success response
                     std::vector<u8> generic_resp(32, 0);

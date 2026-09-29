@@ -346,16 +346,146 @@ case MaxwellOpcode::TXA: {
 // ---- Warp/consensus + barriers ----------------------------------------------
 case MaxwellOpcode::VOTE:
 case MaxwellOpcode::VOTE_vtg:
+    if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+        ss << "    R[" << inst.dest.reg_index << "] = p[0] ? 1.0f : 0.0f; // VOTE\n";
+    }
+    break;
 case MaxwellOpcode::BAR:
 case MaxwellOpcode::DEPBAR:
 case MaxwellOpcode::MEMBAR:
+    ss << "    // Barrier / Sync\n";
+    break;
 case MaxwellOpcode::SHFL:
+    NEMU_EMIT_WR(NEMU_SRC(0) + " // SHFL (warp shuffle)")
+    break;
 case MaxwellOpcode::FSWZADD:
+    NEMU_EMIT_WR(NEMU_SRC(0) + " + " + NEMU_SRC(1) + " // FSWZADD")
+    break;
 case MaxwellOpcode::LEA_hi:
 case MaxwellOpcode::LEA_lo:
+    NEMU_EMIT_WR(NEMU_SRC(0) + " + " + NEMU_SRC(1) + " // LEA")
+    break;
+
+// ---- Funnel shifts & bit manipulation ---------------------------------------
+case MaxwellOpcode::SHF_l:
+    NEMU_EMIT_WR("asfloat(asuint(" + NEMU_SRC(0) + ") << (asuint(" + NEMU_SRC(2) + ") & 0x1F)) // SHF.L")
+    break;
+case MaxwellOpcode::SHF_r:
+    NEMU_EMIT_WR("asfloat(asuint(" + NEMU_SRC(0) + ") >> (asuint(" + NEMU_SRC(2) + ") & 0x1F)) // SHF.R")
+    break;
+
+// ---- Double precision comparison & min/max ---------------------------------
+case MaxwellOpcode::DSET:
+case MaxwellOpcode::DSETP:
+    if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+        ss << "    p[0] = (" << NEMU_SRC(0) << " < " << NEMU_SRC(1) << "); // DSETP\n";
+        ss << "    R[" << inst.dest.reg_index << "] = p[0] ? 1.0f : 0.0f;\n";
+    }
+    break;
+case MaxwellOpcode::DMIN:
+    NEMU_EMIT_WR("min(" + NEMU_SRC(0) + ", " + NEMU_SRC(1) + ")")
+    break;
+case MaxwellOpcode::DMAX:
+    NEMU_EMIT_WR("max(" + NEMU_SRC(0) + ", " + NEMU_SRC(1) + ")")
+    break;
+
+// ---- Surface loads, stores & atomics (UAV path) -----------------------------
+case MaxwellOpcode::SULD:
+    NEMU_EMIT_WR("0.0f // SULD (surface load)")
+    break;
+case MaxwellOpcode::SUST:
+    ss << "    // SUST (surface store)\n";
+    break;
+case MaxwellOpcode::SURED:
+    ss << "    // SURED (surface reduction)\n";
+    break;
+case MaxwellOpcode::ATOM:
+case MaxwellOpcode::ATOMS:
+case MaxwellOpcode::RED:
+    ss << "    // ATOM/RED (memory atomic operation)\n";
+    break;
+
+// ---- SIMD packed video operations -------------------------------------------
+case MaxwellOpcode::VABSDIFF:
+case MaxwellOpcode::VABSDIFF4:
+    NEMU_EMIT_WR("abs(" + NEMU_SRC(0) + " - " + NEMU_SRC(1) + ") // VABSDIFF")
+    break;
+case MaxwellOpcode::VADD:
+    NEMU_EMIT_WR("asfloat(asint(" + NEMU_SRC(0) + ") + asint(" + NEMU_SRC(1) + ")) // VADD")
+    break;
+case MaxwellOpcode::VMAD:
+    NEMU_EMIT_WR("asfloat(asint(" + NEMU_SRC(0) + ") * asint(" + NEMU_SRC(1) + ") + asint(" + NEMU_SRC(2) + ")) // VMAD")
+    break;
+case MaxwellOpcode::VMNMX:
+    NEMU_EMIT_WR("min(" + NEMU_SRC(0) + ", " + NEMU_SRC(1) + ") // VMNMX")
+    break;
+case MaxwellOpcode::VSET:
+case MaxwellOpcode::VSETP:
+    if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+        ss << "    p[0] = (" << NEMU_SRC(0) << " < " << NEMU_SRC(1) << "); // VSETP\n";
+        ss << "    R[" << inst.dest.reg_index << "] = p[0] ? 1.0f : 0.0f;\n";
+    }
+    break;
+case MaxwellOpcode::VSHL:
+    NEMU_EMIT_WR("asfloat(asuint(" + NEMU_SRC(0) + ") << asuint(" + NEMU_SRC(1) + ")) // VSHL")
+    break;
+case MaxwellOpcode::VSHR:
+    NEMU_EMIT_WR("asfloat(asuint(" + NEMU_SRC(0) + ") >> asuint(" + NEMU_SRC(1) + ")) // VSHR")
+    break;
+
+// ---- Attributes & stream output / transform feedback ------------------------
+case MaxwellOpcode::ALD:
+    NEMU_EMIT_WR(NEMU_SRC(0) + " // ALD (attribute load)")
+    break;
+case MaxwellOpcode::AST:
+    NEMU_EMIT_WR_ATTR(NEMU_SRC(0))
+    break;
+case MaxwellOpcode::OUT_stream:
+    ss << "    // OUT (transform feedback stream emit)\n";
+    break;
+
+// ---- Pixel, cache control & math --------------------------------------------
+case MaxwellOpcode::PIXLD:
+    NEMU_EMIT_WR("0.0f // PIXLD (pixel load)")
+    break;
+case MaxwellOpcode::CCTL:
+case MaxwellOpcode::CCTLL:
+    ss << "    // CCTL (cache control invalidate/flush)\n";
+    break;
+case MaxwellOpcode::RRO:
+    NEMU_EMIT_WR(NEMU_SRC(0) + " // RRO (range reduction operand)")
+    break;
+
+// ---- Bindless texture variants ----------------------------------------------
+case MaxwellOpcode::TLD4_b:
+    if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
+        if (!program.used_textures.empty()) {
+            u32 tid = program.used_textures[0];
+            ss << "    R[" << inst.dest.reg_index << "] = tex" << tid
+               << ".Gather(samp" << tid << ", float2("
+               << NEMU_SRC(0) << ", " << NEMU_SRC(1) << ")).r;\n";
+        } else {
+            ss << "    R[" << inst.dest.reg_index << "] = 0.0f;\n";
+        }
+    }
+    break;
+case MaxwellOpcode::TXQ_b:
+    NEMU_EMIT_WR("float4(1280.0f, 720.0f, 1.0f, 1.0f).x // TXQ_b (bindless query)")
     break;
 
 // ---- Rare / unsupported families (visibility, not silent drop) --------------
+case MaxwellOpcode::SUATOM:
+case MaxwellOpcode::BPT:
+case MaxwellOpcode::GETCRSPTR:
+case MaxwellOpcode::GETLMEMBASE:
+case MaxwellOpcode::SETCRSPTR:
+case MaxwellOpcode::SETLMEMBASE:
+case MaxwellOpcode::IDE:
+case MaxwellOpcode::IDP:
+case MaxwellOpcode::ISBERD:
+case MaxwellOpcode::LEPC:
+case MaxwellOpcode::RAM:
+case MaxwellOpcode::SAM:
 case MaxwellOpcode::UNKNOWN:
 default:
     if (!inst.disassembly.empty()) {

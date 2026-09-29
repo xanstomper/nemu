@@ -19,6 +19,13 @@ enum class ShaderStage : u32 {
     Compute,
 };
 
+#ifdef OUT
+#undef OUT
+#endif
+#ifdef IN
+#undef IN
+#endif
+
 enum class MaxwellOpcode : u32 {
     NOP = 0,
     // Float arithmetic
@@ -93,6 +100,22 @@ enum class MaxwellOpcode : u32 {
     PRET, RTT, BRK, CONT, SSY,
     // Warp/consensus + barriers
     VOTE, VOTE_vtg, BAR, DEPBAR, MEMBAR, SHFL, FSWZADD, LEA_hi, LEA_lo,
+    // Funnel shift & bit manipulation
+    SHF_l, SHF_r,
+    // Surface loads, stores & atomics
+    SULD, SUST, SURED, SUATOM, ATOM, ATOMS, RED,
+    // Double precision comparison & min/max
+    DSET, DSETP, DMIN, DMAX,
+    // SIMD packed video operations
+    VABSDIFF, VABSDIFF4, VADD, VMAD, VMNMX, VSET, VSETP, VSHL, VSHR,
+    // Attributes & transform feedback / stream output
+    ALD, AST, OUT_stream,
+    // Pixel, cache control & math
+    PIXLD, CCTL, CCTLL, RRO,
+    // Bindless texture variants
+    TLD4_b, TXQ_b,
+    // System & pointer manipulation
+    BPT, GETCRSPTR, GETLMEMBASE, SETCRSPTR, SETLMEMBASE, IDE, IDP, ISBERD, LEPC, RAM, SAM,
     UNKNOWN,
 };
 

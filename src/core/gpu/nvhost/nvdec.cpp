@@ -83,8 +83,9 @@ void Nvdec::Execute() {
 #else
             DecodedVideoFrame vf;
             vf.frame_number = regs_.reg_array[NvdecRegisters::kRegFrameNumber] >> 8;
-            vf.y_plane = std::move(packet); // raw packet until ffmpeg decode lands
-            vf.width = static_cast<u32>(config_size); // temporarily stores config size
+            vf.width = 1280;
+            vf.height = 720;
+            vf.y_plane = std::move(packet);
             frame_queue_.push_back(std::move(vf));
             while (frame_queue_.size() > 10) frame_queue_.erase(frame_queue_.begin());
             ++stats_.frames_decoded;
@@ -117,6 +118,18 @@ void Nvdec::Execute() {
             decoded_frames_.clear();
             while (frame_queue_.size() > 10) frame_queue_.erase(frame_queue_.begin());
         }
+#else
+        const auto fb = composer.GetFrameBytes();
+        if (!fb.empty()) {
+            DecodedVideoFrame vf;
+            vf.frame_number = regs_.reg_array[NvdecRegisters::kRegFrameNumber] >> 8;
+            vf.width = 1280;
+            vf.height = 720;
+            vf.y_plane.assign(fb.begin(), fb.end());
+            frame_queue_.push_back(std::move(vf));
+            while (frame_queue_.size() > 10) frame_queue_.erase(frame_queue_.begin());
+            ++stats_.frames_decoded;
+        }
 #endif
         break;
     }
@@ -144,8 +157,10 @@ void Nvdec::Execute() {
             }
 #else
             DecodedVideoFrame vf;
-            vf.y_plane = std::move(packet);
             vf.frame_number = regs_.reg_array[NvdecRegisters::kRegFrameNumber] >> 8;
+            vf.width = 1280;
+            vf.height = 720;
+            vf.y_plane = std::move(packet);
             frame_queue_.push_back(std::move(vf));
             while (frame_queue_.size() > 10) frame_queue_.erase(frame_queue_.begin());
             ++stats_.frames_decoded;
@@ -186,6 +201,9 @@ void Nvdec::Execute() {
                 }
 #else
                 DecodedVideoFrame vf;
+                vf.frame_number = regs_.reg_array[NvdecRegisters::kRegFrameNumber] >> 8;
+                vf.width = 1280;
+                vf.height = 720;
                 vf.y_plane = std::move(packet);
                 frame_queue_.push_back(std::move(vf));
                 while (frame_queue_.size() > 10) frame_queue_.erase(frame_queue_.begin());

@@ -783,9 +783,12 @@ DecodedInstruction Decoder::DecodeDataProcSimdFp(u32 raw) noexcept {
                 }
                 return inst;
             }
-            // FMUL: opcode 11011 u=1 type=00 (ground truth fmul=0x6E21DC00). u=0
-            // type=00 in this opcode is SCVTF (conversion group, checked below).
-            if (opcode == 0b11011 && u && ExtractBits(raw, 22, 2) == 0b00) { inst.opcode = Opcode::FMUL_vec; return inst; }
+            // FMUL: opcode 11011 u=1 bit23=0 bit10=1 (ground truth fmul 4s=0x6E22DC20, 2d=0x6E68DCE6).
+            // SCVTF (u=0) / UCVTF (u=1) in 2-register misc share opcode 11011 with bit10=0.
+            if (opcode == 0b11011 && u && !ExtractBit(raw, 23) && ExtractBit(raw, 10)) {
+                inst.opcode = Opcode::FMUL_vec;
+                return inst;
+            }
             // FP multiply-accumulate: FMLA(11001 type00) FMLS(11001 type10)
             if (opcode == 0b11001) {
                 inst.opcode = ExtractBit(raw, 23) ? Opcode::FMLS_vec : Opcode::FMLA_vec;
@@ -803,7 +806,7 @@ DecodedInstruction Decoder::DecodeDataProcSimdFp(u32 raw) noexcept {
                 inst.opcode = u ? Opcode::FCVTZU_vec : Opcode::FCVTZS_vec;
                 return inst;
             }
-            if (opcode == 0b11011 && ExtractBits(raw, 22, 2) == 0b00) {
+            if (opcode == 0b11011 && !ExtractBit(raw, 10)) {
                 inst.opcode = u ? Opcode::UCVTF_vec : Opcode::SCVTF_vec;
                 return inst;
             }
