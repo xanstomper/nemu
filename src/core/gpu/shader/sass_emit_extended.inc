@@ -235,8 +235,34 @@ case MaxwellOpcode::FLO:
 case MaxwellOpcode::POPC:
     NEMU_EMIT_WR("asfloat(countbits(asuint(" + NEMU_SRC(0) + ")))")
     break;
-case MaxwellOpcode::PRMT:
-    NEMU_EMIT_WR(NEMU_SRC(0) + " // PRMT (byte-permute approximated)")
+case MaxwellOpcode::PRMT: {
+    // PRMT (generic mode): c's 4 low nibbles each select a byte from the 8-byte
+    // pair {src1:src0} (nibble 0-7); a nibble with bit3 set replicates the
+    // selected byte's sign. This is the standard texture/vertex-color swizzle op.
+    // HLSL: per-byte extract via shift/mask chain, built at emit time.
+    const std::string a = NEMU_SRC(0), b = NEMU_SRC(1), c = NEMU_SRC(2);
+    auto byte_at = [](const std::string& w, int idx) {
+        const int sh = idx * 8;
+        return "((" + w + " >> " + std::to_string(sh) + ") & 0xFFu)";
+    };
+    // Selector nibble n lives in c bits [3+4n : 4n].
+    std::string bytes[4];
+    for (int n = 0; n < 4; ++n) {
+        const std::string sel = "(((" + c + ") >> " + std::to_string(4 * n) + ") & 0xFu)";
+        const std::string idx = "(" + sel + " & 0x7u)";
+        const std::string sign_bit = "(" + sel + " & 0x8u)";
+                    "(" + idx + " < 4u) ? " + byte_at(a, 0) // placeholder replaced below
+            ;
+        // Build: select from a for idx<4 else from b
+        std::string expr = "(" + idx + "==0u) ? " + byte_at(a, 0);
+        for (int k = 1; k < 4; ++k) expr += " : (" + idx + "==" + std::to_string(k) + "u) ? " + byte_at(a, k);
+        for (int k = 0; k < 4; ++k) expr += " : (" + idx + "==" + std::to_string(k + 4) + "u) ? " + byte_at(b, k);
+        expr += " : 0u";
+        // Sign-replicate: if sel bit3, result byte |= (sign of picked byte << 7)
+        bytes[n] = "(" + sign_bit + " ? (" + expr + ") | 0x80u : " + expr + ")";
+    }
+    NEMU_EMIT_WR(bytes[0] + " | (" + bytes[1] + " << 8) | (" + bytes[2] + " << 16) | (" + bytes[3] + " << 24)")
+}
     break;
 case MaxwellOpcode::FCHK:
     ss << "    // FCHK (fp range check — no HLSL equivalent, no-op)\n";
