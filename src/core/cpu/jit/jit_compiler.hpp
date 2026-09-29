@@ -43,6 +43,10 @@ public:
     /// Execute a compiled basic block on guest state
     bool Execute(CpuState& state, memory::VirtualMemory& memory);
 
+    /// Register SMC write-hook on the guest memory: guest stores into executable
+    /// ranges invalidate overlapping compiled blocks (self-modifying code).
+    void AttachToMemory(memory::VirtualMemory& memory);
+
     /// Invalidate compiled block at specific PC, address range, or entire cache
     void InvalidateBlock(vaddr_t guest_pc);
     void InvalidateRange(vaddr_t start, size_t size);

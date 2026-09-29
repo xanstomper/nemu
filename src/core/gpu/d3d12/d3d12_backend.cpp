@@ -1,4 +1,5 @@
 #include "d3d12_backend.hpp"
+#include <cstdlib>
 
 #ifdef _WIN32
 #include "platform/logger.hpp"
@@ -124,6 +125,13 @@ bool D3D12GpuBackend::Initialize(u32 render_width, u32 render_height) {
     // Wire the real D3D12 device into the translation-layer pipeline cache so
     // guest Maxwell shaders compile to native PSOs at draw time.
     pipeline_cache_.SetDevice(device_.Get());
+    // Persistent shader disk cache (survives process restarts — the win on
+    // console is skipping recompilation of thousands of pipelines per boot).
+    // NEMU_SHADER_CACHE overrides the default directory.
+    {
+        const char* env_dir = std::getenv("NEMU_SHADER_CACHE");
+        pipeline_cache_.SetDiskCacheDirectory(env_dir ? env_dir : "shader_cache");
+    }
 
     // Bring up the texture cache (descriptor heaps for guest SRVs/samplers).
     texture_cache_.SetDevice(device_.Get());

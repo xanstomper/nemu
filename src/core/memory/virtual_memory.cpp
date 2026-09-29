@@ -224,7 +224,10 @@ bool VirtualMemory::WriteBlock(vaddr_t address, const void* src, size_t size) {
         bytes_left -= chunk_size;
     }
 
-    return true;
+        if (write_hook_) {
+        write_hook_(address, size);  // SMC: notify JIT of executable-range write
+    }
+return true;
 }
 
 u8* VirtualMemory::GetPointer(vaddr_t address) {

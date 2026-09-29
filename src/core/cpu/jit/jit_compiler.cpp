@@ -484,6 +484,15 @@ JitCompiler::JitCompiler(size_t cache_size)
     patch_cache_.resize(PATCH_CACHE_SLOTS);
 }
 
+void JitCompiler::AttachToMemory(memory::VirtualMemory& memory) {
+    // SMC support (yuzu-exclusive until now): guest writes inside the hook drop
+    // any compiled block overlapping the written range, so the next execute
+    // recompiles from the modified code (the "self-modifying" in SMC).
+    memory.SetWriteHook([this](vaddr_t start, size_t size) {
+        InvalidateRange(start, size);
+    });
+}
+
 JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& memory) {
     // Fast path: direct-mapped patch cache hit (avoids the hash lookup).
     {

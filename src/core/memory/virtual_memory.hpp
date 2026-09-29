@@ -5,11 +5,17 @@
 #include <unordered_map>
 #include <memory>
 #include <mutex>
+#include <functional>
 
 namespace nemu::core::memory {
 
 class VirtualMemory final : public IMemory {
 public:
+    // --- Self-modifying-code support (yuzu-exclusive until now): guest writes
+    // to executable pages notify registered listeners so the JIT can drop
+    // stale blocks. Listener = (start, size) of the written guest range.
+    using WriteHook = std::function<void(vaddr_t, size_t)>;
+    void SetWriteHook(WriteHook hook) { write_hook_ = std::move(hook); }
     static constexpr size_t PAGE_BITS = 12;
     static constexpr size_t PAGE_SIZE = 1ULL << PAGE_BITS;
     static constexpr size_t PAGE_MASK = PAGE_SIZE - 1;
@@ -50,6 +56,7 @@ public:
     bool IsValidAddress(vaddr_t address, size_t size = 1) const override;
     std::optional<MemoryPermission> GetPagePermissions(vaddr_t address) const;
 
+    WriteHook write_hook_;  // SMC invalidation hook (set by the JIT)
 private:
     const PageInfo* LookupPage(vaddr_t address) const;
     PageInfo* LookupPage(vaddr_t address);
