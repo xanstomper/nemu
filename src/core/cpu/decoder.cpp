@@ -103,6 +103,12 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::FADD_vec: return "FADD (vector)";
         case Opcode::FSUB_vec: return "FSUB (vector)";
         case Opcode::FMUL_vec: return "FMUL (vector)";
+        case Opcode::FMLA_vec: return "FMLA (vector)";
+        case Opcode::FMLS_vec: return "FMLS (vector)";
+        case Opcode::FABD_vec: return "FABD (vector)";
+        case Opcode::FDIV_vec: return "FDIV (vector)";
+        case Opcode::FMAX_vec: return "FMAX (vector)";
+        case Opcode::FMIN_vec: return "FMIN (vector)";
         case Opcode::DUP_gen: return "DUP (gen)";
         case Opcode::DUP_elem: return "DUP (elem)";
         case Opcode::INS_gen: return "INS (gen)";
@@ -727,10 +733,25 @@ DecodedInstruction Decoder::DecodeDataProcSimdFp(u32 raw) noexcept {
             // FADD/FSUB (vector) share u==0 and opcode 0b11010 and are told apart by
             // bit 23 (FADD=0, FSUB=1). FMUL (vector) uses opcode 0b11011 (u==1).
             if (opcode == 0b11010) {
-                inst.opcode = ExtractBit(raw, 23) ? Opcode::FSUB_vec : Opcode::FADD_vec;
+                // Ground truth: FADD type=00, FSUB type=10, FABD type=10 u=1.
+                const u32 ftype = ExtractBits(raw, 22, 2);
+                if (ftype == 0b00) { inst.opcode = Opcode::FADD_vec; return inst; }
+                if (ftype == 0b10 && u) { inst.opcode = Opcode::FABD_vec; return inst; }
+                inst.opcode = Opcode::FSUB_vec; // type=10 u=0
                 return inst;
             }
             if (opcode == 0b11011) { inst.opcode = Opcode::FMUL_vec; return inst; }
+            // FP multiply-accumulate: FMLA(11001 type00) FMLS(11001 type10)
+            if (opcode == 0b11001) {
+                inst.opcode = ExtractBit(raw, 23) ? Opcode::FMLS_vec : Opcode::FMLA_vec;
+                return inst;
+            }
+            // FP min/max: FMAX(11110 type00) FMIN(11110 type10); FDIV(11111 u1)
+            if (opcode == 0b11110) {
+                inst.opcode = ExtractBit(raw, 23) ? Opcode::FMIN_vec : Opcode::FMAX_vec;
+                return inst;
+            }
+            if (opcode == 0b11111 && u) { inst.opcode = Opcode::FDIV_vec; return inst; }
             // NOTE: AND/ORR/EOR/NOT (vector) all share opcode 0b00011; the 29 "u" bit
             // selects EOR/NOT (u=1) vs AND/ORR (u=0), and bit 23 selects the
             // "not"/second operand: AND(u0,b23=0), ORR(u0,b23=1), EOR(u1,b23=0),

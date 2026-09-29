@@ -196,6 +196,61 @@ int main() {
         }
     }
 
+    // ---- FP vector ops (ground truth: fmla v0.4s,v1.4s = 0x4E21CC00,
+    //      fdiv=0x6E21FC00, fmax=0x4E21F400, fmin=0x4EA1F400) ----
+    // Standard form: Rd=v0, Rn=v0, Rm=v1.
+    {
+        memory::VirtualMemory mem;
+        if (!mem.Map(kCode, 0x1000, memory::MemoryPermission::All)) {
+            std::cerr << "FAIL: code map\n";
+            std::exit(1);
+        }
+        auto lanes = [](u32 reg, CpuState& s, std::initializer_list<float> v) {
+            u32 l = 0;
+            for (float f : v) { u32 u; std::memcpy(&u, &f, 4); s.SetVectorLane32(reg, l++, u); }
+        };
+
+        // FMLA: acc(1,2,3,4) + a(1,2,3,4) * b(2,2,2,2) = (3,6,9,12)
+        {
+            CpuState s{}; s.pc = kCode;
+            lanes(0, s, {1.f, 2.f, 3.f, 4.f});   // rd accumulator
+            lanes(0, s, {1.f, 2.f, 3.f, 4.f});   // rn (same reg — acc pattern)
+            lanes(1, s, {2.f, 2.f, 2.f, 2.f});
+            mem.Write32(kCode, 0x4E21CC00u);     // fmla v0.4s, v0.4s, v1.4s (Rd=0,Rn=0,Rm=1)
+            Interpreter interp(s, mem);
+            interp.Step();
+            const float got = [&] { u32 u = s.GetVectorLane32(0, 1); float f; std::memcpy(&f, &u, 4); return f; }();
+            if (got != 6.0f) { std::cerr << "FAIL fmla: lane1=" << got << " want 6\n"; std::exit(1); }
+            std::cout << "  fmla v0.4s,v0.4s,v1.4s (accumulate) OK\n";
+        }
+
+        // FDIV: (4,9,27,64) / (2,3,3,4) = (2,3,9,16)
+        {
+            CpuState s{}; s.pc = kCode;
+            lanes(0, s, {4.f, 9.f, 27.f, 64.f});
+            lanes(1, s, {2.f, 3.f, 3.f, 4.f});
+            mem.Write32(kCode, 0x6E21FC00u);     // fdiv v0.4s, v0.4s, v1.4s
+            Interpreter interp(s, mem);
+            interp.Step();
+            u32 u = s.GetVectorLane32(0, 3); float f; std::memcpy(&f, &u, 4);
+            if (f != 16.0f) { std::cerr << "FAIL fdiv: lane3=" << f << " want 16\n"; std::exit(1); }
+            std::cout << "  fdiv v0.4s,v0.4s,v1.4s OK\n";
+        }
+
+        // FMAX / FMIN
+        {
+            CpuState s{}; s.pc = kCode;
+            lanes(0, s, {1.f, 9.f, 3.f, 7.f});
+            lanes(1, s, {5.f, 2.f, 3.f, 8.f});
+            mem.Write32(kCode, 0x4E21F400u);     // fmax v0.4s, v0.4s, v1.4s
+            Interpreter interp(s, mem);
+            interp.Step();
+            u32 u = s.GetVectorLane32(0, 1); float f; std::memcpy(&f, &u, 4);
+            if (f != 9.0f) { std::cerr << "FAIL fmax: lane1=" << f << " want 9\n"; std::exit(1); }
+            std::cout << "  fmax v0.4s,v0.4s,v1.4s OK\n";
+        }
+    }
+
     std::cout << "ALL DIV/BFM/MULL DIFFERENTIAL TESTS PASSED\n";
     return 0;
 }

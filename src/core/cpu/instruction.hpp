@@ -161,6 +161,13 @@ enum class Opcode : u16 {
     ST4_vec,
     LD1x4_vec,  // contiguous 4 regs (opc4=0010; distinct from interleaved LD4)
     ST1x4_vec,
+    // FP vector (3-same, type field selects op within opcode 11xxx)
+    FMLA_vec,   // 11001 type=00 — fused multiply-add (vectors)
+    FMLS_vec,   // 11001 type=10 — fused multiply-subtract
+    FABD_vec,   // 11010 type=10 u=1 — absolute difference
+    FDIV_vec,   // 11111 type=00 u=1
+    FMAX_vec,   // 11110 type=00
+    FMIN_vec,   // 11110 type=10
 
     // Exclusive & Atomic Memory Operations (ARMv8.0/ARMv8.1-A LSE)
     LDXR,

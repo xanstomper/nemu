@@ -988,6 +988,47 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             break;
         }
 
+        case Opcode::FMLA_vec:
+        case Opcode::FMLS_vec:
+        case Opcode::FABD_vec:
+        case Opcode::FDIV_vec:
+        case Opcode::FMAX_vec:
+        case Opcode::FMIN_vec: {
+            // FP vector ops, 32-bit lanes (the form games use for vertex/particle math).
+            for (size_t l = 0; l < 4; ++l) {
+                float a = 0.0f, b = 0.0f;
+                const u32 ua = state_.GetVectorLane32(inst.rn, l);
+                const u32 ub = state_.GetVectorLane32(inst.rm, l);
+                std::memcpy(&a, &ua, 4);
+                std::memcpy(&b, &ub, 4);
+                float res;
+                switch (inst.opcode) {
+                case Opcode::FMLA_vec: { // accumulate into rd
+                    float acc = 0.0f;
+                    const u32 uacc = state_.GetVectorLane32(inst.rd, l);
+                    std::memcpy(&acc, &uacc, 4);
+                    res = std::fma(a, b, acc);
+                    break;
+                }
+                case Opcode::FMLS_vec: {
+                    float acc = 0.0f;
+                    const u32 uacc = state_.GetVectorLane32(inst.rd, l);
+                    std::memcpy(&acc, &uacc, 4);
+                    res = std::fma(a, -b, acc);
+                    break;
+                }
+                case Opcode::FABD_vec:  res = std::fabs(a - b); break;
+                case Opcode::FDIV_vec:  res = a / b; break;
+                case Opcode::FMAX_vec:  res = std::max(a, b); break;
+                default:                res = std::min(a, b); break; // FMIN
+                }
+                u32 ures = 0;
+                std::memcpy(&ures, &res, 4);
+                state_.SetVectorLane32(inst.rd, l, ures);
+            }
+            break;
+        }
+
         case Opcode::FSUB_vec: {
             if (inst.is_fp_double) {
                 for (size_t l = 0; l < 2; ++l) {
