@@ -21,12 +21,36 @@ public:
         s64 timeout_ns
     );
 
+    /// Wait on address if memory value is less than compare_val
+    bool WaitForAddressIfLessThan(
+        memory::VirtualMemory& vm,
+        vaddr_t address,
+        u32 compare_val,
+        s64 timeout_ns
+    );
+
+    /// Decrement memory value, and wait on address if original value was less than compare_val
+    bool DecrementAndWaitIfLessThan(
+        memory::VirtualMemory& vm,
+        vaddr_t address,
+        u32 compare_val,
+        s64 timeout_ns
+    );
+
     /// Signal up to count threads waiting on address.
     /// lifo_wake: when set (per-title sync_relaxed tweak), wake ordering is
     /// biased to the most recently arrived waiter — some titles (Ryujinx
     /// 'deadlock' label, 29 games) hang on strict FIFO wakeups but progress
     /// with LIFO bias.
     u32 Signal(vaddr_t address, u32 count, bool lifo_wake = false);
+
+    /// Signal threads and modify address value based on waiting thread count
+    u32 SignalAndModifyByWaitingCount(
+        memory::VirtualMemory& vm,
+        vaddr_t address,
+        u32 count,
+        s32 value_modifier
+    );
 
 private:
     struct WaitQueue {

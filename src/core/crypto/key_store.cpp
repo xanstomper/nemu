@@ -529,7 +529,136 @@ bool KeyStore::LoadDefaultKeys() {
         }
     }
 
+    if (any_loaded) {
+        DeriveKeys();
+    }
+
     return any_loaded;
+}
+
+void KeyStore::SetKeySlot(u8 slot_index, std::span<const u8> key_bytes) {
+    if (slot_index >= 16 || key_bytes.size() != 16) return;
+    std::unique_lock lock(mutex_);
+    keyslots_[slot_index].configured = true;
+    std::memcpy(keyslots_[slot_index].key.data(), key_bytes.data(), 16);
+}
+
+bool KeyStore::HasKeySlot(u8 slot_index) const {
+    if (slot_index >= 16) return false;
+    std::shared_lock lock(mutex_);
+    return keyslots_[slot_index].configured;
+}
+
+void KeyStore::ClearKeySlot(u8 slot_index) {
+    if (slot_index >= 16) return;
+    std::unique_lock lock(mutex_);
+    keyslots_[slot_index].configured = false;
+    keyslots_[slot_index].key.fill(0);
+}
+
+bool KeyStore::CryptKeySlotEcb(u8 slot_index, std::span<const u8> src, std::span<u8> dst, bool encrypt) const {
+    if (slot_index >= 16 || src.size() != dst.size() || src.size() % 16 != 0) return false;
+    std::array<u8, 16> slot_key{};
+    {
+        std::shared_lock lock(mutex_);
+        if (!keyslots_[slot_index].configured) return false;
+        slot_key = keyslots_[slot_index].key;
+    }
+    Aes128 cipher(std::span<const u8, 16>(slot_key.data(), 16));
+    for (size_t offset = 0; offset < src.size(); offset += 16) {
+        auto in_blk = src.subspan(offset, 16);
+        auto out_blk = dst.subspan(offset, 16);
+        std::array<u8, 16> in_arr{};
+        std::array<u8, 16> out_arr{};
+        std::memcpy(in_arr.data(), in_blk.data(), 16);
+        if (encrypt) {
+            cipher.EncryptBlock(in_arr, out_arr);
+        } else {
+            cipher.DecryptBlock(in_arr, out_arr);
+        }
+        std::memcpy(out_blk.data(), out_arr.data(), 16);
+    }
+    return true;
+}
+
+bool KeyStore::CryptKeySlotCtr(u8 slot_index, std::span<const u8> src, std::span<u8> dst, std::span<const u8, 16> iv) const {
+    if (slot_index >= 16 || src.size() != dst.size()) return false;
+    std::array<u8, 16> slot_key{};
+    {
+        std::shared_lock lock(mutex_);
+        if (!keyslots_[slot_index].configured) return false;
+        slot_key = keyslots_[slot_index].key;
+    }
+    Aes128 cipher(std::span<const u8, 16>(slot_key.data(), 16));
+    cipher.DecryptCtr(src, dst, iv);
+    return true;
+}
+
+void KeyStore::DeriveKeys() {
+    std::unique_lock lock(mutex_);
+
+    auto app_src = keys_.find("key_area_key_application_source");
+    auto ocean_src = keys_.find("key_area_key_ocean_source");
+    auto sys_src = keys_.find("key_area_key_system_source");
+    auto title_src = keys_.find("titlekek_source");
+
+    for (u32 gen = 0; gen <= 18; ++gen) {
+        char gen_str[8];
+        std::snprintf(gen_str, sizeof(gen_str), "%02x", gen);
+
+        std::string mk_name = std::string("master_key_") + gen_str;
+        auto mk_it = keys_.find(mk_name);
+        if (mk_it == keys_.end() || mk_it->second.size() != 16) {
+            char gen_dec[8];
+            std::snprintf(gen_dec, sizeof(gen_dec), "%02u", gen);
+            mk_it = keys_.find(std::string("master_key_") + gen_dec);
+            if (mk_it == keys_.end() || mk_it->second.size() != 16) {
+                continue;
+            }
+        }
+
+        Aes128 mk_cipher(std::span<const u8, 16>(mk_it->second.data(), 16));
+
+        // 1. TitleKEK
+        std::string tk_name = std::string("titlekek_") + gen_str;
+        if (title_src != keys_.end() && title_src->second.size() == 16 && keys_.find(tk_name) == keys_.end()) {
+            std::array<u8, 16> src_arr{};
+            std::array<u8, 16> derived{};
+            std::memcpy(src_arr.data(), title_src->second.data(), 16);
+            mk_cipher.DecryptBlock(src_arr, derived);
+            keys_[tk_name] = std::vector<u8>(derived.begin(), derived.end());
+        }
+
+        // 2. Key Area Key Application
+        std::string kak_app = std::string("key_area_key_application_") + gen_str;
+        if (app_src != keys_.end() && app_src->second.size() == 16 && keys_.find(kak_app) == keys_.end()) {
+            std::array<u8, 16> src_arr{};
+            std::array<u8, 16> derived{};
+            std::memcpy(src_arr.data(), app_src->second.data(), 16);
+            mk_cipher.DecryptBlock(src_arr, derived);
+            keys_[kak_app] = std::vector<u8>(derived.begin(), derived.end());
+        }
+
+        // 3. Key Area Key Ocean
+        std::string kak_ocean = std::string("key_area_key_ocean_") + gen_str;
+        if (ocean_src != keys_.end() && ocean_src->second.size() == 16 && keys_.find(kak_ocean) == keys_.end()) {
+            std::array<u8, 16> src_arr{};
+            std::array<u8, 16> derived{};
+            std::memcpy(src_arr.data(), ocean_src->second.data(), 16);
+            mk_cipher.DecryptBlock(src_arr, derived);
+            keys_[kak_ocean] = std::vector<u8>(derived.begin(), derived.end());
+        }
+
+        // 4. Key Area Key System
+        std::string kak_sys = std::string("key_area_key_system_") + gen_str;
+        if (sys_src != keys_.end() && sys_src->second.size() == 16 && keys_.find(kak_sys) == keys_.end()) {
+            std::array<u8, 16> src_arr{};
+            std::array<u8, 16> derived{};
+            std::memcpy(src_arr.data(), sys_src->second.data(), 16);
+            mk_cipher.DecryptBlock(src_arr, derived);
+            keys_[kak_sys] = std::vector<u8>(derived.begin(), derived.end());
+        }
+    }
 }
 
 } // namespace nemu::core::crypto

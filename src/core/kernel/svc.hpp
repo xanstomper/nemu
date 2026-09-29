@@ -122,8 +122,8 @@ private:
     static void SvcMapMemory(cpu::CpuState& state);
     static void SvcUnmapMemory(cpu::CpuState& state);
     static void SvcCancelSynchronization(cpu::CpuState& state);
-    static void SvcSetThreadCoreMask(cpu::CpuState& state);
-    static void SvcGetThreadCoreMask(cpu::CpuState& state);
+    static void SvcSetThreadCoreMask(cpu::CpuState& state, KProcess& process);
+    static void SvcGetThreadCoreMask(cpu::CpuState& state, KProcess& process);
     static void SvcGetSystemTick(cpu::CpuState& state);
 
     /// Shared service manager (injected once at boot).

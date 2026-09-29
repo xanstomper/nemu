@@ -8,6 +8,11 @@ set(AUDIO_SOURCES
     audio_factory.cpp
     adpcm/adpcm.hpp
     adpcm/adpcm.cpp
+    audren/audren_types.hpp
+    audren/audio_renderer.hpp
+    audren/audio_renderer.cpp
+    audin/audio_input.hpp
+    audin/audio_input.cpp
 )
 
 if(WIN32)

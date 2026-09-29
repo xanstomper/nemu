@@ -3,6 +3,9 @@
 #include <sstream>
 #include <cmath>
 #include <cstring>
+#if defined(__x86_64__) || defined(_M_X64)
+#include <immintrin.h>
+#endif
 
 namespace nemu::core::cpu {
 
@@ -306,6 +309,47 @@ std::string CpuState::DumpState() const {
         }
     }
     return ss.str();
+}
+
+void CpuState::SyncHostFpState() const noexcept {
+#if defined(__x86_64__) || defined(_M_X64)
+    unsigned int mxcsr = _mm_getcsr();
+    // Flush-To-Zero (bit 24 in ARM FPCR): sets FTZ (bit 15) and DAZ (bit 6) in x86 MXCSR
+    if (IsFlushToZero()) {
+        mxcsr |= (1u << 15) | (1u << 6);
+    } else {
+        mxcsr &= ~((1u << 15) | (1u << 6));
+    }
+    // Rounding mode (bits 23:22 in ARM FPCR): sets bits 14:13 in x86 MXCSR
+    // ARM: 00=RN (Nearest), 01=RP (+Inf), 10=RM (-Inf), 11=RZ (Zero)
+    // x86: 00=RN (Nearest), 01=RM (-Inf), 10=RP (+Inf), 11=RZ (Zero)
+    const u32 rmode = GetRoundingMode();
+    mxcsr &= ~(0x3u << 13);
+    switch (rmode) {
+        case 0b00: // RN
+            mxcsr |= (0b00 << 13);
+            break;
+        case 0b01: // RP (+Inf)
+            mxcsr |= (0b10 << 13);
+            break;
+        case 0b10: // RM (-Inf)
+            mxcsr |= (0b01 << 13);
+            break;
+        case 0b11: // RZ (Toward Zero)
+            mxcsr |= (0b11 << 13);
+            break;
+    }
+    _mm_setcsr(mxcsr);
+#endif
+}
+
+void CpuState::SetFPCR(u32 val) noexcept {
+    fpcr = val;
+    SyncHostFpState();
+}
+
+void CpuState::SetFPSR(u32 val) noexcept {
+    fpsr = val;
 }
 
 } // namespace nemu::core::cpu

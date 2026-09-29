@@ -299,7 +299,7 @@ bool D3D12GpuBackend::CreatePipelineAndBuffers() {
     pso_desc.RasterizerState.DepthBias = 0;
     pso_desc.RasterizerState.DepthBiasClamp = 0.0f;
     pso_desc.RasterizerState.SlopeScaledDepthBias = 0.0f;
-    pso_desc.RasterizerState.DepthClipEnable = TRUE;
+    pso_desc.RasterizerState.DepthClipEnable = FALSE; // Maxwell depth clamping enabled
     pso_desc.RasterizerState.MultisampleEnable = FALSE;
     pso_desc.RasterizerState.AntialiasedLineEnable = FALSE;
     pso_desc.RasterizerState.ForcedSampleCount = 0;

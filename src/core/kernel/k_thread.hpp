@@ -33,6 +33,12 @@ public:
     void SetState(ThreadState state) noexcept { state_ = state; }
     void SetPriority(u32 priority) noexcept { priority_ = priority; }
 
+    [[nodiscard]] s32 GetIdealCore() const noexcept { return ideal_core_; }
+    void SetIdealCore(s32 core) noexcept { ideal_core_ = core; }
+
+    [[nodiscard]] u64 GetAffinityMask() const noexcept { return affinity_mask_; }
+    void SetAffinityMask(u64 mask) noexcept { affinity_mask_ = mask; }
+
     [[nodiscard]] cpu::CpuState& GetCpuState() noexcept { return cpu_state_; }
     [[nodiscard]] const cpu::CpuState& GetCpuState() const noexcept { return cpu_state_; }
 
@@ -40,6 +46,8 @@ private:
     u64 tid_{0};
     std::weak_ptr<KProcess> owner_process_;
     u32 priority_{44};
+    s32 ideal_core_{0};
+    u64 affinity_mask_{0x07};
     ThreadState state_{ThreadState::Initialized};
     vaddr_t tls_address_{0};
     cpu::CpuState cpu_state_{};

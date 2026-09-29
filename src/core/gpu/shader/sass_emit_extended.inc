@@ -129,32 +129,49 @@ case MaxwellOpcode::CSETP:
 case MaxwellOpcode::JMP:
 case MaxwellOpcode::JMX:
 case MaxwellOpcode::BRX:
-case MaxwellOpcode::PBK:
-case MaxwellOpcode::PCNT:
 case MaxwellOpcode::PEXIT:
 case MaxwellOpcode::LONGJMP:
 case MaxwellOpcode::PLONGJMP:
 case MaxwellOpcode::JCAL:
 case MaxwellOpcode::CAL:
 case MaxwellOpcode::RET:
+case MaxwellOpcode::BRK:
+    if (inst.predicate < 7) {
+        ss << "    if (" << (inst.predicate_invert ? "!" : "") << "p[" << static_cast<int>(inst.predicate) << "]) break;\n";
+    } else {
+        ss << "    break;\n";
+    }
+    break;
+case MaxwellOpcode::CONT:
+    if (inst.predicate < 7) {
+        ss << "    if (" << (inst.predicate_invert ? "!" : "") << "p[" << static_cast<int>(inst.predicate) << "]) continue;\n";
+    } else {
+        ss << "    continue;\n";
+    }
+    break;
+case MaxwellOpcode::SSY:
+    ss << "    // [ssy] structured branch sync target 0x" << std::hex << inst.branch_target << std::dec << "\n";
+    break;
+case MaxwellOpcode::PBK:
+    ss << "    // [pbk] loop break target 0x" << std::hex << inst.branch_target << std::dec << "\n";
+    break;
+case MaxwellOpcode::PCNT:
+    ss << "    // [pcnt] loop continue target 0x" << std::hex << inst.branch_target << std::dec << "\n";
+    break;
+case MaxwellOpcode::SYNC:
+    ss << "    // [sync] warp reconvergence point\n";
+    break;
 case MaxwellOpcode::PRET:
 case MaxwellOpcode::RTT:
-case MaxwellOpcode::BRK:
-case MaxwellOpcode::CONT:
-case MaxwellOpcode::SSY:
-    // Structured-control-flow targets: the HLSL emitter linearizes straight-
-    // line bodies; branches within a decoded region are flattened by the
-    // sequential model (same approach as the RasterVertex software path).
     break;
 case MaxwellOpcode::BRA:
-    // Conditional BRA.P: decode records the predicate (P0-P6) and target.
-    // The flattened emitter cannot host arbitrary control-flow, so a
-    // predicate-conditional forward branch records a semantics comment that
-    // unifies with the predicate file's `if (p[N])` guard the caller can use.
+    // Conditional / Unconditional forward or backward branch
     if (inst.predicate < 7) {
-        ss << "    // [bra] " << (inst.predicate_invert ? "!" : "")
-           << "if (p[" << static_cast<int>(inst.predicate) << "]) -> target 0x"
+        ss << "    // [bra] if (" << (inst.predicate_invert ? "!" : "")
+           << "p[" << static_cast<int>(inst.predicate) << "]) branch to 0x"
            << std::hex << inst.branch_target << std::dec << "\n";
+    } else {
+        ss << "    // [bra] goto 0x" << std::hex << inst.branch_target << std::dec << "\n";
     }
     break;
 

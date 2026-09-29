@@ -79,6 +79,21 @@ public:
     /// Never logs keys themselves, only presence.
     [[nodiscard]] KeyCompleteness GetKeyCompleteness() const;
 
+    /// Hardware AES Keyslot Engine (Slots 0..15)
+    struct HardwareKeySlot {
+        bool configured{false};
+        std::array<u8, 16> key{};
+    };
+
+    void SetKeySlot(u8 slot_index, std::span<const u8> key_bytes);
+    [[nodiscard]] bool HasKeySlot(u8 slot_index) const;
+    void ClearKeySlot(u8 slot_index);
+    bool CryptKeySlotEcb(u8 slot_index, std::span<const u8> src, std::span<u8> dst, bool encrypt) const;
+    bool CryptKeySlotCtr(u8 slot_index, std::span<const u8> src, std::span<u8> dst, std::span<const u8, 16> iv) const;
+
+    /// Automatically derive key hierarchy (master_key_00 through master_key_18, titlekeks, key area keys)
+    void DeriveKeys();
+
     /// Convert a 32-hex character string to a 16-byte array
     static std::optional<std::vector<u8>> HexToBytes(std::string_view hex);
 
@@ -92,6 +107,7 @@ private:
         std::optional<u8> key_generation = std::nullopt) const;
     mutable std::shared_mutex mutex_;
     std::unordered_map<std::string, std::vector<u8>> keys_;
+    std::array<HardwareKeySlot, 16> keyslots_{};
 };
 
 } // namespace nemu::core::crypto

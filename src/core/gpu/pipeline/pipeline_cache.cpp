@@ -112,6 +112,10 @@ D3D12_BLEND ConvertBlendFactor(nemu::core::gpu::pipeline::BlendFactor factor) no
         case BlendFactor::InvDestAlpha: return D3D12_BLEND_INV_DEST_ALPHA;
         case BlendFactor::DestColor: return D3D12_BLEND_DEST_COLOR;
         case BlendFactor::InvDestColor: return D3D12_BLEND_INV_DEST_COLOR;
+        case BlendFactor::Src1Color: return D3D12_BLEND_SRC1_COLOR;
+        case BlendFactor::InvSrc1Color: return D3D12_BLEND_INV_SRC1_COLOR;
+        case BlendFactor::Src1Alpha: return D3D12_BLEND_SRC1_ALPHA;
+        case BlendFactor::InvSrc1Alpha: return D3D12_BLEND_INV_SRC1_ALPHA;
         default: return D3D12_BLEND_ONE;
     }
 }

@@ -58,6 +58,9 @@ void H264BitWriter::WriteExpGolombCodedInt(s32 value) {
 }
 
 void H264BitWriter::WriteExpGolombCodedUInt(u32 value) {
+    if (value == 0xFFFFFFFFU) {
+        return;
+    }
     value++;
     const u32 log = static_cast<u32>(std::bit_width(value)) - 1;
     for (u32 i = 0; i < log; i++) WriteBit(false);
@@ -153,8 +156,12 @@ bool H264::ComposeFrame(const NvdecRegisters& regs, std::vector<u8>& out_frame,
         static_cast<u32>(context.h264_parameter_set.num_refidx_l0_default_active);
     writer.WriteUe(max_num_ref_frames);
     writer.WriteBit(false); // gaps_in_frame_num_value_allowed_flag
-    writer.WriteUe(context.h264_parameter_set.pic_width_in_mbs - 1);
-    writer.WriteUe(context.h264_parameter_set.frame_height_in_map_units - 1);
+    const u32 w_mbs = context.h264_parameter_set.pic_width_in_mbs > 0
+                          ? context.h264_parameter_set.pic_width_in_mbs - 1 : 0;
+    const u32 h_mbs = context.h264_parameter_set.frame_height_in_map_units > 0
+                          ? context.h264_parameter_set.frame_height_in_map_units - 1 : 0;
+    writer.WriteUe(w_mbs);
+    writer.WriteUe(h_mbs);
     writer.WriteBit(context.h264_parameter_set.frame_mbs_only_flag != 0);
 
     if (context.h264_parameter_set.frame_mbs_only_flag == 0) {

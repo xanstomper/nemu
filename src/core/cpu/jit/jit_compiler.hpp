@@ -43,8 +43,9 @@ public:
     /// Execute a compiled basic block on guest state
     bool Execute(CpuState& state, memory::VirtualMemory& memory);
 
-    /// Invalidate compiled block at specific PC or entire cache
+    /// Invalidate compiled block at specific PC, address range, or entire cache
     void InvalidateBlock(vaddr_t guest_pc);
+    void InvalidateRange(vaddr_t start, size_t size);
     void Clear();
 
     [[nodiscard]] const JitStats& GetStats() const noexcept { return stats_; }

@@ -36,10 +36,28 @@ void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& t
         case 0x09: SvcStartThread(state, process); break;
         case 0x0A: SvcExitThread(state, thread); break;
         case 0x0B: SvcSleepThread(state); break;
-        case 0x0C: state.SetX(0, static_cast<u64>(Result::Success)); state.SetX(1, 44); break; // svcGetThreadPriority
-        case 0x0D: state.SetX(0, static_cast<u64>(Result::Success)); break; // svcSetThreadPriority
-        case 0x0E: SvcGetThreadCoreMask(state); break;
-        case 0x0F: SvcSetThreadCoreMask(state); break;
+        case 0x0C: {
+            const u32 thread_handle = static_cast<u32>(state.GetX(1));
+            auto target_thread = process.GetHandleTable().GetObject<KThread>(thread_handle);
+            const u32 prio = target_thread ? target_thread->GetPriority() : thread.GetPriority();
+            state.SetX(0, static_cast<u64>(Result::Success));
+            state.SetX(1, prio);
+            break;
+        }
+        case 0x0D: {
+            const u32 thread_handle = static_cast<u32>(state.GetX(0));
+            const u32 prio = static_cast<u32>(state.GetX(1));
+            auto target_thread = process.GetHandleTable().GetObject<KThread>(thread_handle);
+            if (target_thread) {
+                target_thread->SetPriority(prio);
+            } else {
+                thread.SetPriority(prio);
+            }
+            state.SetX(0, static_cast<u64>(Result::Success));
+            break;
+        }
+        case 0x0E: SvcGetThreadCoreMask(state, process); break;
+        case 0x0F: SvcSetThreadCoreMask(state, process); break;
         case 0x10: SvcGetCurrentProcessorNumber(state); break;              // svcGetCurrentProcessorNumber
         case 0x11: SvcSignalEvent(state, process); break;                   // svcSignalEvent
         case 0x12: SvcClearEvent(state, process); break;                    // svcClearEvent
@@ -672,16 +690,30 @@ void SvcDispatcher::SvcCancelSynchronization(cpu::CpuState& state) {
     state.SetX(0, static_cast<u64>(Result::Success));
 }
 
-void SvcDispatcher::SvcSetThreadCoreMask(cpu::CpuState& state) {
+void SvcDispatcher::SvcSetThreadCoreMask(cpu::CpuState& state, KProcess& process) {
     // svcSetThreadCoreMask(thread_handle, ideal_core, affinity_mask)
+    const u32 thread_handle = static_cast<u32>(state.GetX(0));
+    const s32 ideal_core = static_cast<s32>(state.GetX(1));
+    const u64 affinity_mask = state.GetX(2);
+
+    auto target_thread = process.GetHandleTable().GetObject<KThread>(thread_handle);
+    if (target_thread) {
+        target_thread->SetIdealCore(ideal_core);
+        target_thread->SetAffinityMask(affinity_mask);
+    }
     state.SetX(0, static_cast<u64>(Result::Success));
 }
 
-void SvcDispatcher::SvcGetThreadCoreMask(cpu::CpuState& state) {
-    // svcGetThreadCoreMask(thread_handle) -> ideal_core, affinity_mask
+void SvcDispatcher::SvcGetThreadCoreMask(cpu::CpuState& state, KProcess& process) {
+    // svcGetThreadCoreMask(out_ideal_core*, out_affinity_mask*, thread_handle)
+    const u32 thread_handle = static_cast<u32>(state.GetX(2));
+    auto target_thread = process.GetHandleTable().GetObject<KThread>(thread_handle);
+    const s32 ideal_core = target_thread ? target_thread->GetIdealCore() : 0;
+    const u64 affinity_mask = target_thread ? target_thread->GetAffinityMask() : 0x07;
+
     state.SetX(0, static_cast<u64>(Result::Success));
-    state.SetX(1, 0);    // Ideal core 0
-    state.SetX(2, 0x0F); // 4-core mask
+    state.SetX(1, static_cast<u64>(ideal_core));
+    state.SetX(2, affinity_mask);
 }
 
 void SvcDispatcher::SvcGetSystemTick(cpu::CpuState& state) {

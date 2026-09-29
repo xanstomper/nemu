@@ -46,7 +46,7 @@ public:
     static constexpr u64 kBigPageCount = kGpuVaLimit / kBigPageSize;
     // GPU addresses are sparse; we only allocate page state lazily.
 
-    explicit GpuMemoryManager(memory::VirtualMemory* cpu_as);
+    explicit GpuMemoryManager(memory::VirtualMemory* cpu_as = nullptr);
 
     // Map a GPU VA range [addr, addr+size) to a host CPU address range
     // (the backing guest memory nvmap exported). Returns true on success.

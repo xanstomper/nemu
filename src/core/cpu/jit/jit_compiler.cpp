@@ -1349,6 +1349,18 @@ void JitCompiler::InvalidateBlock(vaddr_t guest_pc) {
     patch_cache_[PatchIndex(guest_pc)] = {static_cast<vaddr_t>(-1), nullptr};
 }
 
+void JitCompiler::InvalidateRange(vaddr_t start, size_t size) {
+    const vaddr_t end = start + size;
+    for (auto it = block_map_.begin(); it != block_map_.end();) {
+        if (it->first >= start && it->first < end) {
+            patch_cache_[PatchIndex(it->first)] = {static_cast<vaddr_t>(-1), nullptr};
+            it = block_map_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void JitCompiler::Clear() {
     block_map_.clear();
     std::fill(patch_cache_.begin(), patch_cache_.end(), BlockPatchSlot{static_cast<vaddr_t>(-1), nullptr});

@@ -57,6 +57,13 @@ struct alignas(16) CpuState {
     u32 fpcr{0};
     u32 fpsr{0};
 
+    [[nodiscard]] bool IsFlushToZero() const noexcept { return (fpcr & (1u << 24)) != 0; }
+    [[nodiscard]] bool IsDefaultNaN() const noexcept { return (fpcr & (1u << 25)) != 0; }
+    [[nodiscard]] u32 GetRoundingMode() const noexcept { return (fpcr >> 22) & 0x3; }
+    void SetFPCR(u32 val) noexcept;
+    void SetFPSR(u32 val) noexcept;
+    void SyncHostFpState() const noexcept;
+
     // Exclusive monitor for atomic operations (LDXR/STXR/CAS)
     vaddr_t exclusive_addr{0};
     bool exclusive_active{false};

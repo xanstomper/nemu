@@ -27,8 +27,30 @@ u64 XboxThreadAffinity::GetAffinityMask(XboxThreadRole role) noexcept {
         case XboxThreadRole::AudioAndAuxiliary:
             // Cores 6-7 (bits 6, 7) = 0xC0
             return 0xC0ULL;
+        case XboxThreadRole::GuestCpuCore0:
+            // Xbox Core 2 (bit 2) = 0x04
+            return 0x04ULL;
+        case XboxThreadRole::GuestCpuCore1:
+            // Xbox Core 3 (bit 3) = 0x08
+            return 0x08ULL;
+        case XboxThreadRole::GuestCpuCore2:
+            // Xbox Core 4 (bit 4) = 0x10
+            return 0x10ULL;
+        case XboxThreadRole::GuestKernelSysmodule:
+            // Xbox Core 6 (bit 6) = 0x40
+            return 0x40ULL;
     }
     return 0xFFULL;
+}
+
+u64 XboxThreadAffinity::GetGuestCoreAffinityMask(u32 guest_core_id) noexcept {
+    switch (guest_core_id) {
+        case 0: return 0x04ULL; // Xbox Core 2
+        case 1: return 0x08ULL; // Xbox Core 3
+        case 2: return 0x10ULL; // Xbox Core 4
+        case 3: return 0x40ULL; // Xbox Core 6 (Kernel sysmodule)
+        default: return 0x0CULL;
+    }
 }
 
 u32 XboxThreadAffinity::GetHostCoreCount() noexcept {

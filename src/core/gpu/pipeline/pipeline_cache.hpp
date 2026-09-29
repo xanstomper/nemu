@@ -26,7 +26,11 @@ enum class BlendFactor : u8 {
     DestAlpha = 6,
     InvDestAlpha = 7,
     DestColor = 8,
-    InvDestColor = 9
+    InvDestColor = 9,
+    Src1Color = 10,
+    InvSrc1Color = 11,
+    Src1Alpha = 12,
+    InvSrc1Alpha = 13
 };
 
 enum class BlendOp : u8 {

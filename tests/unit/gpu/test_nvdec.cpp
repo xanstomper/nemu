@@ -180,10 +180,10 @@ static void TestH264Composer() {
     // 2 MBs = 32px), height 2 map units, frame_mbs_only=1, parameter_flags
     // with frame_number=0 (forces header path), chroma_format=1, poc_type=0.
     u32 width_mbs = 2, height_units = 2;
-    vmem.WriteBlock(pic_info_va + 0x5C, &width_mbs, 4);   // +0x0C in PS
-    vmem.WriteBlock(pic_info_va + 0x60, &height_units, 4);// +0x10 in PS
+    vmem.WriteBlock(pic_info_va + 0x64, &width_mbs, 4);   // +0x0C in PS (0x58 + 0x0C = 0x64)
+    vmem.WriteBlock(pic_info_va + 0x68, &height_units, 4);// +0x10 in PS (0x58 + 0x10 = 0x68)
     u32 mbs_only = 1;
-    vmem.WriteBlock(pic_info_va + 0x68, &mbs_only, 4);    // +0x08 in PS
+    vmem.WriteBlock(pic_info_va + 0x60, &mbs_only, 4);    // +0x08 in PS (0x58 + 0x08 = 0x60)
     // parameter_flags at +0x58+0x58 = 0xB0: frame_number(46:16)=0,
     // chroma_format_idc(12:2)=1, pic_order_cnt_type(14:2)=0,
     // log2_max_frame_num_minus4(8:4)=0.
@@ -207,7 +207,7 @@ static void TestH264Composer() {
     NEMU_TEST_ASSERT(packet[3] == 0x67);
     // PPS NAL follows: search for the second start code with type 8 (0x68).
     bool saw_pps = false;
-    for (size_t i = config_size / 2; i + 3 < config_size; ++i) {
+    for (size_t i = 1; i + 3 < config_size; ++i) {
         if (packet[i] == 0x00 && packet[i + 1] == 0x00 && packet[i + 2] == 0x01 &&
             packet[i + 3] == 0x68) { saw_pps = true; break; }
     }
