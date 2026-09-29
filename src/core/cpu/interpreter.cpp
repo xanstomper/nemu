@@ -2,6 +2,7 @@
 #include "platform/logger.hpp"
 #include <cmath>
 #include <cstring>
+#include <atomic>
 
 namespace nemu::core::cpu {
 
@@ -988,6 +989,39 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             break;
         }
 
+        case Opcode::FCVTZS_vec:
+        case Opcode::FCVTZU_vec:
+        case Opcode::SCVTF_vec:
+        case Opcode::UCVTF_vec: {
+            for (size_t l = 0; l < 4; ++l) {
+                u32 res;
+                switch (inst.opcode) {
+                case Opcode::FCVTZS_vec: {
+                    u32 u = state_.GetVectorLane32(inst.rn, l); float f; std::memcpy(&f, &u, 4);
+                    res = static_cast<u32>(static_cast<s32>(f)); // trunc toward zero
+                    break;
+                }
+                case Opcode::FCVTZU_vec: {
+                    u32 u = state_.GetVectorLane32(inst.rn, l); float f; std::memcpy(&f, &u, 4);
+                    res = (f <= 0.0f) ? 0u : static_cast<u32>(f);
+                    break;
+                }
+                case Opcode::SCVTF_vec: {
+                    s32 v = static_cast<s32>(state_.GetVectorLane32(inst.rn, l));
+                    float f = static_cast<float>(v); res = 0; std::memcpy(&res, &f, 4);
+                    break;
+                }
+                default: { // UCVTF
+                    u32 v = state_.GetVectorLane32(inst.rn, l);
+                    float f = static_cast<float>(v); res = 0; std::memcpy(&res, &f, 4);
+                    break;
+                }
+                }
+                state_.SetVectorLane32(inst.rd, l, res);
+            }
+            break;
+        }
+
         case Opcode::FMLA_vec:
         case Opcode::FMLS_vec:
         case Opcode::FABD_vec:
@@ -1291,15 +1325,111 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         case Opcode::LDADD: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn);
             if (inst.is_64bit) {
-                const u64 old_val = memory_->Read64(addr);
-                const u64 add_val = state_.GetX(inst.rs);
-                memory_->Write64(addr, old_val + add_val);
-                state_.SetX(inst.rd, old_val);
+                u8* ptr = memory_->GetPointer(addr);
+                if (ptr && (reinterpret_cast<uintptr_t>(ptr) % 8 == 0)) {
+                    auto* aptr = reinterpret_cast<std::atomic<u64>*>(ptr);
+                    const u64 old_val = aptr->fetch_add(state_.GetX(inst.rs));
+                    state_.SetX(inst.rd, old_val);
+                } else {
+                    const u64 old_val = memory_->Read64(addr);
+                    memory_->Write64(addr, old_val + state_.GetX(inst.rs));
+                    state_.SetX(inst.rd, old_val);
+                }
             } else {
-                const u32 old_val = memory_->Read32(addr);
-                const u32 add_val = state_.GetW(inst.rs);
-                memory_->Write32(addr, old_val + add_val);
-                state_.SetW(inst.rd, old_val);
+                u8* ptr = memory_->GetPointer(addr);
+                if (ptr && (reinterpret_cast<uintptr_t>(ptr) % 4 == 0)) {
+                    auto* aptr = reinterpret_cast<std::atomic<u32>*>(ptr);
+                    const u32 old_val = aptr->fetch_add(state_.GetW(inst.rs));
+                    state_.SetW(inst.rd, old_val);
+                } else {
+                    const u32 old_val = memory_->Read32(addr);
+                    memory_->Write32(addr, old_val + state_.GetW(inst.rs));
+                    state_.SetW(inst.rd, old_val);
+                }
+            }
+            break;
+        }
+
+        case Opcode::LDCLR: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn);
+            if (inst.is_64bit) {
+                u8* ptr = memory_->GetPointer(addr);
+                if (ptr && (reinterpret_cast<uintptr_t>(ptr) % 8 == 0)) {
+                    auto* aptr = reinterpret_cast<std::atomic<u64>*>(ptr);
+                    const u64 old_val = aptr->fetch_and(~state_.GetX(inst.rs));
+                    state_.SetX(inst.rd, old_val);
+                } else {
+                    const u64 old_val = memory_->Read64(addr);
+                    memory_->Write64(addr, old_val & ~state_.GetX(inst.rs));
+                    state_.SetX(inst.rd, old_val);
+                }
+            } else {
+                u8* ptr = memory_->GetPointer(addr);
+                if (ptr && (reinterpret_cast<uintptr_t>(ptr) % 4 == 0)) {
+                    auto* aptr = reinterpret_cast<std::atomic<u32>*>(ptr);
+                    const u32 old_val = aptr->fetch_and(~state_.GetW(inst.rs));
+                    state_.SetW(inst.rd, old_val);
+                } else {
+                    const u32 old_val = memory_->Read32(addr);
+                    memory_->Write32(addr, old_val & ~state_.GetW(inst.rs));
+                    state_.SetW(inst.rd, old_val);
+                }
+            }
+            break;
+        }
+
+        case Opcode::LDSET: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn);
+            if (inst.is_64bit) {
+                u8* ptr = memory_->GetPointer(addr);
+                if (ptr && (reinterpret_cast<uintptr_t>(ptr) % 8 == 0)) {
+                    auto* aptr = reinterpret_cast<std::atomic<u64>*>(ptr);
+                    const u64 old_val = aptr->fetch_or(state_.GetX(inst.rs));
+                    state_.SetX(inst.rd, old_val);
+                } else {
+                    const u64 old_val = memory_->Read64(addr);
+                    memory_->Write64(addr, old_val | state_.GetX(inst.rs));
+                    state_.SetX(inst.rd, old_val);
+                }
+            } else {
+                u8* ptr = memory_->GetPointer(addr);
+                if (ptr && (reinterpret_cast<uintptr_t>(ptr) % 4 == 0)) {
+                    auto* aptr = reinterpret_cast<std::atomic<u32>*>(ptr);
+                    const u32 old_val = aptr->fetch_or(state_.GetW(inst.rs));
+                    state_.SetW(inst.rd, old_val);
+                } else {
+                    const u32 old_val = memory_->Read32(addr);
+                    memory_->Write32(addr, old_val | state_.GetW(inst.rs));
+                    state_.SetW(inst.rd, old_val);
+                }
+            }
+            break;
+        }
+
+        case Opcode::LDEOR: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn);
+            if (inst.is_64bit) {
+                u8* ptr = memory_->GetPointer(addr);
+                if (ptr && (reinterpret_cast<uintptr_t>(ptr) % 8 == 0)) {
+                    auto* aptr = reinterpret_cast<std::atomic<u64>*>(ptr);
+                    const u64 old_val = aptr->fetch_xor(state_.GetX(inst.rs));
+                    state_.SetX(inst.rd, old_val);
+                } else {
+                    const u64 old_val = memory_->Read64(addr);
+                    memory_->Write64(addr, old_val ^ state_.GetX(inst.rs));
+                    state_.SetX(inst.rd, old_val);
+                }
+            } else {
+                u8* ptr = memory_->GetPointer(addr);
+                if (ptr && (reinterpret_cast<uintptr_t>(ptr) % 4 == 0)) {
+                    auto* aptr = reinterpret_cast<std::atomic<u32>*>(ptr);
+                    const u32 old_val = aptr->fetch_xor(state_.GetW(inst.rs));
+                    state_.SetW(inst.rd, old_val);
+                } else {
+                    const u32 old_val = memory_->Read32(addr);
+                    memory_->Write32(addr, old_val ^ state_.GetW(inst.rs));
+                    state_.SetW(inst.rd, old_val);
+                }
             }
             break;
         }
@@ -1307,33 +1437,80 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         case Opcode::CAS: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn);
             if (inst.is_64bit) {
-                const u64 cur = memory_->Read64(addr);
-                const u64 cmp = state_.GetX(inst.rs);
-                if (cur == cmp) {
-                    memory_->Write64(addr, state_.GetX(inst.rd));
+                u8* ptr = memory_->GetPointer(addr);
+                if (ptr && (reinterpret_cast<uintptr_t>(ptr) % 8 == 0)) {
+                    auto* aptr = reinterpret_cast<std::atomic<u64>*>(ptr);
+                    u64 expected = state_.GetX(inst.rs);
+                    const u64 desired = state_.GetX(inst.rd);
+                    aptr->compare_exchange_strong(expected, desired);
+                    state_.SetX(inst.rs, expected);
+                } else {
+                    const u64 cur = memory_->Read64(addr);
+                    const u64 cmp = state_.GetX(inst.rs);
+                    if (cur == cmp) {
+                        memory_->Write64(addr, state_.GetX(inst.rd));
+                    }
+                    state_.SetX(inst.rs, cur);
                 }
-                state_.SetX(inst.rs, cur);
             } else {
-                const u32 cur = memory_->Read32(addr);
-                const u32 cmp = state_.GetW(inst.rs);
-                if (cur == cmp) {
-                    memory_->Write32(addr, state_.GetW(inst.rd));
+                u8* ptr = memory_->GetPointer(addr);
+                if (ptr && (reinterpret_cast<uintptr_t>(ptr) % 4 == 0)) {
+                    auto* aptr = reinterpret_cast<std::atomic<u32>*>(ptr);
+                    u32 expected = state_.GetW(inst.rs);
+                    const u32 desired = state_.GetW(inst.rd);
+                    aptr->compare_exchange_strong(expected, desired);
+                    state_.SetW(inst.rs, expected);
+                } else {
+                    const u32 cur = memory_->Read32(addr);
+                    const u32 cmp = state_.GetW(inst.rs);
+                    if (cur == cmp) {
+                        memory_->Write32(addr, state_.GetW(inst.rd));
+                    }
+                    state_.SetW(inst.rs, cur);
                 }
-                state_.SetW(inst.rs, cur);
             }
+            break;
+        }
+
+        case Opcode::CASP: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn);
+            const u64 cur_lo = memory_->Read64(addr);
+            const u64 cur_hi = memory_->Read64(addr + 8);
+            const u64 cmp_lo = state_.GetX(inst.rs);
+            const u64 cmp_hi = state_.GetX(inst.rs + 1);
+            if (cur_lo == cmp_lo && cur_hi == cmp_hi) {
+                memory_->Write64(addr, state_.GetX(inst.rd));
+                memory_->Write64(addr + 8, state_.GetX(inst.rd + 1));
+            }
+            state_.SetX(inst.rs, cur_lo);
+            state_.SetX(inst.rs + 1, cur_hi);
             break;
         }
 
         case Opcode::SWP: {
             const vaddr_t addr = state_.GetRegOrSP(inst.rn);
             if (inst.is_64bit) {
-                const u64 cur = memory_->Read64(addr);
-                memory_->Write64(addr, state_.GetX(inst.rs));
-                state_.SetX(inst.rd, cur);
+                u8* ptr = memory_->GetPointer(addr);
+                if (ptr && (reinterpret_cast<uintptr_t>(ptr) % 8 == 0)) {
+                    auto* aptr = reinterpret_cast<std::atomic<u64>*>(ptr);
+                    const u64 old_val = aptr->exchange(state_.GetX(inst.rs));
+                    state_.SetX(inst.rd, old_val);
+                } else {
+                    const u64 cur = memory_->Read64(addr);
+                    memory_->Write64(addr, state_.GetX(inst.rs));
+                    state_.SetX(inst.rd, cur);
+                }
             } else {
-                const u32 cur = memory_->Read32(addr);
-                memory_->Write32(addr, state_.GetW(inst.rs));
-                state_.SetW(inst.rd, cur);
+                u8* ptr = memory_->GetPointer(addr);
+                if (ptr && (reinterpret_cast<uintptr_t>(ptr) % 4 == 0)) {
+                    auto* aptr = reinterpret_cast<std::atomic<u32>*>(ptr);
+                    const u32 old_val = aptr->exchange(state_.GetW(inst.rs));
+                    state_.SetW(inst.rd, old_val);
+                } else {
+                    const u32 cur = memory_->Read32(addr);
+                    memory_->Write32(addr, state_.GetW(inst.rs));
+                    state_.SetW(inst.rd, cur);
+                }
             }
             break;
         }
@@ -1343,6 +1520,18 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             state_.exclusive_addr = 0;
             break;
         }
+
+        case Opcode::ISB:
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+            break;
+
+        case Opcode::DSB:
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+            break;
+
+        case Opcode::DMB:
+            std::atomic_thread_fence(std::memory_order_acq_rel);
+            break;
 
         case Opcode::SVC: {
             state_.pc = next_pc;
@@ -1373,6 +1562,15 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
                 case 0x5F02: // CNTVCT_EL0 (virtual counter)
                     val = ++state_.cntpct_el0;
                     break;
+                case 0x5DA0: // FPCR (Floating-point Control Register)
+                    val = state_.fpcr;
+                    break;
+                case 0x5DA1: // FPSR (Floating-point Status Register)
+                    val = state_.fpsr;
+                    break;
+                case 0x5D40: // NZCV (Condition Flags)
+                    val = state_.pstate.Pack();
+                    break;
                 default:
                     val = 0;
                     break;
@@ -1397,6 +1595,15 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
                 case 0x5F01: // CNTPCT_EL0
                 case 0x5F02: // CNTVCT_EL0
                     state_.cntpct_el0 = val;
+                    break;
+                case 0x5DA0: // FPCR
+                    state_.SetFPCR(static_cast<u32>(val));
+                    break;
+                case 0x5DA1: // FPSR
+                    state_.SetFPSR(static_cast<u32>(val));
+                    break;
+                case 0x5D40: // NZCV
+                    state_.pstate.Unpack(static_cast<u32>(val));
                     break;
                 default:
                     break;

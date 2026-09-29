@@ -168,14 +168,29 @@ enum class Opcode : u16 {
     FDIV_vec,   // 11111 type=00 u=1
     FMAX_vec,   // 11110 type=00
     FMIN_vec,   // 11110 type=10
+    // Vector int<->float conversions (type=10/00, bit21=1 — every game's
+    // world-coords→pixels and normalized-color→bytes path)
+    FCVTZS_vec, // 10111 type=10 u=0 (float → signed int32)
+    FCVTZU_vec, // 10111 type=10 u=1 (float → unsigned int32)
+    SCVTF_vec,  // 11011 type=00 u=0 (signed int32 → float)
+    UCVTF_vec,  // 11011 type=00 u=1 (unsigned int32 → float)
 
     // Exclusive & Atomic Memory Operations (ARMv8.0/ARMv8.1-A LSE)
     LDXR,
     STXR,
     LDADD,
+    LDCLR,
+    LDSET,
+    LDEOR,
     CAS,
+    CASP,
     SWP,
-    CLREX
+    CLREX,
+
+    // Barriers & Synchronization
+    ISB,
+    DSB,
+    DMB
 };
 
 enum class AddressingMode : u8 {

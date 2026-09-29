@@ -109,6 +109,10 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::FDIV_vec: return "FDIV (vector)";
         case Opcode::FMAX_vec: return "FMAX (vector)";
         case Opcode::FMIN_vec: return "FMIN (vector)";
+        case Opcode::FCVTZS_vec: return "FCVTZS (vector)";
+        case Opcode::FCVTZU_vec: return "FCVTZU (vector)";
+        case Opcode::SCVTF_vec: return "SCVTF (vector)";
+        case Opcode::UCVTF_vec: return "UCVTF (vector)";
         case Opcode::DUP_gen: return "DUP (gen)";
         case Opcode::DUP_elem: return "DUP (elem)";
         case Opcode::INS_gen: return "INS (gen)";
@@ -147,9 +151,18 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::LDXR: return "LDXR";
         case Opcode::STXR: return "STXR";
         case Opcode::LDADD: return "LDADD";
+        case Opcode::LDCLR: return "LDCLR";
+        case Opcode::LDSET: return "LDSET";
+        case Opcode::LDEOR: return "LDEOR";
         case Opcode::CAS: return "CAS";
+        case Opcode::CASP: return "CASP";
         case Opcode::SWP: return "SWP";
         case Opcode::CLREX: return "CLREX";
+
+        // Barriers
+        case Opcode::ISB: return "ISB";
+        case Opcode::DSB: return "DSB";
+        case Opcode::DMB: return "DMB";
         default: return "UNDEFINED";
     }
 }
@@ -291,6 +304,23 @@ DecodedInstruction Decoder::DecodeBranches(u32 raw) noexcept {
         inst.opcode = Opcode::MSR;
         inst.rn = static_cast<u8>(ExtractBits(raw, 0, 5));
         inst.imm = ExtractBits(raw, 5, 15);
+        return inst;
+    }
+
+    // Barriers: ISB, DSB, DMB
+    // ISB: 1101 0101 0000 0011 0011 CRm:4 110 11111 (0xD5033FDF)
+    if ((raw & 0xFFFFF0FF) == 0xD50330DF) {
+        inst.opcode = Opcode::ISB;
+        return inst;
+    }
+    // DSB: 1101 0101 0000 0011 0011 CRm:4 100 11111 (0xD503309F)
+    if ((raw & 0xFFFFF0FF) == 0xD503309F) {
+        inst.opcode = Opcode::DSB;
+        return inst;
+    }
+    // DMB: 1101 0101 0000 0011 0011 CRm:4 101 11111 (0xD50330BF)
+    if ((raw & 0xFFFFF0FF) == 0xD50330BF) {
+        inst.opcode = Opcode::DMB;
         return inst;
     }
 
@@ -489,7 +519,7 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
     }
 
     // Atomic memory operations (ARMv8.1-A LSE)
-    // LDADD: [size:2] 111 0 00 [A:1] [R:1] 1 [Rs:5] 000 [opc:3] [Rn:5] [Rt:5]
+    // [size:2] 111 0 00 [A:1] [R:1] 1 [Rs:5] 000 [opc:3] [Rn:5] [Rt:5]
     if ((raw & 0x3B200C00) == 0x38200000) {
         const u32 opc = ExtractBits(raw, 12, 3);
         inst.is_64bit = (size == 0b11);
@@ -497,8 +527,17 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
         if (opc == 0b000) {
             inst.opcode = Opcode::LDADD;
             return inst;
+        } else if (opc == 0b001) {
+            inst.opcode = Opcode::LDCLR;
+            return inst;
         } else if (opc == 0b010) {
             inst.opcode = Opcode::SWP;
+            return inst;
+        } else if (opc == 0b011) {
+            inst.opcode = Opcode::LDSET;
+            return inst;
+        } else if (opc == 0b100) {
+            inst.opcode = Opcode::LDEOR;
             return inst;
         }
     }
@@ -733,14 +772,20 @@ DecodedInstruction Decoder::DecodeDataProcSimdFp(u32 raw) noexcept {
             // FADD/FSUB (vector) share u==0 and opcode 0b11010 and are told apart by
             // bit 23 (FADD=0, FSUB=1). FMUL (vector) uses opcode 0b11011 (u==1).
             if (opcode == 0b11010) {
-                // Ground truth: FADD type=00, FSUB type=10, FABD type=10 u=1.
-                const u32 ftype = ExtractBits(raw, 22, 2);
-                if (ftype == 0b00) { inst.opcode = Opcode::FADD_vec; return inst; }
-                if (ftype == 0b10 && u) { inst.opcode = Opcode::FABD_vec; return inst; }
-                inst.opcode = Opcode::FSUB_vec; // type=10 u=0
+                // Ground truth: FADD bit23=0, FSUB bit23=1 (u=0), FABD bit23=1 (u=1)
+                const bool is_sub = ExtractBit(raw, 23);
+                if (!is_sub) {
+                    inst.opcode = Opcode::FADD_vec;
+                } else if (u) {
+                    inst.opcode = Opcode::FABD_vec;
+                } else {
+                    inst.opcode = Opcode::FSUB_vec;
+                }
                 return inst;
             }
-            if (opcode == 0b11011) { inst.opcode = Opcode::FMUL_vec; return inst; }
+            // FMUL: opcode 11011 u=1 type=00 (ground truth fmul=0x6E21DC00). u=0
+            // type=00 in this opcode is SCVTF (conversion group, checked below).
+            if (opcode == 0b11011 && u && ExtractBits(raw, 22, 2) == 0b00) { inst.opcode = Opcode::FMUL_vec; return inst; }
             // FP multiply-accumulate: FMLA(11001 type00) FMLS(11001 type10)
             if (opcode == 0b11001) {
                 inst.opcode = ExtractBit(raw, 23) ? Opcode::FMLS_vec : Opcode::FMLA_vec;
@@ -752,6 +797,16 @@ DecodedInstruction Decoder::DecodeDataProcSimdFp(u32 raw) noexcept {
                 return inst;
             }
             if (opcode == 0b11111 && u) { inst.opcode = Opcode::FDIV_vec; return inst; }
+            // Vector conversions (bit21=1, opcode+u): FCVTZS/FCVTZU(10111 type10)
+            // SCVTF/UCVTF(11011 type00). Ground truth: fcvtzs=0x4EA1B800 scvtf=0x4E21D800.
+            if (opcode == 0b10111 && ExtractBit(raw, 23)) {
+                inst.opcode = u ? Opcode::FCVTZU_vec : Opcode::FCVTZS_vec;
+                return inst;
+            }
+            if (opcode == 0b11011 && ExtractBits(raw, 22, 2) == 0b00) {
+                inst.opcode = u ? Opcode::UCVTF_vec : Opcode::SCVTF_vec;
+                return inst;
+            }
             // NOTE: AND/ORR/EOR/NOT (vector) all share opcode 0b00011; the 29 "u" bit
             // selects EOR/NOT (u=1) vs AND/ORR (u=0), and bit 23 selects the
             // "not"/second operand: AND(u0,b23=0), ORR(u0,b23=1), EOR(u1,b23=0),

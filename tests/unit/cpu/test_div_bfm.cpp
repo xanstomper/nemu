@@ -237,6 +237,33 @@ int main() {
             std::cout << "  fdiv v0.4s,v0.4s,v1.4s OK\n";
         }
 
+        // FCVTZS: float lanes → signed int32 lanes (1.9→1, -2.7→-2)
+        {
+            CpuState s{}; s.pc = kCode;
+            lanes(0, s, {1.9f, -2.7f, 100.5f, 0.25f});
+            mem.Write32(kCode, 0x4EA1B800u);     // fcvtzs v0.4s, v0.4s
+            Interpreter interp(s, mem);
+            interp.Step();
+            if (static_cast<s32>(s.GetVectorLane32(0, 0)) != 1 ||
+                static_cast<s32>(s.GetVectorLane32(0, 1)) != -2) {
+                std::cerr << "FAIL fcvtzs\n";
+                std::exit(1);
+            }
+            std::cout << "  fcvtzs v0.4s,v0.4s OK\n";
+        }
+
+        // SCVTF: signed int lanes → float lanes (-3→-3.0f)
+        {
+            CpuState s{}; s.pc = kCode;
+            s.SetVectorLane32(0, 0, static_cast<u32>(-3));
+            mem.Write32(kCode, 0x4E21D800u);     // scvtf v0.4s, v0.4s
+            Interpreter interp(s, mem);
+            interp.Step();
+            u32 u = s.GetVectorLane32(0, 0); float f; std::memcpy(&f, &u, 4);
+            if (f != -3.0f) { std::cerr << "FAIL scvtf: got " << f << " (0x" << std::hex << u << std::dec << ")\n"; std::exit(1); }
+            std::cout << "  scvtf v0.4s,v0.4s OK\n";
+        }
+
         // FMAX / FMIN
         {
             CpuState s{}; s.pc = kCode;
