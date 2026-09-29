@@ -1,6 +1,8 @@
 add_library(Nemu.Debug STATIC
     crash_dump.hpp
     crash_dump.cpp
+    breadcrumbs.hpp
+    breadcrumbs.cpp
 )
 
 target_include_directories(Nemu.Debug PUBLIC

@@ -96,6 +96,8 @@ void Nvdec::Execute() {
         ++stats_.decode_attempts;
         // VP9: compose via the ported composer, then feed the shared ffmpeg
         // decode path (same packet surface as H264).
+        const u64 pic_info_addr = regs_.reg_array[NvdecRegisters::kRegPictureInfoOffset] >> 8;
+        if (pic_info_addr == 0 || memory_ == nullptr) break;
         decoder::VP9 composer(memory_);
         composer.ComposeFrame(regs_);
 #ifdef NEMU_FFMPEG

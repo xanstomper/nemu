@@ -789,7 +789,12 @@ void VP9::ComposeFrame(const NvdecRegisters& state) {
               frame_.begin() + static_cast<std::ptrdiff_t>(uncompressed_header.size() + compressed_header.size()));
 }
 
-void VpxRangeEncoder::Write(bool bit) { Write(bit ? 1 : 0, half_probability_); }
+void VpxRangeEncoder::Write(bool bit) {
+    // Encode a bit at half probability (128). Explicit bool disambiguates from
+    // the Write(s32 value, s32 value_size) overload, which would otherwise win
+    // via int->s32 and treat half_probability_ as a VALUE_SIZE (infinite loop).
+    Write(bit, half_probability_);
+}
 
 void VpxRangeEncoder::Write(bool bit, s32 probability) {
     u32 local_range = range_;

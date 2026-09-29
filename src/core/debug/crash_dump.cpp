@@ -25,11 +25,41 @@ std::string CrashReporter::FormatCrashReport(const CrashContext& context) {
 
     ss << "Fault Reason:    " << context.error_message << "\n";
     ss << "Fault Address:   0x" << std::hex << std::setw(16) << std::setfill('0') << context.fault_address << std::dec << "\n";
+    if (context.title_id != 0) {
+        ss << "Title ID:        0x" << std::hex << std::setw(16) << std::setfill('0') << context.title_id << std::dec << "\n";
+    }
     ss << "Process:         PID " << context.process_id << " (" << context.process_name << ")\n";
     ss << "Thread:          TID " << context.thread_id << "\n";
     ss << "-----------------------------------------------------------------\n";
     ss << "GUEST CPU REGISTERS:\n";
     ss << context.cpu_state.DumpState();
+
+    // Breadcrumb trail (spec §23): exactly where execution stopped.
+    if (context.trail_count > 0) {
+        ss << "-----------------------------------------------------------------\n";
+        ss << "LAST ACTIVITY (oldest -> newest):\n";
+        for (size_t i = 0; i < context.trail_count; ++i) {
+            const auto& bc = context.trail[i];
+            switch (bc.kind) {
+            case Breadcrumb::Kind::Svc:
+                ss << "  [" << i << "] SVC 0x" << std::hex << bc.a << std::dec
+                   << " @ pc=0x" << std::hex << bc.pc << std::dec << "\n";
+                break;
+            case Breadcrumb::Kind::Ipc:
+                ss << "  [" << i << "] IPC " << bc.detail << " cmd=0x" << std::hex << bc.a
+                   << std::dec << " @ pc=0x" << std::hex << bc.pc << std::dec << "\n";
+                break;
+            case Breadcrumb::Kind::Gpu:
+                ss << "  [" << i << "] GPU method 0x" << std::hex << bc.a << " = 0x" << bc.b << std::dec << "\n";
+                break;
+            case Breadcrumb::Kind::Shader:
+                ss << "  [" << i << "] SHADER hash 0x" << std::hex
+                   << ((static_cast<u64>(bc.b) << 32) | bc.a) << std::dec << "\n";
+                break;
+            default: break;
+            }
+        }
+    }
     ss << "=================================================================\n";
 
     return ss.str();

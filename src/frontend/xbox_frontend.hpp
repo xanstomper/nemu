@@ -268,6 +268,7 @@ public:
         menu_bar_.active_category = category_index;
         menu_bar_.active_item = 0;
     }
+    [[nodiscard]] bool IsAvatarFocused() const noexcept { return home_in_avatar_; }
     [[nodiscard]] bool IsAmiiboScannerOpen() const noexcept { return amiibo_scanner_.is_open; }
     void ToggleAmiiboScanner() noexcept { amiibo_scanner_.is_open = !amiibo_scanner_.is_open; }
     void LoadAmiiboNfc(const std::string& tag_name);
@@ -412,6 +413,7 @@ private:
     // bottom shortcut bar)
     void DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu, bool draw_shortcuts);
     void DrawSwitchHomeView(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
+    void DrawProceduralSwitchCover(core::gpu::IGpuBackend* gpu, std::vector<core::gpu::RasterVertex>& out, const GameEntry& g, float cx, float cy, float tw, float th, bool is_focus);
 
     // Nintendo Switch Sub-views & Modals
     void DrawSwitchSettings(std::vector<core::gpu::RasterVertex>& out, core::gpu::IGpuBackend* gpu);
@@ -522,6 +524,7 @@ private:
     // Switch HOME view state: tile row vs. bottom shortcut bar
     bool home_in_shortcuts_{false};
     size_t home_shortcut_index_{0};
+    bool home_in_avatar_{false};
     bool home_in_filter_bar_{false};
     size_t filter_bar_item_{0};
     float home_scroll_offset_{0.0f}; // animated tile-row offset (tiles)

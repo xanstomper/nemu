@@ -58,6 +58,34 @@ int main() {
     NEMU_TEST_ASSERT(file_found, "Crash dump file found on disk");
     std::cout << "  - Crash dump file writing: PASSED" << std::endl;
 
+    // Test 3: Breadcrumb trail (spec §23) — last SVC/IPC/GPU/shader activity
+    // lands in the crash report so a per-title failure pinpoints where it died.
+    {
+        debug::BreadcrumbTrail::PushSvc(0x21, 0x0071001000ULL);       // SendSyncRequest
+        debug::BreadcrumbTrail::PushIpc("fsp-srv", 0x0806, 0x0071001040ULL);
+        debug::BreadcrumbTrail::PushGpu(0x00B2, 0xC0FFEE);            // method=arg
+        debug::BreadcrumbTrail::PushShader(0xDEADBEEF12345678ULL);
+
+        debug::CrashContext ctx2;
+        ctx2.process_id = 102;
+        ctx2.process_name = "BreadcrumbGame";
+        ctx2.thread_id = 7;
+        ctx2.fault_address = 0x00B0000000ULL;
+        ctx2.error_message = "GPU fault";
+        ctx2.title_id = 0x01007EF00011E000ULL;
+        ctx2.trail_count = debug::BreadcrumbTrail::Snapshot(ctx2.trail.data(), ctx2.trail.size());
+        NEMU_TEST_ASSERT(ctx2.trail_count >= 4, "snapshot captured pushed entries");
+
+        const std::string rep2 = debug::CrashReporter::FormatCrashReport(ctx2);
+        NEMU_TEST_ASSERT(rep2.find("LAST ACTIVITY") != std::string::npos, "trail header in report");
+        NEMU_TEST_ASSERT(rep2.find("SVC 0x21") != std::string::npos, "svc breadcrumb rendered");
+        NEMU_TEST_ASSERT(rep2.find("fsp-srv") != std::string::npos, "ipc service breadcrumb rendered");
+        NEMU_TEST_ASSERT(rep2.find("GPU method 0xb2") != std::string::npos, "gpu breadcrumb rendered");
+        NEMU_TEST_ASSERT(rep2.find("deadbeef12345678") != std::string::npos, "shader hash rendered");
+        NEMU_TEST_ASSERT(rep2.find("01007ef00011e000") != std::string::npos, "title id rendered");
+        std::cout << "  - Breadcrumb trail in crash reports: PASSED" << std::endl;
+    }
+
     // Clean up
     std::filesystem::remove_all(crash_dir, ec);
 

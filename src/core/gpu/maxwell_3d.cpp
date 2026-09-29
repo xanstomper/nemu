@@ -1,4 +1,5 @@
 #include "maxwell_3d.hpp"
+#include "core/debug/breadcrumbs.hpp"
 #include "compute_qmd.hpp"
 #include "texture/astc_decoder.hpp"
 #include "texture/texture_types.hpp"
@@ -306,6 +307,7 @@ void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
             break;
 
         default:
+            debug::BreadcrumbTrail::PushGpu(method, argument);
             NEMU_LOG_DEBUG("GPU", "Maxwell3D method 0x{:04X} = 0x{:08X}", method, argument);
             break;
     }

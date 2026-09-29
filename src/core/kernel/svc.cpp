@@ -1,4 +1,5 @@
 #include "svc.hpp"
+#include "core/debug/breadcrumbs.hpp"
 #include "k_event.hpp"
 #include "k_shared_memory.hpp"
 #include "k_mutex.hpp"
@@ -20,6 +21,7 @@ void SvcDispatcher::InitializeIpc(std::shared_ptr<ipc::ServiceRegistry> registry
 }
 
 void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& thread, u32 svc_id) {
+    debug::BreadcrumbTrail::PushSvc(svc_id, state.pc);
     NEMU_LOG_DEBUG("SVC", "Dispatching SVC 0x{:02X} for TID {}", svc_id, thread.GetTid());
 
     switch (svc_id) {

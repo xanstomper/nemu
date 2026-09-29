@@ -1,4 +1,5 @@
 #include "ipc_dispatcher.hpp"
+#include "core/debug/breadcrumbs.hpp"
 #include "ipc_service.hpp"
 #include "ipc_types.hpp"
 #include "service_registry.hpp"
@@ -66,6 +67,7 @@ u32 DispatchSyncRequest(KProcess& process, KThread& thread, KClientSession& sess
                         result = target->HandleRequest(ctx, request, writer, x_id);
                     }
                 } else {
+                    debug::BreadcrumbTrail::PushIpc(service->GetName(), x_id, 0);
                     result = service->HandleRequest(ctx, request, writer, x_id);
                 }
                 break;

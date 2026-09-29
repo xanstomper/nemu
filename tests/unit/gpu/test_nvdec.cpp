@@ -232,8 +232,8 @@ int main() {
     std::puts("========================================");
     TestNvdecRegisterWrite();
     TestNvdecDeviceIoctls();
-    TestNvdecSubmitRouting();
-    TestH264Composer();
+    std::fprintf(stderr,"[PROBE] entering SubmitRouting\n"); TestNvdecSubmitRouting();
+    std::fprintf(stderr,"[PROBE] entering H264Composer\n"); TestH264Composer();
     std::puts("ALL NVDEC TESTS PASSED SUCCESSFULLY!");
     return 0;
 }
