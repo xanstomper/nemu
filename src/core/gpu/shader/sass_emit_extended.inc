@@ -270,11 +270,21 @@ case MaxwellOpcode::I2I:
     break;
 
 // ---- Interpolation + attribute plumbing -------------------------------------
-case MaxwellOpcode::IPA:
-    // IPA: interpolate attribute across the primitive. In the software model
-    // attributes arrive pre-interpolated; emit a passthrough.
-    NEMU_EMIT_WR(NEMU_SRC(0) + " // IPA (pre-interpolated)")
+case MaxwellOpcode::IPA: {
+    // IPA: result = slope * fp(attribute) + base — the primitive interpolation.
+    // The NEMU value model resolves the attribute sample per-pixel upstream; the
+    // emitter's job is the operand transforms (negate/absolute, decoded per
+    // ShaderOperand) + optional saturation (IPA.SAT).
+    std::string v = NEMU_SRC(0);
+    if (!inst.sources.empty()) {
+        if (inst.sources[0].absolute) v = "abs(" + v + ")";
+        if (inst.sources[0].negate)   v = "(-" + v + ")";
+    }
+    // IPA.SAT (clamp to [0,1]) needs the sat bit decoded — tracked for the
+    // decoder, not guessed here (spec: no blind bits).
+    NEMU_EMIT_WR(v)
     break;
+}
 case MaxwellOpcode::P2R:
 case MaxwellOpcode::R2P:
 case MaxwellOpcode::R2B:
