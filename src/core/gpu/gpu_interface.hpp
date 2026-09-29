@@ -214,6 +214,12 @@ public:
     };
     virtual bool PresentNVDECFrame(const NVDECFrame& /*frame*/) { return false; }
 
+    // UE4 shader-storm mitigation (per-title ue4_shader_storm tweak): warm the
+    // pipeline cache ahead of draws (pre-compiles the passthrough + common
+    // translated PSOs) so thousands of lazy compiles don't stall the first
+    // frames on console. Returns the post-warmup cached-pipeline count.
+    virtual u32 WarmupShaderStorm() { return 0; }
+
     // --- Vertex / material binding and host-observable frame capture ---
     // These are the software-rasterizable entry points. Backends that only
     // forward to a hardware API (e.g. D3D12) may leave them as no-ops; the

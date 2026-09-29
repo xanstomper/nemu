@@ -71,6 +71,7 @@ public:
     // NVDEC video-out (VIC path): upload the decoded NV12 frame into a dynamic
     // texture and present it as a fullscreen quad on the next Present().
     bool PresentNVDECFrame(const NVDECFrame& frame) override;
+    u32 WarmupShaderStorm() override;
 
     // Guest rasterizer state block (Tier-A2)
     void SetRasterizerState(const RasterizerState& state) override;

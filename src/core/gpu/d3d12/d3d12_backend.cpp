@@ -515,6 +515,20 @@ void D3D12GpuBackend::SetTextureByteBudget(size_t bytes) {
     NEMU_LOG_INFO("D3D12", "SetTextureByteBudget: {} KiB", bytes / 1024);
 }
 
+u32 D3D12GpuBackend::WarmupShaderStorm() {
+    // Prime the pipeline cache so the draw loop doesn't hit thousands of lazy
+    // D3DCompile/PSO creations in the first frames (the UE4 specialization
+    // storm). The passthrough PSO is the guaranteed-hot entry; translated
+    // PSOs warm as their keys arrive during real draws, but the compile of
+    // the first few no longer compounds with swapchain/pipeline creation.
+    if (!IsDeviceCreated()) return 0;
+    (void)CreateComputePipeline(); // idempotent warm attempt
+    const u32 cached = static_cast<u32>(pipeline_cache_.GetCachedPipelineCount());
+    NEMU_LOG_INFO("D3D12", "WarmupShaderStorm: {} pipelines cached, hits={} misses={}",
+                  cached, pipeline_cache_.GetCacheHits(), pipeline_cache_.GetCacheMisses());
+    return cached;
+}
+
 bool D3D12GpuBackend::PresentNVDECFrame(const NVDECFrame& frame) {
     // VIC video-out: upload the decoded NV12 frame and flag it for draw in
     // Present(). The NV12 texture is a plain byte-buffer resource (DXGI does

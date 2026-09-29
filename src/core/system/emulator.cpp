@@ -299,8 +299,10 @@ bool Emulator::LoadTitle(const std::string& path) {
             if (compat->tweaks.nvdec_required) {
                 NEMU_LOG_INFO("System", "NVDEC hardware video decode engine engaged for '{}'", compat->name);
             }
-            if (compat->tweaks.ue4_shader_storm) {
+            if (compat->tweaks.ue4_shader_storm && gpu_backend_) {
                 NEMU_LOG_INFO("System", "Unreal Engine 4 shader storm mitigation active for '{}'", compat->name);
+                const u32 warmed = gpu_backend_->WarmupShaderStorm();
+                NEMU_LOG_INFO("System", "Shader-storm warmup: {} pipelines primed", warmed);
             }
         }
     }
