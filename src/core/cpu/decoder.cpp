@@ -124,6 +124,14 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::SSHR_vec: return "SSHR (vector)";
         case Opcode::USHR_vec: return "USHR (vector)";
         case Opcode::SHL_vec: return "SHL (vector)";
+        case Opcode::LD1_vec: return "LD1 (multiple)";
+        case Opcode::ST1_vec: return "ST1 (multiple)";
+        case Opcode::LD2_vec: return "LD2 (multiple)";
+        case Opcode::ST2_vec: return "ST2 (multiple)";
+        case Opcode::LD3_vec: return "LD3 (multiple)";
+        case Opcode::ST3_vec: return "ST3 (multiple)";
+        case Opcode::LD4_vec: return "LD4 (multiple)";
+        case Opcode::ST4_vec: return "ST4 (multiple)";
 
         // Atomics
         case Opcode::LDXR: return "LDXR";
@@ -491,6 +499,41 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
         inst.is_64bit = (size == 0b11);
         inst.rs = static_cast<u8>(ExtractBits(raw, 16, 5));
         inst.opcode = Opcode::CAS;
+        return inst;
+    }
+
+    // SIMD structure Load/Store Multiple (LD1/ST1/LD2/ST2/LD3/ST3/LD4/ST4)
+    // Layout (ground truth via GNU as):
+    //   ld1 {v0.16b},[x1]  = 4C407020   ld1 {v0.4s-v3.4s},[x1] = 4C402820
+    //   ld2 {v0.4s,v1.4s}  = 4C408820   ld3 {v0.4s-v2.4s}      = 4C404820
+    //   ld4 {v0.4s-v3.4s}  = 4C400820   ld1 post: [x1],#16     = 4CDF7820
+    //   group(29:23) = 0011000 (no-offset) / 0011001 (post-index);
+    //   L=bit22; opc4=bits[15:12]: 0111=1reg, 0010=4reg-contig,
+    //   0100=3reg, 1000=2reg, 0000=4reg-interleaved;
+    //   size=bits[11:10] (element), Q=bit30 doubles regs (8b/16b).
+    if ((raw & 0x7E000000) == 0x0C000000) {
+        const bool is_load = ExtractBit(raw, 22);
+        const u32 opc4 = ExtractBits(raw, 12, 4);
+        u32 nregs = 0;
+        switch (opc4) {
+        case 0b0111: nregs = 1; break;          // LD1/ST1 single reg
+        case 0b0010: nregs = 4; break;          // LD1/ST1 four regs (contiguous)
+        case 0b0100: nregs = 3; break;          // LD3/ST3
+        case 0b1000: nregs = 2; break;          // LD2/ST2
+        case 0b0000: nregs = 4; break;          // LD4/ST4 (interleaved)
+        default: return inst;                   // single-lane forms unsupported
+        }
+        inst.vec_size = static_cast<u8>(nregs);          // reuse: # of registers
+        inst.vec_index = static_cast<u8>(ExtractBit(raw, 30)); // Q: 8B(0)/16B(1) per reg
+        inst.bit_pos = static_cast<u8>(ExtractBits(raw, 10, 2)); // size field → esz log2
+        switch (nregs) {
+        case 1:  inst.opcode = is_load ? Opcode::LD1_vec : Opcode::ST1_vec; break;
+        case 2:  inst.opcode = is_load ? Opcode::LD2_vec : Opcode::ST2_vec; break;
+        case 3:  inst.opcode = is_load ? Opcode::LD3_vec : Opcode::ST3_vec; break;
+        default: inst.opcode = is_load ? Opcode::LD4_vec : Opcode::ST4_vec; break;
+        }
+        inst.addr_mode = ExtractBits(raw, 23, 1) == 1 ? AddressingMode::PostIndexed
+                                                      : AddressingMode::UnsignedOffset;
         return inst;
     }
 

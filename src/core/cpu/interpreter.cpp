@@ -537,6 +537,79 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             break;
         }
 
+        // ---- SIMD structure load/store multiple (LD1/ST1/LD2/ST2/LD3/ST3/LD4/ST4)
+        // Contiguous forms move whole registers byte-exact; interleaved (LD2-4)
+        // de-interleave nregs-wide element groups across registers.
+        // Decode contract: vec_size=nregs, vec_index=Q (8B/16B per reg).
+        case Opcode::LD1_vec:
+        case Opcode::ST1_vec:
+        case Opcode::LD2_vec:
+        case Opcode::ST2_vec:
+        case Opcode::LD3_vec:
+        case Opcode::ST3_vec:
+        case Opcode::LD4_vec:
+        case Opcode::ST4_vec: {
+            const u32 nregs = inst.vec_size;
+            const u32 reg_bytes = (inst.vec_index != 0) ? 16u : 8u; // Q
+            const u32 total = nregs * reg_bytes;
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn);
+            const bool is_load = inst.opcode == Opcode::LD1_vec || inst.opcode == Opcode::LD2_vec
+                              || inst.opcode == Opcode::LD3_vec || inst.opcode == Opcode::LD4_vec;
+            const bool contiguous = nregs == 1
+                || inst.opcode == Opcode::LD1_vec || inst.opcode == Opcode::ST1_vec;
+            const bool post = inst.addr_mode == AddressingMode::PostIndexed;
+
+            if (contiguous) {
+                // Whole-register contiguous move (LD1/ST1) — byte exact.
+                if (is_load) {
+                    for (u32 r = 0; r < nregs; ++r) {
+                        u128 val{};
+                        memory_->ReadBlock(addr + r * reg_bytes, &val, reg_bytes);
+                        state_.SetVector(static_cast<u32>((inst.rd + r) & 31), val);
+                    }
+                } else {
+                    for (u32 r = 0; r < nregs; ++r) {
+                        const u128 val = state_.GetVector(static_cast<u32>((inst.rd + r) & 31));
+                        memory_->WriteBlock(addr + r * reg_bytes, &val, reg_bytes);
+                    }
+                }
+            } else {
+                // Interleaved (LD2/ST2/LD3/LD4): elements alternate across the n
+                // registers. esz = 1 << size_field (decoded into bit_pos).
+                // Ground truth: LD4 {v0.4s}: reg_bytes=16, esz=4 → 4 elems/reg;
+                //               LD2 {v0.8h}: reg_bytes=16, esz=2 → 8 elems/reg.
+                const u32 esz = 1u << inst.bit_pos;
+                const u32 elems = reg_bytes / esz;
+                std::vector<u8> buf(total);
+                if (is_load) {
+                    memory_->ReadBlock(addr, buf.data(), buf.size());
+                    for (u32 e = 0; e < elems; ++e) {
+                        for (u32 r = 0; r < nregs; ++r) {
+                            const size_t off = (e * nregs + r) * esz;
+                            u128 val = state_.GetVector(static_cast<u32>((inst.rd + r) & 31));
+                            std::memcpy(reinterpret_cast<u8*>(&val), buf.data() + off, esz);
+                            state_.SetVector(static_cast<u32>((inst.rd + r) & 31), val);
+                        }
+                    }
+                } else {
+                    for (u32 e = 0; e < elems; ++e) {
+                        for (u32 r = 0; r < nregs; ++r) {
+                            const u128 val = state_.GetVector(static_cast<u32>((inst.rd + r) & 31));
+                            const size_t off = (e * nregs + r) * esz;
+                            std::memcpy(buf.data() + off, &val, esz);
+                        }
+                    }
+                    memory_->WriteBlock(addr, buf.data(), buf.size());
+                }
+            }
+
+            if (post) {
+                const vaddr_t base = state_.GetRegOrSP(inst.rn) + total;
+                state_.SetX(inst.rn, base);
+            }
+            break;
+        }
+
         case Opcode::LDP: {
             const vaddr_t base = state_.GetRegOrSP(inst.rn) + inst.imm;
             if (inst.is_64bit) {

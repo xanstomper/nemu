@@ -1008,7 +1008,8 @@ void TestServiceBootstrap() {
     // The bootstrap registers the boot-critical services.
     for (const char* name : {"sm:", "set:u", "set:sys", "time:u", "acc:u0",
                              "appletOE", "hid", "fsp-srv", "nvdrv:a", "vi:u",
-                             "pl:u", "pl:s", "nifm:u", "bsd:u"}) {
+                             "pl:u", "pl:s", "nifm:u", "bsd:u", "lm", "lm:m",
+                             "mii:u", "nfp:user", "bcat:u", "ldr:ro", "spl"}) {
         NEMU_IPC_ASSERT(reg->IsRegistered(name) && "bootstrap registers core service");
     }
 

@@ -22,6 +22,12 @@
 #include "pctl_service.hpp"
 #include "prepo_service.hpp"
 #include "friend_service.hpp"
+#include "lm_service.hpp"
+#include "mii_service.hpp"
+#include "nfp_service.hpp"
+#include "bcat_service.hpp"
+#include "ldr_ro_service.hpp"
+#include "spl_service.hpp"
 #include "core/network/ldn_network.hpp"
 
 #include "core/gpu/gpu_interface.hpp"
@@ -116,6 +122,32 @@ std::shared_ptr<ServiceRegistry> CreateDefaultServiceRegistry(
     // Friend / Social services (friend:u, friend:v)
     registry->Register(std::make_shared<FriendService>("friend:u"));
     registry->Register(std::make_shared<FriendService>("friend:v"));
+
+    // Log Manager services (lm, lm:m) - ported from Eden
+    registry->Register(std::make_shared<LmService>("lm"));
+    registry->Register(std::make_shared<LmService>("lm:m"));
+
+    // Mii Database services (mii:u, mii:e) - ported from Eden
+    registry->Register(std::make_shared<MiiService>("mii:u"));
+    registry->Register(std::make_shared<MiiService>("mii:e"));
+
+    // Near Field Proximity / Amiibo services (nfp:user, nfc:user) - ported from Eden
+    registry->Register(std::make_shared<NfpService>("nfp:user"));
+    registry->Register(std::make_shared<NfpService>("nfc:user"));
+
+    // Boxcat Delivery services (bcat:u, bcat:a, bcat:m) - ported from Eden
+    registry->Register(std::make_shared<BcatService>("bcat:u"));
+    registry->Register(std::make_shared<BcatService>("bcat:a"));
+    registry->Register(std::make_shared<BcatService>("bcat:m"));
+
+    // Relocatable Object Loader service (ldr:ro) - ported from Eden
+    registry->Register(std::make_shared<LdrRoService>("ldr:ro"));
+
+    // Security Cryptography services (spl, spl:ssl, spl:mig, spl:fs) - ported from Eden
+    registry->Register(std::make_shared<SplService>("spl"));
+    registry->Register(std::make_shared<SplService>("spl:ssl"));
+    registry->Register(std::make_shared<SplService>("spl:mig"));
+    registry->Register(std::make_shared<SplService>("spl:fs"));
 
     // File system service.
     if (vfs) {

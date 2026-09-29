@@ -146,6 +146,18 @@ enum class Opcode : u16 {
     // Narrowing
     XTN_vec,    // 3-diff group, opcode 10010 u=0
 
+    // SIMD structure load/store (multiple structures — how games move bulk
+    // vertex/texture/audio data). Post-index shares the opcode; addr_mode
+    // distinguishes.
+    LD1_vec,    // contiguous 1-4 regs
+    ST1_vec,
+    LD2_vec,    // interleaved 2 regs
+    ST2_vec,
+    LD3_vec,    // interleaved 3 regs
+    ST3_vec,
+    LD4_vec,    // interleaved 4 regs
+    ST4_vec,
+
     // Exclusive & Atomic Memory Operations (ARMv8.0/ARMv8.1-A LSE)
     LDXR,
     STXR,

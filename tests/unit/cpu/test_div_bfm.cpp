@@ -18,6 +18,8 @@
 #include "core/types.hpp"
 #include <iostream>
 #include <cstdlib>
+#include <array>
+#include <cstring>
 #include <memory>
 #include <cstring>
 
@@ -27,6 +29,7 @@ using namespace nemu::core::cpu;
 
 namespace {
 constexpr vaddr_t kCode = 0x0072000000ULL;
+constexpr vaddr_t kData = 0x0072100000ULL;
 
 void RunCase(const char* name, u32 encoding, u64 wn, u64 wm, u64 expected) {
     memory::VirtualMemory mem;
@@ -74,6 +77,91 @@ int main() {
             static_cast<u64>(-5 * 7));
     RunCase("umull x1,w2,w3 (0xFFFF*2)", 0x9BA37C41u, 0xFFFFu, 2, 0xFFFFu * 2u);
     RunCase("udiv x1,x2,x3 (1000/7)", 0x9AC30841u, 1000, 3, 333);
+
+    // ---- SIMD structure load/store multiple (ground-truth encodings) ----
+    // ld1 {v0.16b},[x1] = 4C407020 ; st1 = 4C007020
+    // ld1 {v0.4s-v3.4s},[x1] = 4C402820 ; ld4 {v0.4s-v3.4s},[x1] = 4C400820
+    // post-index ld1 {v0.16b},[x1],#16 = 4CDF7020
+    {
+        memory::VirtualMemory mem;
+        if (!mem.Map(kCode, 0x1000, memory::MemoryPermission::All) ||
+            !mem.Map(kData, 0x2000, memory::MemoryPermission::All)) {
+            std::cerr << "FAIL: maps\n";
+            std::exit(1);
+        }
+
+        // LD1 single 16B register.
+        {
+            const std::array<u8, 16> pattern{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
+            mem.WriteBlock(kData, pattern.data(), pattern.size());
+            CpuState s{};
+            s.pc = kCode; s.SetX(1, kData);
+            mem.Write32(kCode, 0x4C407020u); // ld1 {v0.16b}, [x1]
+            Interpreter interp(s, mem);
+            interp.Step();
+            u128 got = s.GetVector(0);
+            if (std::memcmp(&got, pattern.data(), 16) != 0) {
+                std::cerr << "FAIL ld1 {v0.16b}: register mismatch\n";
+                std::exit(1);
+            }
+            std::cout << "  ld1 {v0.16b},[x1] -> 16B byte-exact OK\n";
+        }
+
+        // ST1 four contiguous regs + post-index writeback (#64).
+        {
+            CpuState s{};
+            s.pc = kCode; s.SetX(1, kData);
+            for (u32 r = 0; r < 4; ++r) {
+                u128 v{};
+                v.low = 0x11111111ULL * (r + 1);
+                v.high = 0x22222222ULL * (r + 1);
+                s.SetVector(r, v);
+            }
+            mem.Write32(kCode, 0x4C1F2821u); // st1 {v0.4s-v3.4s}, [x1], #64
+            // (bit22=0 store, opc4=0010, post=0011001 with Rm=011111)
+            Interpreter interp(s, mem);
+            interp.Step();
+            std::array<u8, 64> back{};
+            mem.ReadBlock(kData, back.data(), back.size());
+            u128 v0 = s.GetVector(0);
+            if (std::memcmp(back.data(), &v0, 16) != 0 ||
+                s.GetX(1) != kData + 64) {
+                std::cerr << "FAIL st1 4reg post-index\n";
+                std::exit(1);
+            }
+            std::cout << "  st1 {v0.4s-v3.4s},[x1],#64 -> byte-exact + writeback OK\n";
+        }
+
+        // LD4 interleaved (4 regs, esz=4): pattern encodes reg/lane positions.
+        {
+            std::array<u8, 64> src{};
+            for (u32 i = 0; i < 16; ++i) {
+                const u32 e = i / 4, r = i % 4;   // element groups of 4 regs
+                src[i * 4 + 0] = static_cast<u8>(r);
+                src[i * 4 + 1] = static_cast<u8>(e);
+            }
+            mem.WriteBlock(kData, src.data(), src.size());
+            CpuState s{};
+            s.pc = kCode; s.SetX(1, kData);
+            mem.Write32(kCode, 0x4C400820u); // ld4 {v0.4s-v3.4s}, [x1]
+            Interpreter interp(s, mem);
+            interp.Step();
+            // v0 lane e should be {r=0, e} in its low bytes
+            u128 v0 = s.GetVector(0);
+            u8 v0b[16]; std::memcpy(v0b, &v0, 16);
+            if (v0b[0] != 0 || v0b[4] != 0 || v0b[8] != 0 || v0b[12] != 0) {
+                std::cerr << "FAIL ld4 de-interleave (r=0 lanes)\n";
+                std::exit(1);
+            }
+            u128 v3 = s.GetVector(3);
+            u8 v3b[16]; std::memcpy(v3b, &v3, 16);
+            if (v3b[0] != 3 || v3b[4] != 3) {
+                std::cerr << "FAIL ld4 de-interleave (r=3 lanes)\n";
+                std::exit(1);
+            }
+            std::cout << "  ld4 {v0.4s-v3.4s},[x1] -> interleaved de-swizzle OK\n";
+        }
+    }
 
     std::cout << "ALL DIV/BFM/MULL DIFFERENTIAL TESTS PASSED\n";
     return 0;
