@@ -112,19 +112,49 @@ bool XboxControllerDriver::IsConnected(size_t player_index) const noexcept {
 }
 
 bool XboxControllerDriver::SetVibration(size_t player_index, float low_freq_motor, float high_freq_motor) {
+    return SetVibration4(player_index, low_freq_motor, high_freq_motor, 0.0f, 0.0f);
+}
+
+bool XboxControllerDriver::SetVibration4(size_t player_index, float left_motor, float right_motor,
+                                         float left_trigger, float right_trigger) {
+    if (player_index >= MAX_XBOX_CONTROLLERS) {
+        return false;
+    }
+
+    last_vibration_[player_index] = {
+        std::clamp(left_motor, 0.0f, 1.0f),
+        std::clamp(right_motor, 0.0f, 1.0f),
+        std::clamp(left_trigger, 0.0f, 1.0f),
+        std::clamp(right_trigger, 0.0f, 1.0f)
+    };
+
 #ifdef _WIN32
-    if (xinput_available_ && fn_set_state_ && player_index < MAX_XBOX_CONTROLLERS) {
+    if (xinput_available_ && fn_set_state_) {
         auto set_state = reinterpret_cast<PFN_XInputSetState>(fn_set_state_);
         XINPUT_VIBRATION vib{};
-        vib.wLeftMotorSpeed = static_cast<WORD>(std::clamp(low_freq_motor, 0.0f, 1.0f) * 65535.0f);
-        vib.wRightMotorSpeed = static_cast<WORD>(std::clamp(high_freq_motor, 0.0f, 1.0f) * 65535.0f);
+        vib.wLeftMotorSpeed = static_cast<WORD>(last_vibration_[player_index][0] * 65535.0f);
+        vib.wRightMotorSpeed = static_cast<WORD>(last_vibration_[player_index][1] * 65535.0f);
         return set_state(static_cast<DWORD>(player_index), &vib) == ERROR_SUCCESS;
     }
 #endif
-    (void)player_index;
-    (void)low_freq_motor;
-    (void)high_freq_motor;
-    return false;
+    return true; // Virtual / headless success
+}
+
+std::optional<XboxGamepadState> XboxControllerDriver::GetSnapshot(size_t player_index) const noexcept {
+    if (player_index >= MAX_XBOX_CONTROLLERS) {
+        return std::nullopt;
+    }
+    if (has_injected_[player_index]) {
+        return injected_state_[player_index];
+    }
+    return std::nullopt;
+}
+
+std::array<float, 4> XboxControllerDriver::GetLastVibration(size_t player_index) const noexcept {
+    if (player_index >= MAX_XBOX_CONTROLLERS) {
+        return {0.0f, 0.0f, 0.0f, 0.0f};
+    }
+    return last_vibration_[player_index];
 }
 
 void XboxControllerDriver::InjectState(size_t player_index, const XboxGamepadState& state) {

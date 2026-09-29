@@ -562,3 +562,21 @@ target_link_libraries(test_title_compat PRIVATE
 
 target_compile_features(test_title_compat PRIVATE cxx_std_20)
 add_test(NAME test_title_compat COMMAND test_title_compat)
+
+# Xbox Series S/X Platform Adaptation Test (Memory Governor, Storage Broker, Thread Affinity, Lifecycle)
+add_executable(test_xbox_platform
+    platform/test_xbox_platform.cpp
+)
+
+target_include_directories(test_xbox_platform PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_xbox_platform PRIVATE
+    Nemu.Platform
+    Nemu.Hid
+)
+
+target_compile_features(test_xbox_platform PRIVATE cxx_std_20)
+add_test(NAME test_xbox_platform COMMAND test_xbox_platform)
+
