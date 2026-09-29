@@ -157,6 +157,8 @@ enum class Opcode : u16 {
     ST3_vec,
     LD4_vec,    // interleaved 4 regs
     ST4_vec,
+    LD1x4_vec,  // contiguous 4 regs (opc4=0010; distinct from interleaved LD4)
+    ST1x4_vec,
 
     // Exclusive & Atomic Memory Operations (ARMv8.0/ARMv8.1-A LSE)
     LDXR,

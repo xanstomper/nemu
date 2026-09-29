@@ -117,8 +117,7 @@ int main() {
                 v.high = 0x22222222ULL * (r + 1);
                 s.SetVector(r, v);
             }
-            mem.Write32(kCode, 0x4C1F2821u); // st1 {v0.4s-v3.4s}, [x1], #64
-            // (bit22=0 store, opc4=0010, post=0011001 with Rm=011111)
+            mem.Write32(kCode, 0x4C1F2820u); // st1 {v0.4s-v3.4s}, [x1], #64 (Rt=0, Rn=1)
             Interpreter interp(s, mem);
             interp.Step();
             std::array<u8, 64> back{};

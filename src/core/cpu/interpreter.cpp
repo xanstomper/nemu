@@ -543,6 +543,8 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         // Decode contract: vec_size=nregs, vec_index=Q (8B/16B per reg).
         case Opcode::LD1_vec:
         case Opcode::ST1_vec:
+        case Opcode::LD1x4_vec:
+        case Opcode::ST1x4_vec:
         case Opcode::LD2_vec:
         case Opcode::ST2_vec:
         case Opcode::LD3_vec:
@@ -553,10 +555,12 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             const u32 reg_bytes = (inst.vec_index != 0) ? 16u : 8u; // Q
             const u32 total = nregs * reg_bytes;
             const vaddr_t addr = state_.GetRegOrSP(inst.rn);
-            const bool is_load = inst.opcode == Opcode::LD1_vec || inst.opcode == Opcode::LD2_vec
-                              || inst.opcode == Opcode::LD3_vec || inst.opcode == Opcode::LD4_vec;
-            const bool contiguous = nregs == 1
-                || inst.opcode == Opcode::LD1_vec || inst.opcode == Opcode::ST1_vec;
+            const bool is_load = inst.opcode == Opcode::LD1_vec || inst.opcode == Opcode::LD1x4_vec
+                              || inst.opcode == Opcode::LD2_vec || inst.opcode == Opcode::LD3_vec
+                              || inst.opcode == Opcode::LD4_vec;
+            const bool contiguous = inst.opcode == Opcode::LD1_vec
+                || inst.opcode == Opcode::ST1_vec
+                || inst.opcode == Opcode::LD1x4_vec || inst.opcode == Opcode::ST1x4_vec;
             const bool post = inst.addr_mode == AddressingMode::PostIndexed;
 
             if (contiguous) {
@@ -587,7 +591,8 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
                         for (u32 r = 0; r < nregs; ++r) {
                             const size_t off = (e * nregs + r) * esz;
                             u128 val = state_.GetVector(static_cast<u32>((inst.rd + r) & 31));
-                            std::memcpy(reinterpret_cast<u8*>(&val), buf.data() + off, esz);
+                            // element e lives at byte offset e*esz within the register
+                            std::memcpy(reinterpret_cast<u8*>(&val) + e * esz, buf.data() + off, esz);
                             state_.SetVector(static_cast<u32>((inst.rd + r) & 31), val);
                         }
                     }
@@ -596,7 +601,8 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
                         for (u32 r = 0; r < nregs; ++r) {
                             const u128 val = state_.GetVector(static_cast<u32>((inst.rd + r) & 31));
                             const size_t off = (e * nregs + r) * esz;
-                            std::memcpy(buf.data() + off, &val, esz);
+                            std::memcpy(buf.data() + off,
+                                        reinterpret_cast<const u8*>(&val) + e * esz, esz);
                         }
                     }
                     memory_->WriteBlock(addr, buf.data(), buf.size());

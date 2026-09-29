@@ -132,6 +132,8 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::ST3_vec: return "ST3 (multiple)";
         case Opcode::LD4_vec: return "LD4 (multiple)";
         case Opcode::ST4_vec: return "ST4 (multiple)";
+        case Opcode::LD1x4_vec: return "LD1 x4 (contiguous)";
+        case Opcode::ST1x4_vec: return "ST1 x4 (contiguous)";
 
         // Atomics
         case Opcode::LDXR: return "LDXR";
@@ -511,9 +513,10 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
     //   L=bit22; opc4=bits[15:12]: 0111=1reg, 0010=4reg-contig,
     //   0100=3reg, 1000=2reg, 0000=4reg-interleaved;
     //   size=bits[11:10] (element), Q=bit30 doubles regs (8b/16b).
-    if ((raw & 0x7E000000) == 0x0C000000) {
+    if ((raw & 0x3F000000) == 0x0C000000) {
         const bool is_load = ExtractBit(raw, 22);
         const u32 opc4 = ExtractBits(raw, 12, 4);
+        const bool post = ExtractBits(raw, 16, 5) == 31; // Rm=xzr → immediate post-index
         u32 nregs = 0;
         switch (opc4) {
         case 0b0111: nregs = 1; break;          // LD1/ST1 single reg
@@ -526,14 +529,18 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
         inst.vec_size = static_cast<u8>(nregs);          // reuse: # of registers
         inst.vec_index = static_cast<u8>(ExtractBit(raw, 30)); // Q: 8B(0)/16B(1) per reg
         inst.bit_pos = static_cast<u8>(ExtractBits(raw, 10, 2)); // size field → esz log2
-        switch (nregs) {
-        case 1:  inst.opcode = is_load ? Opcode::LD1_vec : Opcode::ST1_vec; break;
-        case 2:  inst.opcode = is_load ? Opcode::LD2_vec : Opcode::ST2_vec; break;
-        case 3:  inst.opcode = is_load ? Opcode::LD3_vec : Opcode::ST3_vec; break;
-        default: inst.opcode = is_load ? Opcode::LD4_vec : Opcode::ST4_vec; break;
+        // opc4 0010 (contiguous 4-reg LD1/ST1) vs 0000 (interleaved LD4/ST4):
+        if (opc4 == 0b0010) {
+            inst.opcode = is_load ? Opcode::LD1x4_vec : Opcode::ST1x4_vec;
+        } else {
+            switch (nregs) {
+            case 1:  inst.opcode = is_load ? Opcode::LD1_vec : Opcode::ST1_vec; break;
+            case 2:  inst.opcode = is_load ? Opcode::LD2_vec : Opcode::ST2_vec; break;
+            case 3:  inst.opcode = is_load ? Opcode::LD3_vec : Opcode::ST3_vec; break;
+            default: inst.opcode = is_load ? Opcode::LD4_vec : Opcode::ST4_vec; break;
+            }
         }
-        inst.addr_mode = ExtractBits(raw, 23, 1) == 1 ? AddressingMode::PostIndexed
-                                                      : AddressingMode::UnsignedOffset;
+        inst.addr_mode = post ? AddressingMode::PostIndexed : AddressingMode::UnsignedOffset;
         return inst;
     }
 
