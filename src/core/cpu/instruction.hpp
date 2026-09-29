@@ -91,6 +91,8 @@ enum class Opcode : u16 {
     FSUB_scalar,
     FMUL_scalar,
     FDIV_scalar,
+    FMADD_scalar,   // FP multiply-add (3-source) — the workhorse of game math
+    FMSUB_scalar,
     FMAX_scalar,
     FMIN_scalar,
     FNEG_scalar,

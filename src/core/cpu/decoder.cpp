@@ -73,6 +73,8 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::FADD_scalar: return "FADD (scalar)";
         case Opcode::FSUB_scalar: return "FSUB (scalar)";
         case Opcode::FMUL_scalar: return "FMUL (scalar)";
+        case Opcode::FMADD_scalar: return "FMADD";
+        case Opcode::FMSUB_scalar: return "FMSUB";
         case Opcode::FDIV_scalar: return "FDIV (scalar)";
         case Opcode::FMAX_scalar: return "FMAX (scalar)";
         case Opcode::FMIN_scalar: return "FMIN (scalar)";
@@ -422,7 +424,6 @@ DecodedInstruction Decoder::DecodeDataProcReg(u32 raw) noexcept {
     }
 
     // SMULL / UMULL — 32-bit multiply-long (dest is 64-bit, sf=1):
-    //   MulLong group: (raw & 0x7F200000) == 0x1B200000, sf set separately;
     //   U selector = bit 23 (0=SMULL, 1=UMULL), bit 21 is fixed 1.
     //   Ground truth: smull x1,w2,w3 = 0x9B237C41 (mask->0x1B200000, bit23=0),
     //                 umull x1,w2,w3 = 0x9BA37C41 (mask->0x1B200000, bit23=1).
@@ -629,6 +630,16 @@ DecodedInstruction Decoder::DecodeDataProcSimdFp(u32 raw) noexcept {
 
     const u32 b28_24 = ExtractBits(raw, 24, 5);
     const bool is_vector = (ExtractBit(raw, 28) == 0);
+
+    // FP multiply-add 3-source: bits(28:24)=11111, M(21)=0, o0(15): 0=FMADD 1=FMSUB.
+    // Ground truth: fmadd s0,s1,s2,s3 = 0x1F020C20; fmsub = 0x1F028C20.
+    // Fields: Rm(20:16), o0(15), Ra(14:10), Rn(9:5), Rd(4:0), type(22).
+    if (!is_vector && b28_24 == 0b11111 && ExtractBit(raw, 21) == 0) {
+        inst.opcode = ExtractBit(raw, 15) ? Opcode::FMSUB_scalar : Opcode::FMADD_scalar;
+        inst.is_fp_double = (ExtractBits(raw, 22, 2) == 1);
+        inst.ra = static_cast<u8>(ExtractBits(raw, 10, 5));
+        return inst;
+    }
 
     if (!is_vector && b28_24 == 0b11110) {
         // Scalar Floating-Point

@@ -78,6 +78,40 @@ int main() {
     RunCase("umull x1,w2,w3 (0xFFFF*2)", 0x9BA37C41u, 0xFFFFu, 2, 0xFFFFu * 2u);
     RunCase("udiv x1,x2,x3 (1000/7)", 0x9AC30841u, 1000, 3, 333);
 
+    // ---- FP multiply-add (ground truth: fmadd s0,s1,s2,s3 = 0x1F020C20,
+    //      fmsub = 0x1F028C20; Rd=0, Rn=1, Rm=2, Ra=3) ----
+    {
+        CpuState s{};
+        s.pc = kCode;
+        s.SetSingle(1, 2.0f);   // Rn
+        s.SetSingle(2, 3.0f);   // Rm
+        s.SetSingle(3, 10.0f);  // Ra
+        memory::VirtualMemory mem;
+        if (!mem.Map(kCode, 0x1000, memory::MemoryPermission::All)) {
+            std::cerr << "FAIL: code map\n";
+            std::exit(1);
+        }
+        mem.Write32(kCode, 0x1F020C20u);
+        Interpreter interp(s, mem);
+        interp.Step();
+        if (s.GetSingle(0) != 16.0f) {
+            std::cerr << "FAIL fmadd s: got " << s.GetSingle(0) << " want 16\n";
+            std::exit(1);
+        }
+        std::cout << "  fmadd s0,s1,s2,s3 (2*3+10=16) OK\n";
+
+        // FMSUB single: Ra - (Rn*Rm) = 10 - 6 = +4
+        s.pc = kCode; // Step() advances PC; re-stage for the second instruction
+        s.SetSingle(1, 2.0f); s.SetSingle(2, 3.0f); s.SetSingle(3, 10.0f);
+        mem.Write32(kCode, 0x1F028C20u);
+        interp.Step();
+        if (s.GetSingle(0) != 4.0f) {
+            std::cerr << "FAIL fmsub s: got " << s.GetSingle(0) << " want 4\n";
+            std::exit(1);
+        }
+        std::cout << "  fmsub s0,s1,s2,s3 (10-2*3=4) OK\n";
+    }
+
     // ---- SIMD structure load/store multiple (ground-truth encodings) ----
     // ld1 {v0.16b},[x1] = 4C407020 ; st1 = 4C007020
     // ld1 {v0.4s-v3.4s},[x1] = 4C402820 ; ld4 {v0.4s-v3.4s},[x1] = 4C400820

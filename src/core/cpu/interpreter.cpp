@@ -667,6 +667,27 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             break;
         }
 
+        case Opcode::FMADD_scalar:
+        case Opcode::FMSUB_scalar: {
+            // Rd = Ra ± (Rn * Rm) — fused; the workhorse of game matrix/physics math.
+            if (inst.is_fp_double) {
+                const double prod = state_.GetDouble(inst.rn) * state_.GetDouble(inst.rm);
+                if (inst.opcode == Opcode::FMADD_scalar) {
+                    state_.SetDouble(inst.rd, state_.GetDouble(inst.ra) + prod);
+                } else {
+                    state_.SetDouble(inst.rd, state_.GetDouble(inst.ra) - prod);
+                }
+            } else {
+                const float prod = state_.GetSingle(inst.rn) * state_.GetSingle(inst.rm);
+                if (inst.opcode == Opcode::FMADD_scalar) {
+                    state_.SetSingle(inst.rd, state_.GetSingle(inst.ra) + prod);
+                } else {
+                    state_.SetSingle(inst.rd, state_.GetSingle(inst.ra) - prod);
+                }
+            }
+            break;
+        }
+
         case Opcode::FSUB_scalar: {
             if (inst.is_fp_double) {
                 state_.SetDouble(inst.rd, state_.GetDouble(inst.rn) - state_.GetDouble(inst.rm));
