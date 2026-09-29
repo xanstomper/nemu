@@ -1,5 +1,6 @@
 #include "core/filesystem/vfs.hpp"
 #include <iostream>
+#include <fstream>
 #include <vector>
 #include <string>
 #include <filesystem>
@@ -49,6 +50,19 @@ int main() {
 
         auto res3 = vfs.ResolvePath("sdmc:/..\\..\\windows\\system32");
         NEMU_TEST_ASSERT(!res3.has_value(), "Backslash traversal must be blocked");
+
+        // Case-insensitive resolution (Switch FS is case-insensitive; host may not be)
+        const auto case_dir = temp_base / "romfs_case" / "Data";
+        std::filesystem::create_directories(case_dir);
+        {
+            std::ofstream f(case_dir / "Title.txt");
+            f << "hello";
+        }
+        VirtualFileSystem vfs_ci;
+        NEMU_TEST_ASSERT(vfs_ci.Mount("romfs:/", temp_base / "romfs_case", true), "Mount romfs_case");
+        auto ci = vfs_ci.ResolvePath("romfs:/data/title.txt");
+        NEMU_TEST_ASSERT(ci.has_value(), "Case-insensitive fallback resolves wrong-case path");
+        NEMU_TEST_ASSERT(vfs_ci.FileExists("romfs:/data/title.txt"), "FileExists via case fallback");
 
         auto res4 = vfs.ResolvePath("invalid_path_without_colon");
         NEMU_TEST_ASSERT(!res4.has_value(), "Invalid format must be blocked");

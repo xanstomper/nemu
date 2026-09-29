@@ -167,6 +167,36 @@ std::optional<std::filesystem::path> VirtualFileSystem::ResolvePath(std::string_
         ++target_it;
     }
 
+    // Switch filesystems are case-insensitive; the Linux host isn't. If the exact
+    // case misses, retry per-segment case-insensitive resolution (yuzu behavior).
+    std::error_code exists_ec;
+    if (!std::filesystem::exists(target, exists_ec)) {
+        std::filesystem::path cur = root;
+        bool ok = true;
+        for (const auto& part : *clean_rel) {
+            if (part == "." || part.empty()) continue;
+            std::error_code dir_ec;
+            if (!std::filesystem::is_directory(cur, dir_ec)) { ok = false; break; }
+            std::filesystem::path matched;
+            for (const auto& entry : std::filesystem::directory_iterator(cur, dir_ec)) {
+                const auto name = entry.path().filename().string();
+                if (name.size() == part.string().size() &&
+                    std::equal(name.begin(), name.end(), part.string().begin(),
+                               [](char a, char b) { return std::tolower((unsigned char)a) == std::tolower((unsigned char)b); })) {
+                    matched = entry.path();
+                    break;
+                }
+            }
+            if (matched.empty()) { ok = false; break; }
+            cur = matched;
+            // containment re-check per segment
+            if (cur.string().rfind(root.string(), 0) != 0) { ok = false; break; }
+        }
+        if (ok && std::filesystem::exists(cur, exists_ec)) {
+            return std::filesystem::weakly_canonical(cur, ec);
+        }
+    }
+
     return canonical_target;
 }
 
