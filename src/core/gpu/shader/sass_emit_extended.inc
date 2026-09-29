@@ -107,23 +107,35 @@ case MaxwellOpcode::PSETP:
 case MaxwellOpcode::ISETP:
 case MaxwellOpcode::FSETP: {
     if (inst.dest.type == OperandType::Register && inst.dest.reg_index < 255) {
-        ss << "    p[0] = (" << NEMU_SRC(0) << " < " << NEMU_SRC(1) << "); // "
-           << "SETP (comparison modeled as LT)\n";
+        static const char* kSetOps[] = {"0.0f", "<", "==", "<=", ">", "!=", ">=", "1.0f"};
+        ss << "    p[0] = (" << NEMU_SRC(0) << " " << kSetOps[inst.set_op & 7]
+           << " " << NEMU_SRC(1) << "); // SETP (decoded comparison op)\n";
         ss << "    R[" << inst.dest.reg_index << "] = p[0] ? 1.0f : 0.0f;\n";
     }
     break;
 }
 case MaxwellOpcode::PSET:
 case MaxwellOpcode::ISET:
-case MaxwellOpcode::FSET:
-    NEMU_EMIT_WR("((" + NEMU_SRC(0) + " < " + NEMU_SRC(1) + ") ? 1.0f : 0.0f) // SET as LT")
+case MaxwellOpcode::FSET: {
+    // Real comparison semantics via the decoded set_op (was hardcoded LT).
+    // 0=FALSE 1=LT 2=EQ 3=LE 4=GT 5=NE 6=GE 7=TRUE.
+    static const char* kSetOps[] = {"0.0f /*FALSE*/", "<", "==", "<=", ">", "!=", ">=", "1.0f /*TRUE*/"};
+    const char* op = kSetOps[inst.set_op & 7];
+    NEMU_EMIT_WR(std::string("(") + NEMU_SRC(0) + " " + op + " " + NEMU_SRC(1) + ") ? 1.0f : 0.0f")
     break;
+}
 case MaxwellOpcode::CSET:
     NEMU_EMIT_WR("(p[0] ? " + NEMU_SRC(0) + " : " + NEMU_SRC(1) + ")")
     break;
-case MaxwellOpcode::CSETP:
-    ss << "    p[0] = p[0]; // CSETP (predicate passthrough)\n";
+case MaxwellOpcode::CSETP: {
+    // CSETP: p = src0 <op> src1 (was a passthrough — predicates now reflect
+    // the real comparison; the emitter's bool ops (AND/OR/XOR) at bits [56:54]
+    // fold p1 into p0 in the PSET family path below).
+    static const char* kSetOps[] = {"0.0f", "<", "==", "<=", ">", "!=", ">=", "1.0f"};
+    const char* op = kSetOps[inst.set_op & 7];
+    ss << "    p[0] = ((" << NEMU_SRC(0) << " " << op << " " << NEMU_SRC(1) << ") ? 1 : 0);\n";
     break;
+}
 
 // ---- Flow control -----------------------------------------------------------
 case MaxwellOpcode::JMP:

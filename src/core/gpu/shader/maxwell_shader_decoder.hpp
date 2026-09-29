@@ -160,6 +160,10 @@ struct DecodedInstruction {
     std::vector<ShaderOperand> sources{};
 
     u64 branch_target{0};
+    // SET/SETP family comparison op (bits [51:49] per switchbrew SASS layout):
+    // 0=FALSE 1=LT 2=EQ 3=LE 4=GT 5=NE 6=GE 7=TRUE. Valid when set_op_valid.
+    u32 set_op{1}; // default LT (previous emitter behavior)
+    bool set_op_valid{false};
     std::string disassembly{};
 };
 

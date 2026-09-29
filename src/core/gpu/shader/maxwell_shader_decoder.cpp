@@ -557,6 +557,21 @@ DecodedInstruction MaxwellShaderDecoder::DecodeInstruction64(u64 raw, u64 offset
     }
 
     inst.disassembly = DisassembleInstruction(inst);
+
+    // SET/SETP family: extract the comparison operator (bits [51:49], switchbrew
+    // FloatSetOp/IntSetOp layout). 0=FALSE 1=LT 2=EQ 3=LE 4=GT 5=NE 6=GE 7=TRUE.
+    switch (inst.opcode) {
+    case MaxwellOpcode::FSET: case MaxwellOpcode::FSETP:
+    case MaxwellOpcode::ISET: case MaxwellOpcode::ISETP:
+    case MaxwellOpcode::PSET: case MaxwellOpcode::PSETP:
+    case MaxwellOpcode::DSET: case MaxwellOpcode::DSETP:
+    case MaxwellOpcode::HSET2: case MaxwellOpcode::HSETP2:
+    case MaxwellOpcode::VSET: case MaxwellOpcode::VSETP:
+        inst.set_op = static_cast<u32>((raw >> 49) & 0x7);
+        inst.set_op_valid = true;
+        break;
+    default: break;
+    }
     return inst;
 }
 #if defined(__GNUC__) && !defined(__clang__)
