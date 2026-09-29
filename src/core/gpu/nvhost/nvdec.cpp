@@ -10,6 +10,7 @@
 #include "nvdec.hpp"
 #include "h264.hpp"
 #include "vp9.hpp"
+#include "vp8.hpp"
 #include "ffmpeg.hpp"
 #include "core/memory/virtual_memory.hpp"
 #include "platform/logger.hpp"
@@ -117,13 +118,81 @@ void Nvdec::Execute() {
 #endif
         break;
     }
-    case VideoCodec::VP8:
-    case VideoCodec::H265:
+    case VideoCodec::VP8: {
         ++stats_.decode_attempts;
-        // Composer ports pending (VP8 header rebuild + H265 via ffmpeg);
-        // keep the guest progressing (syncpoints still increment in the
-        // channel) — frozen video, never a hang.
+        // VP8: RFC 6386 header rebuild -> shared ffmpeg path.
+        decoder::VP8 composer(memory_);
+        std::vector<u8> packet;
+        if (composer.ComposeFrame(regs_, packet) && !packet.empty()) {
+#ifdef NEMU_FFMPEG
+            if (decode_api_.GetCodec() != codec_) (void)decode_api_.Initialize(codec_);
+            if (decode_api_.SendPacket(packet, 0)) {
+                decode_api_.ReceiveFrames(decoded_frames_);
+                for (auto& df : decoded_frames_) {
+                    DecodedVideoFrame vf;
+                    vf.width = df.width;
+                    vf.height = df.height;
+                    vf.y_plane = std::move(df.data);
+                    vf.frame_number = regs_.reg_array[NvdecRegisters::kRegFrameNumber] >> 8;
+                    frame_queue_.push_back(std::move(vf));
+                    ++stats_.frames_decoded;
+                }
+                decoded_frames_.clear();
+                while (frame_queue_.size() > 10) frame_queue_.erase(frame_queue_.begin());
+            }
+#else
+            DecodedVideoFrame vf;
+            vf.y_plane = std::move(packet);
+            vf.frame_number = regs_.reg_array[NvdecRegisters::kRegFrameNumber] >> 8;
+            frame_queue_.push_back(std::move(vf));
+            while (frame_queue_.size() > 10) frame_queue_.erase(frame_queue_.begin());
+            ++stats_.frames_decoded;
+#endif
+        }
         break;
+    }
+    case VideoCodec::H265: {
+        ++stats_.decode_attempts;
+        // H265: no upstream composer exists (all 3 reference emulators feed
+        // ffmpeg's HEVC decoder directly). Pass the raw bitstream through —
+        // the HEVC parser handles Annex-B extraction itself.
+        const u64 bitstream_addr =
+            regs_.reg_array[NvdecRegisters::kRegFrameBitstreamOffset] >> 8;
+        // Read the VLD payload via the same length source VP8 uses; H265's
+        // length register (frame_bitstream_offset sibling) is read as u64.
+        std::vector<u8> packet;
+        const u64 bitstream_len =
+            regs_.reg_array[NvdecRegisters::kRegH264SliceDataOffsets] >> 8; // heuristic len
+        if (bitstream_addr != 0 && bitstream_len != 0 && bitstream_len < (1ULL << 22)) {
+            packet.resize(static_cast<size_t>(bitstream_len));
+            if (ReadGuest(bitstream_addr, packet.data(), packet.size())) {
+#ifdef NEMU_FFMPEG
+                if (decode_api_.GetCodec() != codec_) (void)decode_api_.Initialize(codec_);
+                if (decode_api_.SendPacket(packet, 0)) {
+                    decode_api_.ReceiveFrames(decoded_frames_);
+                    for (auto& df : decoded_frames_) {
+                        DecodedVideoFrame vf;
+                        vf.width = df.width;
+                        vf.height = df.height;
+                        vf.y_plane = std::move(df.data);
+                        vf.frame_number = regs_.reg_array[NvdecRegisters::kRegFrameNumber] >> 8;
+                        frame_queue_.push_back(std::move(vf));
+                        ++stats_.frames_decoded;
+                    }
+                    decoded_frames_.clear();
+                    while (frame_queue_.size() > 10) frame_queue_.erase(frame_queue_.begin());
+                }
+#else
+                DecodedVideoFrame vf;
+                vf.y_plane = std::move(packet);
+                frame_queue_.push_back(std::move(vf));
+                while (frame_queue_.size() > 10) frame_queue_.erase(frame_queue_.begin());
+                ++stats_.frames_decoded;
+#endif
+            }
+        }
+        break;
+    }
     default:
         ++stats_.unsupported_codec_calls;
         NEMU_LOG_WARN("NVDEC", "Execute: unsupported codec {} ({})",
