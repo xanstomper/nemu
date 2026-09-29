@@ -89,3 +89,59 @@ Nemu is designed from the ground up to achieve clean, maintainable, high-perform
 | `test_frontend`| **100%** (Gamepad UI navigation) | **100%** |
 | `test_ipc`     | **100%** (Horizon OS IPC & Services HLE) | **100%** |
 | **Total** | **14 / 14 Suites (100% Passing)** | **14 / 14 Suites (100% Passing)** |
+
+---
+
+## 4. Game Compatibility Machinery (2026-09-28, shipped)
+
+Nemu now carries a data-driven per-title compatibility system, ported from
+the proven upstream approaches (yuzu/citron per-game configs + the Ryujinx
+compatibility database) and adapted to NEMU's architecture:
+
+### 4.1 Title Compat Registry (`src/core/cpu/title_compat.{hpp,cpp}`)
+
+- **685 seeded titles** carrying concrete tweak flags, sourced from real
+  blocker labels in the Ryujinx compatibility database (3,491 titles).
+- Keyed by TitleId (`svcGetInfo` 13); binary-searched compile-time table;
+  unlisted titles take the fast default path.
+- Applied automatically at title load (`emulator.cpp` ->
+  `cpu::ApplyTitleTweaks`); all consumers read the runtime cache.
+
+### 4.2 Live Tweak Matrix (all consumed at runtime)
+
+| Tweak | Titles | Consumer |
+| :--- | :--- | :--- |
+| `nvdec_required` | 406 | NVDEC engine (see 4.3) |
+| `sync_relaxed` | 29 | KAddressArbiter wake bias (all 4 arbiter SVC sites) |
+| `gpu_strict_formats` | 154 | TextureCache exact-format serve guard |
+| `ue4_shader_storm` | 63 | `IGpuBackend::WarmupShaderStorm()` pipeline pre-compile |
+| `is_32bit` | 33 | Requires the A32 JIT layer (future work) |
+
+### 4.3 NVDEC Video Decode (all 4 codecs, end-to-end)
+
+- Engine: Tegra X1 NVDEC register file (0xBC0 layout-asserted), method
+  dispatch, frame queue (cap 10).
+- Device: `/dev/nvhost-nvdec` with all 7 ioctls (citron payload layout).
+- Composers: H264 Annex-B (Ryujinx-derived, bit-exact SPS/PPS), VP8
+  (RFC 6386 header rebuild), VP9 (full range coder + probability
+  machinery), H265 (raw passthrough — matches all 3 reference emulators,
+  which have no H265 composer).
+- Host decode: ffmpeg (libavcodec) behind `NEMU_FFMPEG` (default ON where
+  available; OFF degrades to frozen video without hanging).
+- Presentation: `IGpuBackend::PresentNVDECFrame` -> D3D12 dynamic NV12
+  texture + fullscreen quad.
+
+### 4.4 Patch Manager (`src/core/loader/patch_manager.cpp`)
+
+IPS/IPSwitch/layered-mod extraction over RomFS (citron port), with the
+companion test suite.
+
+### 4.5 Verification Status
+
+- 37/37 unit suites green on Linux (GCC 13, strict flags).
+- MinGW PE32+ cross-build: 0 errors/warnings.
+- E2E boot chain (loader -> kernel -> IPC -> GPU -> save) passes.
+- **Hardware gate**: on-console D3D12 behavior (pixel-exact rasterizer,
+  in-shader NV12->RGB, PSO creation under the console driver) is
+  verified only by `scripts/qa_xbox.sh` on real hardware — the
+  milestone no desktop run can substitute.
