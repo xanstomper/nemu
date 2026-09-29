@@ -150,6 +150,15 @@ public:
     virtual void ClearDepthStencil(float depth, u8 stencil) = 0;
 
     virtual void DrawArrays(PrimitiveTopology topology, u32 first_vertex, u32 vertex_count) = 0;
+    /// Instanced draw (yuzu draw_manager DrawArrayInstanced port): one call for
+    /// N instances instead of N backend submissions. Default loops the scalar
+    /// path so backends opt in incrementally.
+    virtual void DrawArraysInstanced(PrimitiveTopology topology, u32 first_vertex,
+                                     u32 vertex_count, u32 instance_count) {
+        for (u32 i = 0; i < instance_count; ++i) {
+            DrawArrays(topology, first_vertex, vertex_count);
+        }
+    }
     virtual void DrawIndexed(PrimitiveTopology topology, u32 index_count, u32 first_index, u32 base_vertex) = 0;
 
     // --- Tier-A2/A3: rasterizer state + compute dispatch --------------------

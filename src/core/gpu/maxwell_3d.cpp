@@ -459,12 +459,13 @@ void Maxwell3D::ExecuteDrawArrays(u32 argument) {
     if (!bound_guest_verts && vb_entry == 0 && vertex_count >= 3) {
         EmitDebugGeometry();
     }
-    // Instanced draws (Tier-A2): games pass instance count > 1 for vegetation,
-    // particles. The backend loops the draw; batch it into one call when 1.
+    // Instanced draws (yuzu draw_manager port): one backend submission for the
+    // whole instance count instead of N separate draws (vegetation, particles,
+    // foliage — the multi-thousand-draw pattern). Vertex buffers bound above are
+    // instance-invariant; per-instance data flows through the vertex shader's
+    // sv_instance_id, matching how games author instanced geometry.
     const u32 instances = std::max<u32>(1u, regs_.regs[MaxwellMethod::InstanceCount]);
-    for (u32 inst = 0; inst < instances; ++inst) {
-        backend_->DrawArrays(topology, 0, vertex_count);
-    }
+    backend_->DrawArraysInstanced(topology, 0, vertex_count, instances);
 }
 
 void Maxwell3D::ExecuteDrawElements(u32 argument) {

@@ -268,6 +268,23 @@ void NullGpuBackend::RasterizeTriangle(const RasterVertex& va, const RasterVerte
     }
 }
 
+void NullGpuBackend::DrawArraysInstanced(PrimitiveTopology topology, u32 first_vertex,
+                                         u32 vertex_count, u32 instance_count) {
+    // Single-submission semantics: ONE draw_calls entry for the batch
+    // (yuzu "queued once, rasterized N times"), vertices × N submitted.
+    stats_.draw_calls++;
+    stats_.vertices_submitted += vertex_count * instance_count;
+    // Per-instance rasterization reuses the scalar path; compensate its stat
+    // increments so draw_calls reports the batch, not the instances.
+    for (u32 i = 0; i < instance_count; ++i) {
+        const u64 before = stats_.draw_calls;
+        const u64 verts_before = stats_.vertices_submitted;
+        DrawArrays(topology, first_vertex, vertex_count);
+        stats_.draw_calls = before;               // batch counts once
+        stats_.vertices_submitted = verts_before; // already added above
+    }
+}
+
 void NullGpuBackend::DrawArrays(PrimitiveTopology topology, u32 first_vertex, u32 vertex_count) {
     stats_.draw_calls++;
     stats_.vertices_submitted += vertex_count;

@@ -450,6 +450,17 @@ target_compile_features(test_engine_upload PRIVATE cxx_std_20)
 target_link_libraries(test_engine_upload PRIVATE Nemu.Core)
 add_test(NAME test_engine_upload COMMAND test_engine_upload)
 
+add_executable(test_draw_instanced
+    gpu/test_draw_instanced.cpp
+)
+
+target_include_directories(test_draw_instanced PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+target_compile_features(test_draw_instanced PRIVATE cxx_std_20)
+target_link_libraries(test_draw_instanced PRIVATE Nemu.Core)
+add_test(NAME test_draw_instanced COMMAND test_draw_instanced)
+
 add_executable(test_aligned_alloc
     common/test_aligned_alloc.cpp
 )

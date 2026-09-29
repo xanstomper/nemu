@@ -27,6 +27,9 @@ public:
     void ClearDepthStencil(float depth, u8 stencil) override;
 
     void DrawArrays(PrimitiveTopology topology, u32 first_vertex, u32 vertex_count) override;
+    // Single-submission instanced draw (counts as ONE draw, N instances).
+    void DrawArraysInstanced(PrimitiveTopology topology, u32 first_vertex,
+                             u32 vertex_count, u32 instance_count) override;
     void DrawIndexed(PrimitiveTopology topology, u32 index_count, u32 first_index, u32 base_vertex) override;
 
     void SetRasterVertices(std::span<const RasterVertex> vertices) override;
