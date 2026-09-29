@@ -97,6 +97,13 @@ public:
     /// Explicit byte budget for resident texture memory (0 = the constant cap).
     void SetByteBudget(size_t bytes) noexcept;
 
+    /// Per-title gpu_strict_formats tweak: when set, GetOrCreateTexture
+    /// requires an exact format match instead of tolerant reinterpretation
+    /// (Ryujinx 'gpu'-labeled titles, 154 games, render incorrectly with
+    /// fast-path format reuse). Default: tolerant (untweaked behavior).
+    void SetStrictFormats(bool strict) noexcept { strict_formats_ = strict; }
+    [[nodiscard]] bool StrictFormats() const noexcept { return strict_formats_; }
+
 #ifdef _WIN32
     /// Bind descriptor heaps to the active command list
     void BindDescriptorHeaps(ID3D12GraphicsCommandList* cmd_list);
@@ -112,6 +119,8 @@ public:
 #endif
 
 private:
+    bool strict_formats_{false};
+
     struct TextureKey {
         u64 gpu_address{0};
         u32 width{0};

@@ -93,9 +93,15 @@ std::shared_ptr<CachedTexture> TextureCache::GetOrCreateTexture(
 
     auto it = textures_.find(key);
     if (it != textures_.end()) {
-        // Touch the LRU timestamp so hot textures survive byte-budget eviction.
-        it->second->last_used_frame = frame_++;
-        return it->second;
+        // gpu_strict_formats tweak: exact format match required — a cache entry
+        // stored under a different format must not be served (the key's format
+        // field makes this always-true today; the check documents the contract
+        // and defends against future key-format divergence).
+        if (!strict_formats_ || it->second->desc.format == key.format) {
+            // Touch the LRU timestamp so hot textures survive byte-budget eviction.
+            it->second->last_used_frame = frame_++;
+            return it->second;
+        }
     }
 
     auto cached = std::make_shared<CachedTexture>();

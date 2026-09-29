@@ -220,6 +220,10 @@ public:
     // frames on console. Returns the post-warmup cached-pipeline count.
     virtual u32 WarmupShaderStorm() { return 0; }
 
+    // Per-title gpu_strict_formats tweak: exact format match required for
+    // texture cache serves (154 Ryujinx gpu-labeled titles). Default no-op.
+    virtual void SetStrictFormats(bool /*strict*/) {}
+
     // --- Vertex / material binding and host-observable frame capture ---
     // These are the software-rasterizable entry points. Backends that only
     // forward to a hardware API (e.g. D3D12) may leave them as no-ops; the

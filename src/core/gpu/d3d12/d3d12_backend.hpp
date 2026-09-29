@@ -72,6 +72,7 @@ public:
     // texture and present it as a fullscreen quad on the next Present().
     bool PresentNVDECFrame(const NVDECFrame& frame) override;
     u32 WarmupShaderStorm() override;
+    void SetStrictFormats(bool strict) override { texture_cache_.SetStrictFormats(strict); }
 
     // Guest rasterizer state block (Tier-A2)
     void SetRasterizerState(const RasterizerState& state) override;
