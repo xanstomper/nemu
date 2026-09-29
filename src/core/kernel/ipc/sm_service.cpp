@@ -74,7 +74,7 @@ static bool IsKnownStubService(std::string_view name) {
         "friend:u", "friend:v", "lbl", "apm", "apm:p", "apm:sys",
         "arp:r", "spsm", "bsdcfg", "ssl", "ssl:u", "ssl:s", "news:u", "nfc:u", "nfc:user",
         "ir:u", "ovln:rcv", "set:cal", "audio", "hwopus", "csrng", "sfdnsres",
-        "audin:u", "audin:a", "nvdrv:s", "nvdrv:t", "vi:s", "ro:1", "ro:dmnt", "lr",
+        "nvdrv:s", "nvdrv:t", "vi:s", "ro:1", "ro:dmnt", "lr",
         "btdrv", "btsnoop", "wlan:l", "wlan:inf", "wlan:sg", "codecctl",
         "tc", "fan", "ts", "pinmux", "gpio", "i2c", "i2c:pcv", "pcv",
         "clkrst", "clkrst:i", "psc:m", "psc:c", "bus:m", "mig:u",

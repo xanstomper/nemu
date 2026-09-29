@@ -46,6 +46,18 @@ public:
     /// Register a callback invoked to toggle background shader compilation deferral.
     void RegisterShaderDeferralCallback(std::function<void(bool defer)> cb);
 
+    /// Register a callback invoked when dynamic resolution scaling recommends a new scale factor (0.5f - 1.0f).
+    void RegisterResolutionScaleCallback(std::function<void(float scale)> cb);
+
+    /// Record a frame render time (in milliseconds) for dynamic frame rate and resolution governance.
+    void RecordFrameTime(float frame_time_ms) noexcept;
+
+    /// Query the rolling average frame render time (in milliseconds).
+    [[nodiscard]] float GetAverageFrameTime() const noexcept;
+
+    /// Query current dynamic resolution scale factor (0.5f to 1.0f).
+    [[nodiscard]] float GetDynamicResolutionScale() const noexcept;
+
     /// Polls current memory usage and executes trimming callbacks if entering Critical state.
     /// Returns true if a trim was triggered.
     bool EvaluateAndEnforce();
@@ -58,11 +70,14 @@ private:
     std::atomic<MemoryPressureLevel> current_level_{MemoryPressureLevel::Nominal};
     std::atomic<bool> simulated_active_{false};
     std::atomic<u64> simulated_bytes_{0};
+    std::atomic<float> dynamic_scale_{1.0f};
+    std::atomic<float> avg_frame_time_ms_{16.6f};
 
     std::mutex callback_mutex_;
     std::vector<std::function<void()>> texture_trim_cbs_;
     std::vector<std::function<void()>> dxgi_trim_cbs_;
     std::vector<std::function<void(bool)>> shader_defer_cbs_;
+    std::vector<std::function<void(float)>> resolution_scale_cbs_;
 };
 
 } // namespace nemu::platform

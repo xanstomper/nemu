@@ -161,6 +161,8 @@ public:
     [[nodiscard]] const std::string& GetDiskCacheDirectory() const noexcept { return disk_cache_dir_; }
     [[nodiscard]] u64 GetDiskCacheHits() const noexcept { return disk_cache_hits_; }
     [[nodiscard]] u64 GetDiskCacheWrites() const noexcept { return disk_cache_writes_; }
+    [[nodiscard]] u64 GetPsoDiskCacheHits() const noexcept { return pso_disk_cache_hits_; }
+    [[nodiscard]] u64 GetPsoDiskCacheWrites() const noexcept { return pso_disk_cache_writes_; }
 
 #ifdef _WIN32
     void SetDevice(ID3D12Device* device) noexcept { device_ = device; }
@@ -188,6 +190,8 @@ private:
     u64 cache_misses_{0};
     u64 disk_cache_hits_{0};
     u64 disk_cache_writes_{0};
+    u64 pso_disk_cache_hits_{0};
+    u64 pso_disk_cache_writes_{0};
 #ifdef _WIN32
     ID3D12Device* device_{nullptr};
 #endif

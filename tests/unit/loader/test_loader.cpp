@@ -2,6 +2,7 @@
 #include "core/loader/nso.hpp"
 #include "core/loader/pfs0.hpp"
 #include "core/loader/nca.hpp"
+#include "core/loader/ncz.hpp"
 #include "core/loader/romfs.hpp"
 #include "core/loader/title_loader.hpp"
 #include "core/filesystem/vfs.hpp"
@@ -1017,6 +1018,35 @@ int main() {
                          "Ticket decrypted key matches expected plaintext HK title key");
 
         std::cout << "  - Automated Ticket Parsing & Title Key DB tests: PASSED" << std::endl;
+    }
+
+    // 10. Test NCZ Decompressor & Split Volume Streaming
+    {
+        using namespace nemu::core::loader;
+
+        // A. Test split volume path detection and canonical extensions
+        NEMU_TEST_ASSERT(NczDecompressor::IsSplitVolume("SuperMarioOdyssey.xc0"), "detects .xc0 split volume");
+        NEMU_TEST_ASSERT(NczDecompressor::IsSplitVolume("ZeldaTOTK.ns0"), "detects .ns0 split volume");
+        NEMU_TEST_ASSERT(NczDecompressor::IsSplitVolume("Game.00"), "detects .00 split volume");
+        NEMU_TEST_ASSERT(!NczDecompressor::IsSplitVolume("SuperMarioOdyssey.xci"), "rejects standard .xci");
+        NEMU_TEST_ASSERT(!NczDecompressor::IsSplitVolume("ZeldaTOTK.nsp"), "rejects standard .nsp");
+
+        NEMU_TEST_ASSERT(NczDecompressor::GetCanonicalExtension("SuperMarioOdyssey.xc0") == ".xci", "maps .xc0 to .xci");
+        NEMU_TEST_ASSERT(NczDecompressor::GetCanonicalExtension("ZeldaTOTK.ns0") == ".nsp", "maps .ns0 to .nsp");
+
+        // B. Test NCZ magic detection
+        std::vector<u8> dummy_ncz(0x4010, 0);
+        // Put NCZSECTN magic at 0x4000
+        u64 sectn_mag = NczDecompressor::NCZSECTN_MAGIC;
+        std::memcpy(dummy_ncz.data() + 0x4000, &sectn_mag, sizeof(u64));
+        NEMU_TEST_ASSERT(NczDecompressor::IsNcz(dummy_ncz), "IsNcz identifies NCZSECTN magic at 0x4000");
+
+        // Put direct ZSTD magic at 0x4000
+        u32 zstd_mag = NczDecompressor::ZSTD_MAGIC;
+        std::memcpy(dummy_ncz.data() + 0x4000, &zstd_mag, sizeof(u32));
+        NEMU_TEST_ASSERT(NczDecompressor::IsNcz(dummy_ncz), "IsNcz identifies ZSTD magic at 0x4000");
+
+        std::cout << "  - NCZ Decompressor & Split-Volume Streaming tests: PASSED" << std::endl;
     }
 
     std::cout << "[Test: NRO Loader & Commercial Container/Crypto Pipeline PASSED]" << std::endl;

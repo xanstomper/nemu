@@ -57,8 +57,11 @@ public:
     /// Configure voice multi-channel volume routing matrix
     void SetVoiceVolumeMatrix(u32 voice_id, const VolumeMatrix& matrix);
 
-    /// Configure environmental delay / reverb on a submix
+    /// Configure environmental delay on a submix
     void SetDelayEffect(u32 submix_id, const DelayEffectParams& params);
+
+    /// Configure environmental multi-tap reverb on main mix bus
+    void SetReverbEffect(const ReverbParams& params);
 
     /// Execute an audren:u command list buffer sent by the game
     void ProcessCommandList(std::span<const u8> command_list, memory::VirtualMemory* vmm);
@@ -76,6 +79,7 @@ private:
     std::shared_ptr<IAudioBackend> backend_{nullptr};
     std::vector<AudioVoice> voices_;
     std::vector<DelayEffectParams> delay_effects_;
+    ReverbParams reverb_effect_{};
     std::vector<float> mix_bus_left_;
     std::vector<float> mix_bus_right_;
     mutable std::mutex mutex_;

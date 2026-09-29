@@ -154,4 +154,75 @@ u32 KAddressArbiter::SignalAndModifyByWaitingCount(
     return to_wake;
 }
 
+u32 KAddressArbiter::SignalAndModifyByWaitingCountIfEqual(
+    memory::VirtualMemory& vm,
+    vaddr_t address,
+    u32 expected_val,
+    u32 count,
+    s32 modifier,
+    bool lifo_wake
+) {
+    (void)lifo_wake;
+    std::lock_guard<std::mutex> lock(mutex_);
+    const u32 cur = vm.Read32(address);
+    if (cur != expected_val) {
+        return 0;
+    }
+
+    auto it = queues_.find(address);
+    const u32 waiting = (it != queues_.end()) ? it->second.waiting_threads : 0;
+
+    // Horizon 18.0.0 modifier semantics:
+    // If modifier == -1 (Minus1): if waiting <= 1, value = 0; else value = waiting - 1
+    // If modifier == 1  (Plus1):  value = waiting + 1
+    // Default: cur + modifier
+    s32 new_val = 0;
+    if (modifier == -1) {
+        new_val = (waiting <= 1) ? 0 : static_cast<s32>(waiting - 1);
+    } else if (modifier == 1) {
+        new_val = static_cast<s32>(waiting + 1);
+    } else {
+        new_val = static_cast<s32>(cur) + modifier;
+    }
+    vm.Write32(address, static_cast<u32>(new_val));
+
+    if (it == queues_.end() || waiting == 0) {
+        return 0;
+    }
+
+    u32 to_wake = std::min(count, waiting);
+    for (u32 i = 0; i < to_wake; ++i) {
+        it->second.cv.notify_one();
+    }
+    return to_wake;
+}
+
+u32 KAddressArbiter::SignalAndIncrementIfEqual(
+    memory::VirtualMemory& vm,
+    vaddr_t address,
+    u32 expected_val,
+    u32 count,
+    bool lifo_wake
+) {
+    (void)lifo_wake;
+    std::lock_guard<std::mutex> lock(mutex_);
+    const u32 cur = vm.Read32(address);
+    if (cur != expected_val) {
+        return 0;
+    }
+
+    vm.Write32(address, cur + 1);
+
+    auto it = queues_.find(address);
+    if (it == queues_.end() || it->second.waiting_threads == 0) {
+        return 0;
+    }
+
+    u32 to_wake = std::min(count, it->second.waiting_threads);
+    for (u32 i = 0; i < to_wake; ++i) {
+        it->second.cv.notify_one();
+    }
+    return to_wake;
+}
+
 } // namespace nemu::core::kernel

@@ -89,6 +89,25 @@ void XboxMemoryGovernor::RegisterShaderDeferralCallback(std::function<void(bool 
     shader_defer_cbs_.push_back(std::move(cb));
 }
 
+void XboxMemoryGovernor::RegisterResolutionScaleCallback(std::function<void(float scale)> cb) {
+    std::lock_guard lock(callback_mutex_);
+    resolution_scale_cbs_.push_back(std::move(cb));
+}
+
+void XboxMemoryGovernor::RecordFrameTime(float frame_time_ms) noexcept {
+    const float prev = avg_frame_time_ms_.load(std::memory_order_relaxed);
+    const float updated = prev * 0.9f + frame_time_ms * 0.1f;
+    avg_frame_time_ms_.store(updated, std::memory_order_relaxed);
+}
+
+float XboxMemoryGovernor::GetAverageFrameTime() const noexcept {
+    return avg_frame_time_ms_.load(std::memory_order_relaxed);
+}
+
+float XboxMemoryGovernor::GetDynamicResolutionScale() const noexcept {
+    return dynamic_scale_.load(std::memory_order_relaxed);
+}
+
 bool XboxMemoryGovernor::EvaluateAndEnforce() {
     const u64 commit = GetCommittedBytes();
     const MemoryPressureLevel prev = current_level_.load(std::memory_order_relaxed);
@@ -112,6 +131,30 @@ bool XboxMemoryGovernor::EvaluateAndEnforce() {
     }
 
     current_level_.store(next, std::memory_order_relaxed);
+
+    // Compute dynamic resolution scaling recommendation based on memory and frame time
+    float target_scale = 1.0f;
+    if (next == MemoryPressureLevel::Critical) {
+        target_scale = 0.75f;
+    } else if (next == MemoryPressureLevel::Elevated) {
+        target_scale = 0.85f;
+    } else {
+        const float avg_ft = avg_frame_time_ms_.load(std::memory_order_relaxed);
+        if (avg_ft > 18.0f) {
+            target_scale = 0.85f;
+        } else {
+            target_scale = 1.0f;
+        }
+    }
+
+    const float prev_scale = dynamic_scale_.load(std::memory_order_relaxed);
+    if (std::abs(target_scale - prev_scale) > 0.01f) {
+        dynamic_scale_.store(target_scale, std::memory_order_relaxed);
+        std::lock_guard lock(callback_mutex_);
+        for (const auto& cb : resolution_scale_cbs_) {
+            if (cb) cb(target_scale);
+        }
+    }
 
     if (next == MemoryPressureLevel::Critical) {
         NEMU_LOG_WARN("MemoryGovernor", "Xbox memory pressure CRITICAL (Commit: {} MB / 5120 MB). Executing trim routines.",

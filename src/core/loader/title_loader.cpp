@@ -3,6 +3,7 @@
 #include "nso.hpp"
 #include "pfs0.hpp"
 #include "nca.hpp"
+#include "ncz.hpp"
 #include "romfs.hpp"
 #include "core/cpu/title_compat.hpp"
 #include "platform/logger.hpp"
@@ -29,23 +30,48 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadTitle(
         resolved_path = vfs_resolved->string();
     }
 
-    std::ifstream file(resolved_path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
-        NEMU_LOG_ERROR("Loader", "Could not open target title: {}", resolved_path);
-        return std::nullopt;
-    }
-
-    auto file_size = file.tellg();
-    if (file_size <= 0) {
-        NEMU_LOG_ERROR("Loader", "Target title is empty: {}", resolved_path);
-        return std::nullopt;
-    }
-
-    std::vector<u8> buffer(static_cast<size_t>(file_size));
-    file.seekg(0, std::ios::beg);
-    file.read(reinterpret_cast<char*>(buffer.data()), file_size);
-
     std::filesystem::path p(resolved_path);
+    std::vector<u8> buffer;
+    std::string title_filename = p.filename().string();
+
+    if (NczDecompressor::IsSplitVolume(resolved_path)) {
+        auto parts = NczDecompressor::GetSplitParts(resolved_path);
+        if (parts.size() > 1) {
+            NEMU_LOG_INFO("Loader", "Stitching multi-part split volume ({} parts found)", parts.size());
+            size_t total_size = 0;
+            for (const auto& part : parts) {
+                total_size += std::filesystem::file_size(part);
+            }
+            buffer.resize(total_size);
+            size_t offset = 0;
+            for (const auto& part : parts) {
+                std::ifstream part_file(part, std::ios::binary);
+                const size_t sz = std::filesystem::file_size(part);
+                part_file.read(reinterpret_cast<char*>(buffer.data() + offset), static_cast<std::streamsize>(sz));
+                offset += sz;
+            }
+            title_filename = p.stem().string() + NczDecompressor::GetCanonicalExtension(resolved_path);
+        }
+    }
+
+    if (buffer.empty()) {
+        std::ifstream file(resolved_path, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            NEMU_LOG_ERROR("Loader", "Could not open target title: {}", resolved_path);
+            return std::nullopt;
+        }
+
+        auto file_size = file.tellg();
+        if (file_size <= 0) {
+            NEMU_LOG_ERROR("Loader", "Target title is empty: {}", resolved_path);
+            return std::nullopt;
+        }
+
+        buffer.resize(static_cast<size_t>(file_size));
+        file.seekg(0, std::ios::beg);
+        file.read(reinterpret_cast<char*>(buffer.data()), file_size);
+    }
+
     // If the title is in a directory, scan the directory for any .tik files
     try {
         auto dir = p.parent_path();
@@ -60,7 +86,7 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadTitle(
         // Best-effort directory scan
     }
 
-    return LoadFromMemory(buffer, vm, p.filename().string(), base_address);
+    return LoadFromMemory(buffer, vm, title_filename, base_address);
 }
 
 std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
@@ -114,6 +140,22 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
                 }
             }
         };
+    }
+
+    // 3a. Check for direct NCZ container (compressed NCA)
+    if (NczDecompressor::IsNcz(data) || name_hint.ends_with(".ncz")) {
+        NEMU_LOG_INFO("Loader", "Identified NCZ compressed container: {}", name_hint);
+        auto decompressed = NczDecompressor::Decompress(data);
+        if (decompressed) {
+            std::string nca_hint = std::string(name_hint);
+            if (nca_hint.ends_with(".ncz")) {
+                nca_hint = nca_hint.substr(0, nca_hint.size() - 4) + ".nca";
+            }
+            return LoadFromMemory(*decompressed, vm, nca_hint, base_address);
+        } else {
+            NEMU_LOG_ERROR("Loader", "Failed to decompress NCZ container: {}", name_hint);
+            return std::nullopt;
+        }
     }
 
     // 3. Check for direct NCA (NCA3/2/0 at offset 0x200 or 0x00)
@@ -194,10 +236,10 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
             }
         }
 
-        // NSP package containing NCAs: find candidate NCAs sorted by size descending
+        // NSP/NSZ package containing NCAs/NCZs: find candidate NCAs sorted by size descending
         std::vector<std::pair<std::string, size_t>> nca_candidates;
         for (const auto& f : pfs0.GetFiles()) {
-            if (f.name.ends_with(".nca")) {
+            if (f.name.ends_with(".nca") || f.name.ends_with(".ncz")) {
                 nca_candidates.push_back({f.name, f.size});
             }
         }
@@ -206,11 +248,21 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
 
         std::optional<LoadedTitleInfo> loaded_title;
         for (const auto& [nca_name, nca_size] : nca_candidates) {
-            NEMU_LOG_INFO("Loader", "Attempting to load Program NCA '{}' ({} bytes) in NSP package",
+            NEMU_LOG_INFO("Loader", "Attempting to load Program NCA/NCZ '{}' ({} bytes) in NSP package",
                           nca_name, nca_size);
-            auto nca_data = pfs0.OpenFile(nca_name);
-            if (nca_data) {
-                auto loaded = LoadFromMemory(*nca_data, vm, nca_name, base_address);
+            auto file_data = pfs0.OpenFile(nca_name);
+            if (file_data) {
+                std::vector<u8> decompressed_buf;
+                std::span<const u8> target_data = *file_data;
+                if (nca_name.ends_with(".ncz") || NczDecompressor::IsNcz(target_data)) {
+                    auto dec = NczDecompressor::Decompress(target_data);
+                    if (dec) {
+                        decompressed_buf = std::move(*dec);
+                        target_data = decompressed_buf;
+                    }
+                }
+
+                auto loaded = LoadFromMemory(target_data, vm, nca_name, base_address);
                 if (loaded) {
                     loaded_title = loaded;
                     break;
@@ -221,10 +273,20 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
         // If Program NCA was found, check if RomFS is mounted. If not mounted yet, search remaining NCAs for RomFS
         if (loaded_title && !vfs_.IsMounted("romfs:/")) {
             for (const auto& [nca_name, nca_size] : nca_candidates) {
-                auto nca_data = pfs0.OpenFile(nca_name);
-                if (!nca_data) continue;
+                auto file_data = pfs0.OpenFile(nca_name);
+                if (!file_data) continue;
+                std::vector<u8> decompressed_buf;
+                std::span<const u8> target_data = *file_data;
+                if (nca_name.ends_with(".ncz") || NczDecompressor::IsNcz(target_data)) {
+                    auto dec = NczDecompressor::Decompress(target_data);
+                    if (dec) {
+                        decompressed_buf = std::move(*dec);
+                        target_data = decompressed_buf;
+                    }
+                }
+
                 NcaReader nca;
-                if (!nca.Initialize(*nca_data, &key_store_)) continue;
+                if (!nca.Initialize(target_data, &key_store_)) continue;
 
                 for (u32 s : {1u, 0u}) {
                     if (nca.HasSection(s)) {
@@ -288,7 +350,7 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
 
                     std::vector<std::pair<std::string, size_t>> nca_candidates;
                     for (const auto& f : secure_hfs0.GetFiles()) {
-                        if (f.name.ends_with(".nca")) {
+                        if (f.name.ends_with(".nca") || f.name.ends_with(".ncz")) {
                             nca_candidates.push_back({f.name, f.size});
                         }
                     }
@@ -297,9 +359,19 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
 
                     std::optional<LoadedTitleInfo> loaded_title;
                     for (const auto& [nca_name, nca_size] : nca_candidates) {
-                        auto nca_data = secure_hfs0.OpenFile(nca_name);
-                        if (nca_data) {
-                            auto loaded = LoadFromMemory(*nca_data, vm, nca_name, base_address);
+                        auto file_data = secure_hfs0.OpenFile(nca_name);
+                        if (file_data) {
+                            std::vector<u8> decompressed_buf;
+                            std::span<const u8> target_data = *file_data;
+                            if (nca_name.ends_with(".ncz") || NczDecompressor::IsNcz(target_data)) {
+                                auto dec = NczDecompressor::Decompress(target_data);
+                                if (dec) {
+                                    decompressed_buf = std::move(*dec);
+                                    target_data = decompressed_buf;
+                                }
+                            }
+
+                            auto loaded = LoadFromMemory(target_data, vm, nca_name, base_address);
                             if (loaded) {
                                 loaded_title = loaded;
                                 break;
@@ -309,10 +381,20 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
 
                     if (loaded_title && !vfs_.IsMounted("romfs:/")) {
                         for (const auto& [nca_name, nca_size] : nca_candidates) {
-                            auto nca_data = secure_hfs0.OpenFile(nca_name);
-                            if (!nca_data) continue;
+                            auto file_data = secure_hfs0.OpenFile(nca_name);
+                            if (!file_data) continue;
+                            std::vector<u8> decompressed_buf;
+                            std::span<const u8> target_data = *file_data;
+                            if (nca_name.ends_with(".ncz") || NczDecompressor::IsNcz(target_data)) {
+                                auto dec = NczDecompressor::Decompress(target_data);
+                                if (dec) {
+                                    decompressed_buf = std::move(*dec);
+                                    target_data = decompressed_buf;
+                                }
+                            }
+
                             NcaReader nca;
-                            if (!nca.Initialize(*nca_data, &key_store_)) continue;
+                            if (!nca.Initialize(target_data, &key_store_)) continue;
 
                             for (u32 s : {1u, 0u}) {
                                 if (nca.HasSection(s)) {

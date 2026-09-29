@@ -10,6 +10,7 @@
 #include "fsp_srv_service.hpp"
 #include "audout_service.hpp"
 #include "audren_service.hpp"
+#include "audin_service.hpp"
 #include "nvdrv_service.hpp"
 #include "vi_service.hpp"
 #include "pl_service.hpp"
@@ -159,6 +160,8 @@ std::shared_ptr<ServiceRegistry> CreateDefaultServiceRegistry(
     if (audio_backend) {
         registry->Register(std::make_shared<AudoutManagerService>(audio_backend));
         registry->Register(std::make_shared<AudrenManagerService>(audio_backend));
+        registry->Register(std::make_shared<AudinManagerService>("audin:u"));
+        registry->Register(std::make_shared<AudinManagerService>("audin:a"));
     }
 
     // GPU / NVN services.

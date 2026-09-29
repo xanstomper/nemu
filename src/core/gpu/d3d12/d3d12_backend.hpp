@@ -96,6 +96,8 @@ public:
         bool swap_chain_created{false};
         bool root_signature_created{false};
         bool pso_created{false};
+        bool copy_queue_created{false};
+        bool copy_list_created{false};
         bool geometry_upload_ok{false};
         u32 back_buffer_count{0};
         HRESULT last_hr{S_OK};
@@ -147,6 +149,19 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Fence> fence_;
     UINT64 fence_value_{0};
     HANDLE fence_event_{nullptr};
+
+    // Asynchronous Hardware DMA Copy Queue (Milestone 2.1)
+    Microsoft::WRL::ComPtr<ID3D12CommandQueue> copy_queue_;
+    Microsoft::WRL::ComPtr<ID3D12CommandAllocator> copy_allocator_;
+    Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> copy_command_list_;
+    Microsoft::WRL::ComPtr<ID3D12Fence> copy_fence_;
+    UINT64 copy_fence_value_{0};
+    HANDLE copy_fence_event_{nullptr};
+    bool copy_queue_ready_{false};
+
+    bool InitializeCopyQueue();
+    void WaitForCopyQueue();
+    void SyncCopyQueueToDirect();
 
     // Swap chain + render targets
     Microsoft::WRL::ComPtr<IDXGISwapChain3> swap_chain_;

@@ -391,9 +391,26 @@ case MaxwellOpcode::DEPBAR:
 case MaxwellOpcode::MEMBAR:
     ss << "    // Barrier / Sync\n";
     break;
-case MaxwellOpcode::SHFL:
-    NEMU_EMIT_WR(NEMU_SRC(0) + " // SHFL (warp shuffle)")
+case MaxwellOpcode::SHFL: {
+    // Warp shuffle (SM6.0 wave intrinsics). c encodes: delta = c & 0x1F,
+    // segmask = (c >> 8) & 0x1F, mode = (c >> 13) & 0x3
+    //   0=IDX 1=UP 2=DOWN 3=BUTTERFLY.
+    // Real emission via WaveReadLaneAt with mode-dependent lane computation —
+    // matches yuzu's glsl shuffle_decompose (pull idx/segmask from c operand).
+    const std::string v = NEMU_SRC(0), c = NEMU_SRC(2);
+    const std::string delta = "((" + c + ") & 0x1Fu)";
+    const std::string mode = "((" + c + ") >> 13) & 0x3u";
+    const std::string lane =
+        "(" + mode + "==0u) ? " + delta +
+        " : (" + mode + "==1u) ? (WaveGetLaneIndex() - " + delta + ")" +
+        " : (" + mode + "==2u) ? (WaveGetLaneIndex() + " + delta + ")" +
+        " : (WaveGetLaneIndex() ^ " + delta + ")";
+    // Requires SM6.0 (cs_6_0) at compile time — SHFL only appears in compute
+    // shaders; the D3D12 compute-compile path must select cs_6_0 when
+    // program.used features include shuffle.
+    NEMU_EMIT_WR(std::string("WaveReadLaneAt(") + v + ", " + lane + ") // SHFL")
     break;
+}
 case MaxwellOpcode::FSWZADD:
     NEMU_EMIT_WR(NEMU_SRC(0) + " + " + NEMU_SRC(1) + " // FSWZADD")
     break;

@@ -50,6 +50,7 @@ private:
     void* xinput_module_{nullptr};
     void* fn_get_state_{nullptr};
     void* fn_set_state_{nullptr};
+    void* fn_set_state_ex_{nullptr};
 
     std::array<bool, MAX_XBOX_CONTROLLERS> connected_{};
     std::array<XboxGamepadState, MAX_XBOX_CONTROLLERS> injected_state_{};

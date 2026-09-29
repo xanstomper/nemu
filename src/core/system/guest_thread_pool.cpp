@@ -1,0 +1,255 @@
+#include "guest_thread_pool.hpp"
+#include "core/cpu/interpreter.hpp"
+#include "platform/logger.hpp"
+#include <algorithm>
+#include <chrono>
+
+namespace nemu::core::system {
+
+namespace {
+constexpr vaddr_t EXIT_ADDR = 0x00000000DEAD0000ULL;
+}
+
+GuestThreadPool::GuestThreadPool(std::shared_ptr<kernel::KProcess> process,
+                                 std::shared_ptr<cpu::jit::JitCompiler> jit)
+    : process_(std::move(process)), jit_(std::move(jit)) {
+    for (size_t i = 0; i < NUM_GUEST_CORES; ++i) {
+        core_instructions_[i].store(0, std::memory_order_relaxed);
+        core_busy_[i].store(false, std::memory_order_relaxed);
+    }
+}
+
+GuestThreadPool::~GuestThreadPool() {
+    Stop();
+}
+
+void GuestThreadPool::SetSvcHandler(SvcHandlerFn handler) {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    svc_handler_ = std::move(handler);
+}
+
+bool GuestThreadPool::Start() {
+    if (is_running_.load(std::memory_order_relaxed)) {
+        return true;
+    }
+
+    stop_requested_.store(false, std::memory_order_release);
+    is_paused_.store(false, std::memory_order_release);
+    is_running_.store(true, std::memory_order_release);
+
+    NEMU_LOG_INFO("CPU", "Starting 3T+1T Guest Thread Pool (Cores 0-2 Game, Core 3 Sysmodule)...");
+
+    for (u32 core_id = 0; core_id < NUM_GUEST_CORES; ++core_id) {
+        workers_[core_id] = std::thread(&GuestThreadPool::WorkerLoop, this, core_id);
+    }
+
+    return true;
+}
+
+void GuestThreadPool::Pause() {
+    if (!is_running_.load(std::memory_order_relaxed)) return;
+    is_paused_.store(true, std::memory_order_release);
+}
+
+void GuestThreadPool::Resume() {
+    if (!is_running_.load(std::memory_order_relaxed)) return;
+    is_paused_.store(false, std::memory_order_release);
+    cv_pause_.notify_all();
+}
+
+void GuestThreadPool::Stop() {
+    if (!is_running_.load(std::memory_order_relaxed)) {
+        return;
+    }
+
+    stop_requested_.store(true, std::memory_order_release);
+    is_paused_.store(false, std::memory_order_release);
+    cv_pause_.notify_all();
+
+    for (u32 i = 0; i < NUM_GUEST_CORES; ++i) {
+        if (workers_[i].joinable()) {
+            workers_[i].join();
+        }
+    }
+
+    is_running_.store(false, std::memory_order_release);
+    NEMU_LOG_INFO("CPU", "Guest Thread Pool gracefully stopped.");
+}
+
+std::shared_ptr<kernel::KThread> GuestThreadPool::SelectNextThread(u32 core_id) {
+    if (!process_) return nullptr;
+
+    const auto threads = process_->GetThreads();
+    std::shared_ptr<kernel::KThread> best_thread = nullptr;
+    u32 highest_prio = 64; // lower number = higher Horizon priority
+
+    const u64 core_bit = 1ULL << core_id;
+
+    for (const auto& t : threads) {
+        if (!t) continue;
+        if (t->GetState() != kernel::ThreadState::Ready) continue;
+
+        // Affinity mask filter
+        if ((t->GetAffinityMask() & core_bit) == 0) continue;
+
+        // Prefer threads with matching ideal core
+        const bool matches_ideal = (t->GetIdealCore() == static_cast<s32>(core_id) || t->GetIdealCore() < 0);
+        const u32 prio = t->GetPriority();
+
+        if (matches_ideal) {
+            if (prio < highest_prio) {
+                highest_prio = prio;
+                best_thread = t;
+            }
+        } else if (!best_thread && prio < highest_prio) {
+            highest_prio = prio;
+            best_thread = t;
+        }
+    }
+
+    return best_thread;
+}
+
+void GuestThreadPool::WorkerLoop(u32 core_id) {
+    // Pin host thread to target Xbox Developer Mode core
+    platform::XboxThreadRole role = platform::XboxThreadRole::GuestCpuCore0;
+    if (core_id == 1) role = platform::XboxThreadRole::GuestCpuCore1;
+    else if (core_id == 2) role = platform::XboxThreadRole::GuestCpuCore2;
+    else if (core_id == 3) role = platform::XboxThreadRole::GuestKernelSysmodule;
+
+    const std::string thread_name = "NemuGuestCore" + std::to_string(core_id);
+    platform::XboxThreadAffinity::PinCurrentThread(role, thread_name);
+
+    while (!stop_requested_.load(std::memory_order_relaxed)) {
+        if (is_paused_.load(std::memory_order_relaxed)) {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            cv_pause_.wait_for(lock, std::chrono::milliseconds(5), [this] {
+                return !is_paused_.load(std::memory_order_relaxed) ||
+                       stop_requested_.load(std::memory_order_relaxed);
+            });
+            continue;
+        }
+
+        if (!process_ || process_->GetState() != kernel::ProcessState::Running) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+
+        std::shared_ptr<kernel::KThread> thread;
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            thread = SelectNextThread(core_id);
+            if (thread) {
+                thread->SetState(kernel::ThreadState::Running);
+            }
+        }
+
+        if (!thread) {
+            core_busy_[core_id].store(false, std::memory_order_relaxed);
+            std::this_thread::sleep_for(std::chrono::microseconds(150));
+            continue;
+        }
+
+        core_busy_[core_id].store(true, std::memory_order_relaxed);
+        cpu::CpuState& cpu = thread->GetCpuState();
+        size_t executed = 0;
+
+        while (executed < DEFAULT_QUANTUM_INSTRUCTIONS &&
+               !stop_requested_.load(std::memory_order_relaxed) &&
+               !is_paused_.load(std::memory_order_relaxed) &&
+               process_->GetState() == kernel::ProcessState::Running &&
+               thread->GetState() == kernel::ThreadState::Running) {
+
+            if (cpu.pc == EXIT_ADDR || cpu.halted) {
+                thread->SetState(kernel::ThreadState::Terminated);
+                break;
+            }
+
+            bool ok = false;
+            if (jit_) {
+                ok = jit_->Execute(cpu, process_->GetVirtualMemory());
+            }
+
+            if (!ok) {
+                cpu::Interpreter interp(cpu, process_->GetVirtualMemory());
+                if (svc_handler_) {
+                    interp.SetSvcHandler(svc_handler_);
+                }
+                interp.Step();
+            }
+
+            ++executed;
+        }
+
+        core_instructions_[core_id].fetch_add(executed, std::memory_order_relaxed);
+
+        // If still running after quantum, return to Ready state so priority rotation occurs
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            if (thread->GetState() == kernel::ThreadState::Running) {
+                thread->SetState(kernel::ThreadState::Ready);
+            }
+        }
+    }
+
+    core_busy_[core_id].store(false, std::memory_order_relaxed);
+}
+
+size_t GuestThreadPool::StepCoreSynchronous(u32 core_id, size_t instruction_budget) {
+    if (!process_ || process_->GetState() != kernel::ProcessState::Running) {
+        return 0;
+    }
+
+    std::shared_ptr<kernel::KThread> thread = SelectNextThread(core_id);
+    if (!thread) return 0;
+
+    thread->SetState(kernel::ThreadState::Running);
+    cpu::CpuState& cpu = thread->GetCpuState();
+    size_t executed = 0;
+
+    while (executed < instruction_budget &&
+           thread->GetState() == kernel::ThreadState::Running) {
+        if (cpu.pc == EXIT_ADDR || cpu.halted) {
+            thread->SetState(kernel::ThreadState::Terminated);
+            break;
+        }
+
+        bool ok = false;
+        if (jit_) {
+            ok = jit_->Execute(cpu, process_->GetVirtualMemory());
+        }
+
+        if (!ok) {
+            cpu::Interpreter interp(cpu, process_->GetVirtualMemory());
+            if (svc_handler_) {
+                interp.SetSvcHandler(svc_handler_);
+            }
+            interp.Step();
+        }
+
+        ++executed;
+    }
+
+    core_instructions_[core_id].fetch_add(executed, std::memory_order_relaxed);
+
+    if (thread->GetState() == kernel::ThreadState::Running) {
+        thread->SetState(kernel::ThreadState::Ready);
+    }
+
+    return executed;
+}
+
+u64 GuestThreadPool::GetTotalInstructionsExecuted() const noexcept {
+    u64 total = 0;
+    for (size_t i = 0; i < NUM_GUEST_CORES; ++i) {
+        total += core_instructions_[i].load(std::memory_order_relaxed);
+    }
+    return total;
+}
+
+u64 GuestThreadPool::GetCoreInstructionsExecuted(u32 core_id) const noexcept {
+    if (core_id >= NUM_GUEST_CORES) return 0;
+    return core_instructions_[core_id].load(std::memory_order_relaxed);
+}
+
+} // namespace nemu::core::system

@@ -27,6 +27,8 @@
 
 namespace nemu::core::system {
 
+class GuestThreadPool;
+
 enum class EmulatorState {
     Uninitialized,
     Ready,
@@ -109,6 +111,7 @@ public:
     [[nodiscard]] const std::shared_ptr<kernel::KThread>& GetMainThread() const noexcept { return main_thread_; }
     /// Live JIT recompiler stats for the Diagnostics screen (null when JIT disabled)
     [[nodiscard]] const cpu::jit::JitCompiler* GetJitCompiler() const noexcept { return jit_.get(); }
+    [[nodiscard]] const std::shared_ptr<GuestThreadPool>& GetGuestThreadPool() const noexcept { return thread_pool_; }
 
     /// Apply the persisted runtime config to live subsystems (HID layout,
     /// deadzones, vibration, audio). Called at boot and whenever the UI
@@ -150,6 +153,7 @@ private:
     std::shared_ptr<kernel::ipc::HidService> hid_service_;
 
     std::unique_ptr<cpu::jit::JitCompiler> jit_;
+    std::shared_ptr<GuestThreadPool> thread_pool_;
     std::shared_ptr<network::LdnUdpNetwork> ldn_net_;
     bool is_nro_{true};
 };

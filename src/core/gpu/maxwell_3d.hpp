@@ -143,6 +143,11 @@ namespace MaxwellMethod {
     constexpr u32 BlendPerTargetEnabled = 0x04B9;
     constexpr u32 BlendSeparateAlpha = 0x04D8;
     constexpr u32 BlendEquationRgb = 0x04E0;   // func, src, dst triples per RT
+    constexpr u32 BlendFuncSrcRgb = 0x04E1;
+    constexpr u32 BlendFuncDstRgb = 0x04E2;
+    constexpr u32 BlendEquationAlpha = 0x04E3;
+    constexpr u32 BlendFuncSrcAlpha = 0x04E4;
+    constexpr u32 BlendFuncDstAlpha = 0x04E5;
     constexpr u32 BlendHw = 0x04CF;
     constexpr u32 BlendColorR = 0x04C7;
     constexpr u32 BlendColorG = 0x04C8;

@@ -46,6 +46,8 @@ add_library(Nemu.Kernel STATIC
     ipc/audren_service.cpp
     ipc/audout_service.hpp
     ipc/audout_service.cpp
+    ipc/audin_service.hpp
+    ipc/audin_service.cpp
     ipc/applet_service.hpp
     ipc/applet_service.cpp
     ipc/acc_service.hpp

@@ -849,9 +849,6 @@ void SvcDispatcher::SvcGetThreadContext3(cpu::CpuState& state) {
 }
 
 void SvcDispatcher::SvcWaitForAddress(cpu::CpuState& state, KProcess& process) {
-    // svcWaitForAddress(address, arb_type(0=IfEqual? actually 1=IfLessThan,
-    // 2=IfLessThanOrEqual? per switchbrew: 0=IfLessThan(nosig),1=IfLessThan,
-    // 2=IfEqual), value, timeout_ns). Delegate to the address arbiter.
     const vaddr_t addr = state.GetX(0);
     const u32 arb_type = static_cast<u32>(state.GetX(1));
     const s32 value = static_cast<s32>(state.GetX(2));
@@ -859,52 +856,51 @@ void SvcDispatcher::SvcWaitForAddress(cpu::CpuState& state, KProcess& process) {
 
     auto& arbiter = process.GetAddressArbiter();
     auto& vmem = process.GetVirtualMemory();
-    // The HLE arbiter exposes IfEqual waits; IfLessThan semantics are emulated
-    // by a poll loop against the memory value with the same timeout budget.
     bool ok = true;
-    if (arb_type == 0 || arb_type == 1) { // IfLessThan variants
-        const auto deadline = std::chrono::steady_clock::now() +
-                              std::chrono::nanoseconds(timeout_ns > 0 ? timeout_ns : 0);
-        for (;;) {
-            const s32 cur = static_cast<s32>(vmem.Read32(addr));
-            if (cur < value) { ok = true; break; }
-            if (timeout_ns == 0) { ok = false; break; }
-            if (std::chrono::steady_clock::now() >= deadline) { ok = false; break; }
-            std::this_thread::yield();
-        }
-    } else { // IfEqual (arb_type 2+)
-        ok = arbiter.WaitForAddressIfEqual(vmem, addr, static_cast<u32>(value), timeout_ns);
+    switch (arb_type) {
+        case 0: // WaitForAddressIfLessThan
+            ok = arbiter.WaitForAddressIfLessThan(vmem, addr, static_cast<u32>(value), timeout_ns);
+            break;
+        case 1: // DecrementAndWaitIfLessThan
+            ok = arbiter.DecrementAndWaitIfLessThan(vmem, addr, static_cast<u32>(value), timeout_ns);
+            break;
+        case 2: // WaitForAddressIfEqual
+        default:
+            ok = arbiter.WaitForAddressIfEqual(vmem, addr, static_cast<u32>(value), timeout_ns);
+            break;
     }
     state.SetX(0, ok ? static_cast<u64>(Result::Success) : static_cast<u64>(Result::Timeout));
 }
 
 void SvcDispatcher::SvcSignalToAddress(cpu::CpuState& state, KProcess& process) {
-    // svcSignalToAddress(address, signal_type(0=SignalAndModifyByWaitingCount-
-    // 1, 1=SignalAndIncrementIfEqual, 2=SignalAndModifyByWaitingCountPlus1),
-    // value, count)
+    // svcSignalToAddress(address, signal_type, value, count)
+    // 0 = SignalAndModifyByWaitingCountMinus1
+    // 1 = SignalAndIncrementIfEqual
+    // 2 = SignalAndModifyByWaitingCountPlus1
     const vaddr_t addr = state.GetX(0);
     const u32 sig_type = static_cast<u32>(state.GetX(1));
+    const u32 expected = static_cast<u32>(state.GetX(2));
     const u32 count = static_cast<u32>(state.GetX(3));
 
+    auto& arbiter = process.GetAddressArbiter();
     auto& vmem = process.GetVirtualMemory();
+    const bool relaxed = cpu::ActiveTitleTweaks().sync_relaxed;
+
+    u32 woken = 0;
     switch (sig_type) {
-        case 1: { // SignalAndIncrementIfEqual
-            const u32 cur = vmem.Read32(addr);
-            if (cur == state.GetX(2)) {
-                vmem.Write32(addr, cur + 1);
-            }
+        case 0: // SignalAndModifyByWaitingCountMinus1
+            woken = arbiter.SignalAndModifyByWaitingCountIfEqual(vmem, addr, expected, count, -1, relaxed);
             break;
-        }
-        case 2: { // SignalAndModifyByWaitingCountPlus1
-            const u32 cur = vmem.Read32(addr);
-            vmem.Write32(addr, cur + 1);
+        case 1: // SignalAndIncrementIfEqual
+            woken = arbiter.SignalAndIncrementIfEqual(vmem, addr, expected, count, relaxed);
             break;
-        }
-        case 0:
-        default: // SignalAndModifyByWaitingCountMinus1
-            break; // HLE: no waiting-count tracking; leave value intact
+        case 2: // SignalAndModifyByWaitingCountPlus1
+            woken = arbiter.SignalAndModifyByWaitingCountIfEqual(vmem, addr, expected, count, +1, relaxed);
+            break;
+        default:
+            woken = arbiter.Signal(addr, count, relaxed);
+            break;
     }
-    const u32 woken = process.GetAddressArbiter().Signal(addr, count, cpu::ActiveTitleTweaks().sync_relaxed);
     state.SetX(0, static_cast<u64>(Result::Success));
     state.SetX(1, woken);
 }

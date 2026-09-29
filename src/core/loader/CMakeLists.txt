@@ -7,6 +7,8 @@ add_library(Nemu.Loader STATIC
     pfs0.cpp
     nca.hpp
     nca.cpp
+    ncz.hpp
+    ncz.cpp
     romfs.hpp
     romfs.cpp
     title_loader.hpp
@@ -19,6 +21,8 @@ target_include_directories(Nemu.Loader PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../..
 )
 
+find_library(ZSTD_LIB NAMES zstd)
+
 target_link_libraries(Nemu.Loader PUBLIC
     Nemu.Memory
     Nemu.Cpu
@@ -26,5 +30,9 @@ target_link_libraries(Nemu.Loader PUBLIC
     Nemu.FileSystem
     Nemu.Platform
 )
+
+if(ZSTD_LIB)
+    target_link_libraries(Nemu.Loader PUBLIC ${ZSTD_LIB})
+endif()
 
 target_compile_features(Nemu.Loader PUBLIC cxx_std_20)

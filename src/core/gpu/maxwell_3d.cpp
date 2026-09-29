@@ -707,6 +707,49 @@ void Maxwell3D::ApplyRasterizerState() {
                         (regs_.regs[MaxwellMethod::BlendPerTargetEnabled] != 0);
     rs.blend_equation_rgb = regs_.regs[MaxwellMethod::BlendEquationRgb];
 
+    auto MapBlendFactor = [](u32 factor) -> u32 {
+        switch (factor) {
+            case 0x0000: return 0;  // Zero
+            case 0x0001: return 1;  // One
+            case 0x0300: return 2;  // SrcColor
+            case 0x0301: return 3;  // InvSrcColor
+            case 0x0302: return 4;  // SrcAlpha
+            case 0x0303: return 5;  // InvSrcAlpha
+            case 0x0304: return 6;  // DestAlpha
+            case 0x0305: return 7;  // InvDestAlpha
+            case 0x0306: return 8;  // DestColor
+            case 0x0307: return 9;  // InvDestColor
+            case 0xC900:
+            case 0x8009: return 10; // Src1Color (Dual-Source Blending)
+            case 0xC901:
+            case 0x800A: return 11; // InvSrc1Color
+            case 0xC902:
+            case 0x800B: return 12; // Src1Alpha
+            case 0xC903:
+            case 0x800C: return 13; // InvSrc1Alpha
+            default:     return 1;  // One
+        }
+    };
+
+    auto MapBlendOp = [](u32 op) -> u32 {
+        switch (op) {
+            case 0x8006:
+            case 1:      return 0; // Add
+            case 0x800A: return 1; // Subtract
+            case 0x800B: return 2; // RevSubtract
+            case 0x8007: return 3; // Min
+            case 0x8008: return 4; // Max
+            default:     return 0; // Add
+        }
+    };
+
+    rs.blend_src_rgb = MapBlendFactor(regs_.regs[MaxwellMethod::BlendFuncSrcRgb]);
+    rs.blend_dst_rgb = MapBlendFactor(regs_.regs[MaxwellMethod::BlendFuncDstRgb]);
+    rs.blend_op_rgb  = MapBlendOp(regs_.regs[MaxwellMethod::BlendEquationRgb]);
+    rs.blend_src_a   = MapBlendFactor(regs_.regs[MaxwellMethod::BlendFuncSrcAlpha]);
+    rs.blend_dst_a   = MapBlendFactor(regs_.regs[MaxwellMethod::BlendFuncDstAlpha]);
+    rs.blend_op_a    = MapBlendOp(regs_.regs[MaxwellMethod::BlendEquationAlpha]);
+
     // Depth bounds
     rs.depth_bounds_enable = regs_.regs[MaxwellMethod::DepthBoundsEnable] != 0;
     rs.depth_bounds_near = regs_.GetFloat(MaxwellMethod::DepthBoundsNear);

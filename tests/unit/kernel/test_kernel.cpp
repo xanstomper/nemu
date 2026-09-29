@@ -222,6 +222,69 @@ void TestSharedMemoryAndMutex() {
     std::cout << "  PASSED.\n";
 }
 
+void TestAddressArbiterSynchronization() {
+    std::cout << "[TEST] Running TestAddressArbiterSynchronization...\n";
+
+    auto proc = std::make_shared<KProcess>(3, "TestSyncProc");
+    KThread thread(30, proc, 44, 0x71000000ULL, KProcess::DEFAULT_STACK_TOP, KProcess::DEFAULT_TLS_BASE);
+    auto& vm = proc->GetVirtualMemory();
+    auto& arb = proc->GetAddressArbiter();
+
+    const vaddr_t sync_addr = 0x0050000000ULL;
+    // Map backing memory page
+    vm.Map(sync_addr, 0x1000, memory::MemoryPermission::ReadWrite);
+
+    // 1. WaitForAddressIfEqual test (immediate return when unequal)
+    vm.Write32(sync_addr, 100);
+    NEMU_TEST_ASSERT(!arb.WaitForAddressIfEqual(vm, sync_addr, 999, 1000000));
+
+    // 2. WaitForAddressIfLessThan test (immediate return when not less than)
+    vm.Write32(sync_addr, 100);
+    NEMU_TEST_ASSERT(!arb.WaitForAddressIfLessThan(vm, sync_addr, 50, 1000000));
+
+    // 3. DecrementAndWaitIfLessThan test (decrements, and fails wait condition if cur >= compare)
+    vm.Write32(sync_addr, 100);
+    NEMU_TEST_ASSERT(!arb.DecrementAndWaitIfLessThan(vm, sync_addr, 50, 1000000));
+    NEMU_TEST_ASSERT(vm.Read32(sync_addr) == 99); // decremented
+
+    // 4. SignalAndModifyByWaitingCountIfEqual (-1 modifier)
+    vm.Write32(sync_addr, 42);
+    // When no threads waiting and modifier is -1, value becomes 0
+    u32 woken = arb.SignalAndModifyByWaitingCountIfEqual(vm, sync_addr, 42, 1, -1);
+    NEMU_TEST_ASSERT(woken == 0);
+    NEMU_TEST_ASSERT(vm.Read32(sync_addr) == 0);
+
+    // 5. SignalAndIncrementIfEqual
+    vm.Write32(sync_addr, 50);
+    woken = arb.SignalAndIncrementIfEqual(vm, sync_addr, 50, 1);
+    NEMU_TEST_ASSERT(woken == 0);
+    NEMU_TEST_ASSERT(vm.Read32(sync_addr) == 51);
+
+    // 6. Test SVC 0x34 (svcWaitForAddress) and 0x35 (svcSignalToAddress)
+    cpu::CpuState& cpu = thread.GetCpuState();
+    // svcWaitForAddress: X0=addr, X1=arb_type, X2=value, X3=timeout_ns
+    // Test IfLessThan with value <= cur (should timeout immediately)
+    vm.Write32(sync_addr, 200);
+    cpu.SetX(0, sync_addr);
+    cpu.SetX(1, 0); // WaitForAddressIfLessThan
+    cpu.SetX(2, 100); // 200 is not < 100
+    cpu.SetX(3, 1000); // 1us timeout
+    SvcDispatcher::Dispatch(cpu, *proc, thread, 0x34);
+    NEMU_TEST_ASSERT(cpu.GetX(0) == static_cast<u64>(Result::Timeout));
+
+    // svcSignalToAddress: X0=addr, X1=sig_type(1=SignalAndIncrementIfEqual), X2=expected, X3=count
+    vm.Write32(sync_addr, 77);
+    cpu.SetX(0, sync_addr);
+    cpu.SetX(1, 1); // SignalAndIncrementIfEqual
+    cpu.SetX(2, 77);
+    cpu.SetX(3, 2);
+    SvcDispatcher::Dispatch(cpu, *proc, thread, 0x35);
+    NEMU_TEST_ASSERT(cpu.GetX(0) == static_cast<u64>(Result::Success));
+    NEMU_TEST_ASSERT(vm.Read32(sync_addr) == 78);
+
+    std::cout << "  PASSED.\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "    NEMU HORIZON KERNEL UNIT TESTS      \n";
@@ -232,6 +295,7 @@ int main() {
     TestSynchronizationEvent();
     TestSvcExecution();
     TestSharedMemoryAndMutex();
+    TestAddressArbiterSynchronization();
 
     std::cout << "ALL KERNEL UNIT TESTS PASSED SUCCESSFULLY!\n";
     return 0;

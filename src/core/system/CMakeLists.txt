@@ -1,6 +1,8 @@
 add_library(Nemu.System STATIC
     emulator.hpp
     emulator.cpp
+    guest_thread_pool.hpp
+    guest_thread_pool.cpp
 )
 
 target_include_directories(Nemu.System PUBLIC

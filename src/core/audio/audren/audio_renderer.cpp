@@ -148,11 +148,19 @@ void AudioRenderer::SetDelayEffect(u32 submix_id, const DelayEffectParams& param
     }
 }
 
+void AudioRenderer::SetReverbEffect(const ReverbParams& params) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    reverb_effect_ = params;
+    if (reverb_effect_.comb_delays[0].empty()) {
+        reverb_effect_.Initialize(config_.sample_rate);
+    }
+}
+
 void AudioRenderer::ProcessCommandList(std::span<const u8> command_list, memory::VirtualMemory* vmm) {
     (void)vmm;
     if (command_list.empty()) return;
 
-    // Simple opcode dispatcher for audren:u command stream:
+    // Opcode dispatcher for audren:u command stream:
     // Header format: [Opcode:1][Size:1][Parameters:Var]
     size_t offset = 0;
     const size_t len = command_list.size();
@@ -189,6 +197,46 @@ void AudioRenderer::ProcessCommandList(std::span<const u8> command_list, memory:
                     float pitch = 1.0f;
                     std::memcpy(&pitch, &payload[2], sizeof(float));
                     SetVoicePitch(vid, pitch);
+                }
+                break;
+            }
+            case 0x04: { // SetVoiceBiquad: [VoiceID:2][Enabled:1][b0:4][b1:4][b2:4][a1:4][a2:4]
+                if (payload_size >= 23) {
+                    u16 vid = static_cast<u16>(payload[0] | (payload[1] << 8));
+                    BiquadFilterParams bq{};
+                    bq.enabled = (payload[2] != 0);
+                    std::memcpy(&bq.b0, &payload[3], sizeof(float));
+                    std::memcpy(&bq.b1, &payload[7], sizeof(float));
+                    std::memcpy(&bq.b2, &payload[11], sizeof(float));
+                    std::memcpy(&bq.a1, &payload[15], sizeof(float));
+                    std::memcpy(&bq.a2, &payload[19], sizeof(float));
+                    SetVoiceBiquad(vid, bq);
+                }
+                break;
+            }
+            case 0x05: { // SetDelayEffect: [SubmixID:2][Enabled:1][DelaySamples:4][Feedback:4][Wet:4][Dry:4]
+                if (payload_size >= 19) {
+                    u16 smid = static_cast<u16>(payload[0] | (payload[1] << 8));
+                    DelayEffectParams dp{};
+                    dp.Initialize(config_.sample_rate);
+                    dp.enabled = (payload[2] != 0);
+                    std::memcpy(&dp.delay_samples, &payload[3], sizeof(u32));
+                    std::memcpy(&dp.feedback, &payload[7], sizeof(float));
+                    std::memcpy(&dp.wet_gain, &payload[11], sizeof(float));
+                    std::memcpy(&dp.dry_gain, &payload[15], sizeof(float));
+                    SetDelayEffect(smid, dp);
+                }
+                break;
+            }
+            case 0x06: { // SetReverbEffect: [Enabled:1][Decay:4][Wet:4][Dry:4]
+                if (payload_size >= 13) {
+                    ReverbParams rp{};
+                    rp.Initialize(config_.sample_rate);
+                    rp.enabled = (payload[0] != 0);
+                    std::memcpy(&rp.decay_time, &payload[1], sizeof(float));
+                    std::memcpy(&rp.wet_gain, &payload[5], sizeof(float));
+                    std::memcpy(&rp.dry_gain, &payload[9], sizeof(float));
+                    SetReverbEffect(rp);
                 }
                 break;
             }
@@ -231,8 +279,12 @@ size_t AudioRenderer::RenderFrame(std::span<s16> out_pcm, memory::VirtualMemory*
             }
         }
 
+        const bool is_51 = (v.channels == 6 || config_.channel_config == ChannelConfig::Surround51);
         const float l_gain = v.volume * v.volume_matrix.matrix[0][0];
         const float r_gain = v.volume * v.volume_matrix.matrix[0][1];
+        const float c_gain = 0.7071f * v.volume;
+        const float s_gain = 0.7071f * v.volume;
+        const float lfe_gain = 0.5f * v.volume;
 
         for (size_t t = 0; t < frames; ++t) {
             size_t idx = static_cast<size_t>(v.current_sample_offset);
@@ -253,14 +305,31 @@ size_t AudioRenderer::RenderFrame(std::span<s16> out_pcm, memory::VirtualMemory*
             // Apply voice biquad IIR filter
             sample = v.biquad.Process(sample);
 
-            mix_bus_left_[t] += sample * l_gain;
-            mix_bus_right_[t] += sample * r_gain;
+            if (is_51 && idx + 5 < total_samples) {
+                // 5.1 Surround Downmixing (ITU-R BS.775 to Stereo):
+                // Ch0: L, Ch1: R, Ch2: Center, Ch3: LFE, Ch4: Ls, Ch5: Rs
+                const float s_l   = static_cast<float>(pcm_data[idx + 0]) / 32768.0f;
+                const float s_r   = static_cast<float>(pcm_data[idx + 1]) / 32768.0f;
+                const float s_c   = static_cast<float>(pcm_data[idx + 2]) / 32768.0f;
+                const float s_lfe = static_cast<float>(pcm_data[idx + 3]) / 32768.0f;
+                const float s_ls  = static_cast<float>(pcm_data[idx + 4]) / 32768.0f;
+                const float s_rs  = static_cast<float>(pcm_data[idx + 5]) / 32768.0f;
+
+                const float downmix_l = s_l * l_gain + s_c * c_gain + s_ls * s_gain + s_lfe * lfe_gain;
+                const float downmix_r = s_r * r_gain + s_c * c_gain + s_rs * s_gain + s_lfe * lfe_gain;
+
+                mix_bus_left_[t] += downmix_l;
+                mix_bus_right_[t] += downmix_r;
+            } else {
+                mix_bus_left_[t] += sample * l_gain;
+                mix_bus_right_[t] += sample * r_gain;
+            }
 
             v.current_sample_offset += pitch_ratio;
         }
     }
 
-    // Apply environmental delay/reverb on main mix bus
+    // Apply environmental delay on main mix bus
     if (!delay_effects_.empty()) {
         auto& eff = delay_effects_[0];
         if (eff.enabled) {
@@ -268,6 +337,14 @@ size_t AudioRenderer::RenderFrame(std::span<s16> out_pcm, memory::VirtualMemory*
                 mix_bus_left_[t] = eff.Process(mix_bus_left_[t]);
                 mix_bus_right_[t] = eff.Process(mix_bus_right_[t]);
             }
+        }
+    }
+
+    // Apply environmental reverberation on main mix bus
+    if (reverb_effect_.enabled) {
+        for (size_t t = 0; t < frames; ++t) {
+            mix_bus_left_[t] = reverb_effect_.Process(mix_bus_left_[t]);
+            mix_bus_right_[t] = reverb_effect_.Process(mix_bus_right_[t]);
         }
     }
 

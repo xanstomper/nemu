@@ -159,6 +159,8 @@ void PipelineCache::Clear() {
     next_id_ = 1;
     cache_hits_ = 0;
     cache_misses_ = 0;
+    pso_disk_cache_hits_ = 0;
+    pso_disk_cache_writes_ = 0;
 }
 
 bool PipelineCache::GetOrCreatePipeline(
@@ -399,11 +401,32 @@ bool PipelineCache::GetOrCreatePipeline(
         pso_desc.BlendState.RenderTarget[i] = rt_blend;
     }
 
+    const size_t pso_hash = PipelineStateKeyHash{}(key);
+    const std::string pso_path = disk_cache_dir_.empty() ? "" : (disk_cache_dir_ + "/" + std::to_string(pso_hash) + ".pso.bin");
+    Microsoft::WRL::ComPtr<ID3DBlob> cached_pso_blob;
+    if (!pso_path.empty()) {
+        cached_pso_blob = LoadShaderFromDisk(pso_path);
+        if (cached_pso_blob) {
+            pso_desc.CachedPSO.pCachedBlob = cached_pso_blob->GetBufferPointer();
+            pso_desc.CachedPSO.CachedBlobSizeInBytes = cached_pso_blob->GetBufferSize();
+            pso_disk_cache_hits_++;
+        }
+    }
+
     Microsoft::WRL::ComPtr<ID3D12PipelineState> pso;
     hr = device_->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pso));
     if (FAILED(hr)) {
         NEMU_LOG_WARN("D3D12", "PipelineCache: CreateGraphicsPipelineState error 0x{:08X}", static_cast<u32>(hr));
         return false;
+    }
+
+    if (!pso_path.empty() && !cached_pso_blob) {
+        Microsoft::WRL::ComPtr<ID3DBlob> out_blob;
+        if (SUCCEEDED(pso->GetCachedBlob(&out_blob)) && out_blob) {
+            if (SaveShaderToDisk(pso_path, out_blob.Get())) {
+                pso_disk_cache_writes_++;
+            }
+        }
     }
 
     CachedPipeline cp;
@@ -420,6 +443,8 @@ bool PipelineCache::GetOrCreatePipeline(
         const uint64_t ps_hash = HashShaderSource(ps_hlsl.empty() ? kDefaultPixelShader : ps_hlsl);
         const std::string vs_path = disk_cache_dir_ + "/" + std::to_string(vs_hash) + "_vs.dxbc";
         const std::string ps_path = disk_cache_dir_ + "/" + std::to_string(ps_hash) + "_ps.dxbc";
+        const size_t pso_hash = PipelineStateKeyHash{}(key);
+        const std::string pso_path = disk_cache_dir_ + "/" + std::to_string(pso_hash) + ".pso.bin";
         std::error_code ec;
         if (std::filesystem::exists(vs_path, ec) && std::filesystem::exists(ps_path, ec)) {
             disk_cache_hits_++;
@@ -429,6 +454,15 @@ bool PipelineCache::GetOrCreatePipeline(
             std::ofstream fps(ps_path, std::ios::binary);
             if (fps.is_open()) fps << ps_hlsl;
             disk_cache_writes_++;
+        }
+        if (std::filesystem::exists(pso_path, ec)) {
+            pso_disk_cache_hits_++;
+        } else {
+            std::ofstream fpso(pso_path, std::ios::binary);
+            if (fpso.is_open()) {
+                fpso.write(reinterpret_cast<const char*>(&key), sizeof(key));
+                pso_disk_cache_writes_++;
+            }
         }
     }
     CachedPipeline cp;

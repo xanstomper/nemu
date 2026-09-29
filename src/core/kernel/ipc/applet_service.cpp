@@ -476,12 +476,35 @@ u32 LibraryAppletAccessorService::HandleRequest(
                 if (applet_id_ == 0x08) {
                     // Software Keyboard (swkbd):
                     // Output header: u64 result = 0 (Submit / OK)
-                    // Followed by null-terminated UTF-8 string "Player"
+                    // Followed by null-terminated UTF-8 string "Player" or extracted preset text
                     std::vector<u8> swkbd_resp(512, 0);
-                    const u64 ok_res = 0;
+                    const u64 ok_res = 0; // 0 = Submit
                     std::memcpy(swkbd_resp.data(), &ok_res, sizeof(ok_res));
-                    const char default_name[] = "Player";
-                    std::memcpy(swkbd_resp.data() + 8, default_name, sizeof(default_name));
+
+                    std::string chosen_text = "Hero";
+                    // If the game provided an initial/preset string in in_queue_, extract it
+                    if (!in_queue_.empty()) {
+                        const auto& in_data = in_queue_.front()->GetData();
+                        for (size_t i = 8; i + 4 < in_data.size(); ++i) {
+                            if (std::isprint(in_data[i]) && std::isprint(in_data[i + 1])) {
+                                std::string candidate;
+                                for (size_t j = i; j < in_data.size() && in_data[j] != 0 && std::isprint(in_data[j]) && candidate.size() < 32; ++j) {
+                                    candidate.push_back(static_cast<char>(in_data[j]));
+                                }
+                                if (candidate.size() >= 2) {
+                                    chosen_text = candidate;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // Write string length at offset 8, and string content at offset 16
+                    const u64 str_len = chosen_text.size();
+                    std::memcpy(swkbd_resp.data() + 8, &str_len, sizeof(str_len));
+                    std::memcpy(swkbd_resp.data() + 16, chosen_text.c_str(), chosen_text.size() + 1);
+                    // Also mirror null-terminated string at offset 8 for legacy v1 swkbd layout
+                    std::memcpy(swkbd_resp.data() + 8, chosen_text.c_str(), std::min(chosen_text.size() + 1, static_cast<size_t>(8)));
+
                     out_queue_.push_back(std::make_shared<StorageService>(std::move(swkbd_resp)));
                 } else if (applet_id_ == 0x10) {
                     // ProfileSelect applet:
@@ -511,17 +534,26 @@ u32 LibraryAppletAccessorService::HandleRequest(
                     std::vector<u8> amiibo_resp(64, 0);
                     const u32 ok_res = 0;
                     std::memcpy(amiibo_resp.data(), &ok_res, sizeof(ok_res));
-                    // Standard Amiibo tag UID + ID prefix
                     const u8 amiibo_tag[16] = {0x04, 0x58, 0x2A, 0x12, 0x34, 0x56, 0x78, 0x00,
                                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02};
                     std::memcpy(amiibo_resp.data() + 8, amiibo_tag, sizeof(amiibo_tag));
                     out_queue_.push_back(std::make_shared<StorageService>(std::move(amiibo_resp)));
-                } else if (applet_id_ == 0x17) {
-                    // Controller applet (0x17):
+                } else if (applet_id_ == 0x17 || applet_id_ == 0x1B) {
+                    // Controller Support applet (0x17 / 0x1B):
                     // Header: u32 result = 0 (controllers configured)
-                    std::vector<u8> ctrl_resp(32, 0);
+                    // Followed by ControllerSupportResult:
+                    // u32 player_count = 1
+                    // u32 selected_player_index = 0
+                    // u32 controller_type = 3 (Pro Controller)
+                    std::vector<u8> ctrl_resp(64, 0);
                     const u32 ok_res = 0;
-                    std::memcpy(ctrl_resp.data(), &ok_res, sizeof(ok_res));
+                    const u32 player_count = 1;
+                    const u32 selected_index = 0;
+                    const u32 ctrl_type = 3; // Pro Controller
+                    std::memcpy(ctrl_resp.data() + 0, &ok_res, sizeof(ok_res));
+                    std::memcpy(ctrl_resp.data() + 4, &player_count, sizeof(player_count));
+                    std::memcpy(ctrl_resp.data() + 8, &selected_index, sizeof(selected_index));
+                    std::memcpy(ctrl_resp.data() + 12, &ctrl_type, sizeof(ctrl_type));
                     out_queue_.push_back(std::make_shared<StorageService>(std::move(ctrl_resp)));
                 } else if (applet_id_ == 0x18) {
                     // Error applet (0x18):

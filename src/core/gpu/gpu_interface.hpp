@@ -75,6 +75,12 @@ struct RasterizerState {
     u32 msaa_samples{1};
     bool blend_enable_0{false};
     u32 blend_equation_rgb{1}; // GL func enum (1 = Add)
+    u32 blend_src_rgb{1};      // BlendFactor::One
+    u32 blend_dst_rgb{0};      // BlendFactor::Zero
+    u32 blend_op_rgb{0};       // BlendOp::Add
+    u32 blend_src_a{1};        // BlendFactor::One
+    u32 blend_dst_a{0};        // BlendFactor::Zero
+    u32 blend_op_a{0};         // BlendOp::Add
 
     // Tier-A2: expanded Maxwell 3D rasterizer state surface
     bool depth_bounds_enable{false};

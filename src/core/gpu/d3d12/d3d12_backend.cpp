@@ -107,6 +107,9 @@ bool D3D12GpuBackend::Initialize(u32 render_width, u32 render_height) {
     fence_value_ = 1;
     fence_event_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
+    // Initialize hardware asynchronous DMA copy queue (Milestone 2.1)
+    InitializeCopyQueue();
+
     d3d_viewport_ = D3D12_VIEWPORT{
         .TopLeftX = 0.0f,
         .TopLeftY = 0.0f,
@@ -334,6 +337,17 @@ bool D3D12GpuBackend::CreatePipelineAndBuffers() {
 
 void D3D12GpuBackend::Shutdown() {
     if (initialized_) {
+        WaitForCopyQueue();
+        if (copy_fence_event_) {
+            CloseHandle(copy_fence_event_);
+            copy_fence_event_ = nullptr;
+        }
+        copy_command_list_.Reset();
+        copy_allocator_.Reset();
+        copy_fence_.Reset();
+        copy_queue_.Reset();
+        copy_queue_ready_ = false;
+
         WaitForGpu();
         if (fence_event_) {
             CloseHandle(fence_event_);
@@ -370,6 +384,65 @@ void D3D12GpuBackend::Shutdown() {
         initialized_ = false;
         NEMU_LOG_INFO("D3D12", "Direct3D 12 backend shutdown complete");
     }
+}
+
+bool D3D12GpuBackend::InitializeCopyQueue() {
+    if (!device_) return false;
+
+    D3D12_COMMAND_QUEUE_DESC queue_desc{};
+    queue_desc.Type = D3D12_COMMAND_LIST_TYPE_COPY;
+    queue_desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+    HRESULT hr = device_->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&copy_queue_));
+    if (FAILED(hr)) {
+        NEMU_LOG_WARN("D3D12", "CreateCommandQueue(COPY) failed: 0x{:08X}", static_cast<u32>(hr));
+        return false;
+    }
+
+    hr = device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY, IID_PPV_ARGS(&copy_allocator_));
+    if (FAILED(hr)) {
+        NEMU_LOG_WARN("D3D12", "CreateCommandAllocator(COPY) failed: 0x{:08X}", static_cast<u32>(hr));
+        return false;
+    }
+
+    hr = device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COPY, copy_allocator_.Get(), nullptr, IID_PPV_ARGS(&copy_command_list_));
+    if (FAILED(hr)) {
+        NEMU_LOG_WARN("D3D12", "CreateCommandList(COPY) failed: 0x{:08X}", static_cast<u32>(hr));
+        return false;
+    }
+    copy_command_list_->Close();
+
+    hr = device_->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&copy_fence_));
+    if (FAILED(hr)) {
+        NEMU_LOG_WARN("D3D12", "CreateFence(COPY) failed: 0x{:08X}", static_cast<u32>(hr));
+        return false;
+    }
+    copy_fence_value_ = 1;
+    copy_fence_event_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    copy_queue_ready_ = true;
+
+    NEMU_LOG_INFO("D3D12", "Hardware Asynchronous DMA Copy Queue initialized (D3D12_COMMAND_LIST_TYPE_COPY)");
+    return true;
+}
+
+void D3D12GpuBackend::WaitForCopyQueue() {
+    if (!copy_queue_ || !copy_fence_ || !copy_fence_event_) return;
+
+    const UINT64 fence_to_wait = copy_fence_value_;
+    copy_queue_->Signal(copy_fence_.Get(), fence_to_wait);
+    copy_fence_value_++;
+
+    if (copy_fence_->GetCompletedValue() < fence_to_wait) {
+        copy_fence_->SetEventOnCompletion(fence_to_wait, copy_fence_event_);
+        WaitForSingleObject(copy_fence_event_, INFINITE);
+    }
+}
+
+void D3D12GpuBackend::SyncCopyQueueToDirect() {
+    if (!copy_queue_ || !copy_fence_ || !command_queue_) return;
+
+    const UINT64 fence_to_sync = copy_fence_value_++;
+    copy_queue_->Signal(copy_fence_.Get(), fence_to_sync);
+    command_queue_->Wait(copy_fence_.Get(), fence_to_sync);
 }
 
 void D3D12GpuBackend::WaitForGpu() {
@@ -601,7 +674,34 @@ bool D3D12GpuBackend::PresentNVDECFrame(const NVDECFrame& frame) {
     std::memcpy(mapped, frame.nv12_data.data(), required);
     nvdec_upload_->Unmap(0, nullptr);
 
-    // GPU copy upload -> texture on the next command list flush (Present()).
+    // GPU copy upload -> texture via asynchronous DMA copy queue when available.
+    if (copy_queue_ready_ && copy_allocator_ && copy_command_list_) {
+        copy_allocator_->Reset();
+        copy_command_list_->Reset(copy_allocator_.Get(), nullptr);
+
+        D3D12_TEXTURE_COPY_LOCATION src_loc{};
+        src_loc.pResource = nvdec_upload_.Get();
+        src_loc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        src_loc.PlacedFootprint.Offset = 0;
+        src_loc.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8_TYPELESS;
+        src_loc.PlacedFootprint.Footprint.Width = frame.width;
+        src_loc.PlacedFootprint.Footprint.Height = frame.height;
+        src_loc.PlacedFootprint.Footprint.Depth = 1;
+        src_loc.PlacedFootprint.Footprint.RowPitch = static_cast<UINT>(row_pitch);
+
+        D3D12_TEXTURE_COPY_LOCATION dst_loc{};
+        dst_loc.pResource = nvdec_texture_.Get();
+        dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dst_loc.SubresourceIndex = 0;
+
+        copy_command_list_->CopyTextureRegion(&dst_loc, 0, 0, 0, &src_loc, nullptr);
+        copy_command_list_->Close();
+
+        ID3D12CommandList* const copy_lists[] = { copy_command_list_.Get() };
+        copy_queue_->ExecuteCommandLists(1, copy_lists);
+        SyncCopyQueueToDirect();
+    }
+
     nvdec_frame_number_ = frame.frame_number;
     nvdec_frame_pending_ = true;
     NEMU_LOG_DEBUG("D3D12", "PresentNVDECFrame: {}x{} frame {} queued",
@@ -651,8 +751,16 @@ bool D3D12GpuBackend::CreateComputePipeline() {
     }
 
     Microsoft::WRL::ComPtr<ID3DBlob> cs_blob;
+    const bool needs_wave = translated.hlsl_source.find("WaveReadLaneAt") != std::string::npos;
     hr_ = D3DCompile(translated.hlsl_source.data(), translated.hlsl_source.size(), "NemuCS",
-                     nullptr, nullptr, "main", "cs_5_0", 0, 0, &cs_blob, nullptr);
+                     nullptr, nullptr, "main",
+                     // SM6.0 for wave intrinsics (SHFL); fall back to 5_0.
+                     needs_wave ? "cs_6_0" : "cs_5_0",
+                     0, 0, &cs_blob, nullptr);
+    if (FAILED(hr_) && needs_wave) {
+        hr_ = D3DCompile(translated.hlsl_source.data(), translated.hlsl_source.size(), "NemuCS",
+                         nullptr, nullptr, "main", "cs_5_0", 0, 0, &cs_blob, nullptr);
+    }
     if (FAILED(hr_)) {
         NEMU_LOG_WARN("D3D12", "CreateComputePipeline: D3DCompile(cs) failed 0x{:08X}",
                       static_cast<u32>(hr_));
@@ -981,6 +1089,12 @@ bool D3D12GpuBackend::BindTranslatedPipeline(PrimitiveTopology topology) {
         default: key.depth_func = pipeline::DepthFunc::Less; break;
     }
     key.blend_enable = current_rasterizer_state_.blend_enable_0;
+    key.src_rgb = static_cast<pipeline::BlendFactor>(current_rasterizer_state_.blend_src_rgb);
+    key.dst_rgb = static_cast<pipeline::BlendFactor>(current_rasterizer_state_.blend_dst_rgb);
+    key.op_rgb  = static_cast<pipeline::BlendOp>(current_rasterizer_state_.blend_op_rgb);
+    key.src_alpha = static_cast<pipeline::BlendFactor>(current_rasterizer_state_.blend_src_a);
+    key.dst_alpha = static_cast<pipeline::BlendFactor>(current_rasterizer_state_.blend_dst_a);
+    key.op_alpha  = static_cast<pipeline::BlendOp>(current_rasterizer_state_.blend_op_a);
     key.num_render_targets = std::clamp<u8>(current_rasterizer_state_.num_render_targets, 1, 8);
     for (u8 i = 0; i < 8; ++i) {
         key.rtv_formats[i] = current_rasterizer_state_.rtv_formats[i];
@@ -1037,6 +1151,13 @@ bool D3D12GpuBackend::BindTranslatedPipeline(PrimitiveTopology topology) {
         default: break;
     }
     command_list_->IASetPrimitiveTopology(d3d_topo);
+
+    if (current_rasterizer_state_.depth_bounds_enable) {
+        Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList1> cmd1;
+        if (SUCCEEDED(command_list_.As(&cmd1)) && cmd1) {
+            cmd1->OMSetDepthBounds(current_rasterizer_state_.depth_bounds_near, current_rasterizer_state_.depth_bounds_far);
+        }
+    }
 
     // Bind geometry. When a guest vertex buffer is present (P2-4 guest path),
     // bind it with the guest stride; otherwise bind the RasterVertex geometry.
@@ -1110,6 +1231,8 @@ D3D12GpuBackend::PipelineValidation D3D12GpuBackend::GetPipelineValidation() con
     v.swap_chain_created = swap_chain_ != nullptr;
     v.root_signature_created = root_signature_ != nullptr;
     v.pso_created = pso_ != nullptr;
+    v.copy_queue_created = copy_queue_ != nullptr;
+    v.copy_list_created = copy_command_list_ != nullptr;
     v.geometry_upload_ok = vertex_buffer_ != nullptr || back_buffers_.empty();
     v.back_buffer_count = static_cast<u32>(back_buffers_.size());
     v.last_hr = hr_;

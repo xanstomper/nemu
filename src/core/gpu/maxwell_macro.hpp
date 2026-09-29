@@ -19,6 +19,18 @@ public:
 
     using MethodCallback = std::function<void(u32 method, u32 argument)>;
 
+    /// Pre-decoded Maxwell MME instruction representation for zero-overhead JIT execution
+    struct DecodedMmeInst {
+        u8 op{0};
+        u8 src_a{0};
+        u8 src_b{0};
+        u8 dst{0};
+        bool emit{false};
+        u32 imm{0};
+    };
+
+    using CompiledMacroFunc = std::function<void(std::span<const u32> params, const MethodCallback& on_emit)>;
+
     MaxwellMacroEngine();
     ~MaxwellMacroEngine() = default;
 
@@ -37,6 +49,18 @@ public:
     /// Check if a macro slot contains a valid executable program
     [[nodiscard]] bool HasMacro(u32 slot) const noexcept;
 
+    /// JIT-compile the macro at the given slot into an optimized execution closure
+    void CompileMacro(u32 slot);
+
+    /// JIT-compile all currently valid uploaded macros
+    void CompileAll();
+
+    /// Check if a macro slot has an active JIT compiled executor
+    [[nodiscard]] bool IsCompiled(u32 slot) const noexcept;
+
+    /// Total number of currently JIT-compiled macro programs
+    [[nodiscard]] size_t GetCompiledMacroCount() const noexcept;
+
     /// Execute a macro program at the given slot with input parameters
     /// @param slot Macro index (0..127) corresponding to methods 0xE00..0xE7F
     /// @param params Pushbuffer parameter stream provided to the macro call
@@ -49,7 +73,10 @@ public:
 private:
     struct MacroSlot {
         std::vector<u32> code;
+        std::vector<DecodedMmeInst> decoded_ops;
+        CompiledMacroFunc compiled_func{nullptr};
         bool is_valid{false};
+        bool is_compiled{false};
         u32 execution_count{0};
     };
 

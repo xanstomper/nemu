@@ -3,6 +3,8 @@
 #include "core/audio/null_audio_backend.hpp"
 #include "core/audio/audio_factory.hpp"
 #include "core/audio/adpcm/adpcm.hpp"
+#include "core/audio/audren/audio_renderer.hpp"
+#include "core/audio/audin/audio_input.hpp"
 #include <iostream>
 #include <vector>
 #include <cmath>
@@ -193,6 +195,86 @@ int main() {
         NEMU_TEST_ASSERT(expected_l != 0.0f && expected_r != 0.0f, "Downmixed 5.1 audio produces valid stereo");
 
         std::cout << "  - Nintendo DSP ADPCM Codec (frame, stream, stereo, 5.1 surround downmix): PASSED" << std::endl;
+    }
+
+    // 5. Test Biquad IIR DSP Filtering (Milestone 3.1)
+    {
+        audren::BiquadFilterParams lp{};
+        lp.ConfigureLowPass(48000.0f, 1000.0f);
+        NEMU_TEST_ASSERT(lp.enabled, "Low-pass filter enabled");
+        // DC input (0 Hz) should pass with gain ~ 1.0
+        float val = 0.0f;
+        for (int i = 0; i < 100; ++i) {
+            val = lp.Process(1.0f);
+        }
+        NEMU_TEST_ASSERT(std::abs(val - 1.0f) < 0.05f, "DC response near 1.0");
+
+        audren::BiquadFilterParams hp{};
+        hp.ConfigureHighPass(48000.0f, 1000.0f);
+        NEMU_TEST_ASSERT(hp.enabled, "High-pass filter enabled");
+        for (int i = 0; i < 100; ++i) {
+            val = hp.Process(1.0f);
+        }
+        NEMU_TEST_ASSERT(std::abs(val) < 0.05f, "DC blocked by high-pass");
+
+        audren::BiquadFilterParams bp{};
+        bp.ConfigureBandPass(48000.0f, 1000.0f);
+        NEMU_TEST_ASSERT(bp.enabled, "Band-pass filter enabled");
+
+        audren::BiquadFilterParams notch{};
+        notch.ConfigureNotch(48000.0f, 60.0f);
+        NEMU_TEST_ASSERT(notch.enabled, "Notch filter enabled");
+
+        std::cout << "  - DSP Biquad IIR Filter Engine (LP, HP, BP, Notch): PASSED" << std::endl;
+    }
+
+    // 6. Test Environmental Reverb Delay Lines (Milestone 3.1)
+    {
+        audren::ReverbParams reverb{};
+        reverb.Initialize(48000);
+        NEMU_TEST_ASSERT(reverb.enabled, "Reverb initialized and enabled");
+
+        // Feed impulse
+        float imp_out = reverb.Process(1.0f);
+        NEMU_TEST_ASSERT(imp_out != 0.0f, "Impulse produces response");
+
+        // Feed silence and check tail decay
+        float tail_energy = 0.0f;
+        for (int i = 0; i < 2000; ++i) {
+            float tail = reverb.Process(0.0f);
+            tail_energy += std::abs(tail);
+        }
+        NEMU_TEST_ASSERT(tail_energy > 0.01f, "Reverb tail energy sustained");
+
+        std::cout << "  - Environmental Reverb Effect Delay Line Engine: PASSED" << std::endl;
+    }
+
+    // 7. Test Audio Input Service & Microphone Synthesis (Milestone 3.3)
+    {
+        audin::AudioInputManager in_mgr;
+        auto devices = in_mgr.EnumerateDevices();
+        NEMU_TEST_ASSERT(!devices.empty(), "Audio input devices enumerated");
+
+        NEMU_TEST_ASSERT(in_mgr.OpenStream("Default", 48000, 1), "Open microphone stream");
+        NEMU_TEST_ASSERT(in_mgr.IsRecording(), "Microphone is recording");
+
+        std::vector<s16> buffer(480, 0);
+        size_t read = in_mgr.ReadSamples(buffer);
+        NEMU_TEST_ASSERT(read == 480, "Read 480 microphone samples");
+
+        bool non_zero = false;
+        for (s16 sample : buffer) {
+            if (sample != 0) {
+                non_zero = true;
+                break;
+            }
+        }
+        NEMU_TEST_ASSERT(non_zero, "Synthetic microphone generates room tone");
+
+        in_mgr.CloseStream();
+        NEMU_TEST_ASSERT(!in_mgr.IsRecording(), "Microphone stream closed");
+
+        std::cout << "  - Audio Input Service & Synthetic PCM Capture (audin:u): PASSED" << std::endl;
     }
 
     std::cout << "[Test: Audio Subsystem & Ring Buffer Processing PASSED]" << std::endl;

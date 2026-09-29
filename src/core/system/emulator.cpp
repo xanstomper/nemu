@@ -1,4 +1,5 @@
 #include "emulator.hpp"
+#include "guest_thread_pool.hpp"
 #include "core/loader/nro.hpp"
 #include "core/gpu/gpu_factory.hpp"
 #include "core/audio/audio_factory.hpp"
@@ -137,6 +138,14 @@ bool Emulator::Initialize() {
             }
         });
     }
+
+    // 13. 3T+1T Guest Thread Pool (Xbox-pinned multi-core CPU scheduler)
+    thread_pool_ = std::make_shared<GuestThreadPool>(process_);
+    thread_pool_->SetSvcHandler([this](cpu::CpuState& state, u32 svc_id) {
+        if (process_ && main_thread_) {
+            kernel::SvcDispatcher::Dispatch(state, *process_, *main_thread_, svc_id);
+        }
+    });
 
     state_ = EmulatorState::Ready;
     NEMU_LOG_INFO("System", "Nemu System Runtime initialized successfully (GPU: {}, Audio: {})",
@@ -411,15 +420,18 @@ void Emulator::Start() {
 void Emulator::Pause() {
     if (state_ == EmulatorState::Running) {
         state_ = EmulatorState::Paused;
+        if (thread_pool_) thread_pool_->Pause();
     }
 }
 
 void Emulator::Resume() {
+    if (thread_pool_) thread_pool_->Resume();
     Start();
 }
 
 void Emulator::Stop() {
     state_ = EmulatorState::Stopped;
+    if (thread_pool_) thread_pool_->Stop();
 }
 
 bool Emulator::SaveState(u32 slot) {
@@ -533,55 +545,62 @@ void Emulator::StepCpuQuantum(size_t instruction_budget) {
         return;
     }
 
-    for (const auto& thread : threads) {
-        if (!thread || thread->GetState() != kernel::ThreadState::Ready) {
-            continue;
+    if (thread_pool_) {
+        const size_t per_core = std::max<size_t>(500, instruction_budget / GuestThreadPool::NUM_GUEST_CORES);
+        for (u32 c = 0; c < GuestThreadPool::NUM_GUEST_CORES; ++c) {
+            total_instructions_ += thread_pool_->StepCoreSynchronous(c, per_core);
         }
-
-        cpu::CpuState& cpu = thread->GetCpuState();
-        size_t executed_in_quantum = 0;
-
-        if (jit_ && config_.jit_enabled) {
-            while (executed_in_quantum < instruction_budget &&
-                   process_->GetState() == kernel::ProcessState::Running &&
-                   thread->GetState() == kernel::ThreadState::Ready) {
-                if (cpu.pc == EXIT_ADDR || cpu.halted) {
-                    thread->SetState(kernel::ThreadState::Terminated);
-                    break;
-                }
-                bool ok = jit_->Execute(cpu, process_->GetVirtualMemory());
-                if (!ok) {
-                    // Fall back to interpreter for this instruction
-                    cpu::Interpreter interp(cpu, process_->GetVirtualMemory());
-                    interp.SetSvcHandler([this, thread](cpu::CpuState& s, u32 svc) {
-                        kernel::SvcDispatcher::Dispatch(s, *process_, *thread, svc);
-                    });
-                    interp.Step();
-                }
-                executed_in_quantum += 1;
+    } else {
+        for (const auto& thread : threads) {
+            if (!thread || thread->GetState() != kernel::ThreadState::Ready) {
+                continue;
             }
-        } else {
-            cpu::Interpreter interp(cpu, process_->GetVirtualMemory());
-            interp.SetSvcHandler([this, thread](cpu::CpuState& s, u32 svc) {
-                kernel::SvcDispatcher::Dispatch(s, *process_, *thread, svc);
-            });
-            while (executed_in_quantum < instruction_budget &&
-                   process_->GetState() == kernel::ProcessState::Running &&
-                   thread->GetState() == kernel::ThreadState::Ready) {
-                if (cpu.pc == EXIT_ADDR || cpu.halted) {
-                    thread->SetState(kernel::ThreadState::Terminated);
-                    break;
+
+            cpu::CpuState& cpu = thread->GetCpuState();
+            size_t executed_in_quantum = 0;
+
+            if (jit_ && config_.jit_enabled) {
+                while (executed_in_quantum < instruction_budget &&
+                       process_->GetState() == kernel::ProcessState::Running &&
+                       thread->GetState() == kernel::ThreadState::Ready) {
+                    if (cpu.pc == EXIT_ADDR || cpu.halted) {
+                        thread->SetState(kernel::ThreadState::Terminated);
+                        break;
+                    }
+                    bool ok = jit_->Execute(cpu, process_->GetVirtualMemory());
+                    if (!ok) {
+                        // Fall back to interpreter for this instruction
+                        cpu::Interpreter interp(cpu, process_->GetVirtualMemory());
+                        interp.SetSvcHandler([this, thread](cpu::CpuState& s, u32 svc) {
+                            kernel::SvcDispatcher::Dispatch(s, *process_, *thread, svc);
+                        });
+                        interp.Step();
+                    }
+                    executed_in_quantum += 1;
                 }
-                auto step_res = interp.Step();
-                if (step_res == cpu::StepResult::Halted) {
-                    thread->SetState(kernel::ThreadState::Terminated);
-                    break;
+            } else {
+                cpu::Interpreter interp(cpu, process_->GetVirtualMemory());
+                interp.SetSvcHandler([this, thread](cpu::CpuState& s, u32 svc) {
+                    kernel::SvcDispatcher::Dispatch(s, *process_, *thread, svc);
+                });
+                while (executed_in_quantum < instruction_budget &&
+                       process_->GetState() == kernel::ProcessState::Running &&
+                       thread->GetState() == kernel::ThreadState::Ready) {
+                    if (cpu.pc == EXIT_ADDR || cpu.halted) {
+                        thread->SetState(kernel::ThreadState::Terminated);
+                        break;
+                    }
+                    auto step_res = interp.Step();
+                    if (step_res == cpu::StepResult::Halted) {
+                        thread->SetState(kernel::ThreadState::Terminated);
+                        break;
+                    }
+                    executed_in_quantum += 1;
                 }
-                executed_in_quantum += 1;
             }
+
+            total_instructions_ += executed_in_quantum;
         }
-
-        total_instructions_ += executed_in_quantum;
     }
 
     // If main thread terminated, mark process terminated

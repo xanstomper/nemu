@@ -52,6 +52,25 @@ public:
         s32 value_modifier
     );
 
+    /// Signal threads and modify address value by waiting count if memory equals expected_val
+    u32 SignalAndModifyByWaitingCountIfEqual(
+        memory::VirtualMemory& vm,
+        vaddr_t address,
+        u32 expected_val,
+        u32 count,
+        s32 modifier,
+        bool lifo_wake = false
+    );
+
+    /// Signal threads and increment address value if memory equals expected_val
+    u32 SignalAndIncrementIfEqual(
+        memory::VirtualMemory& vm,
+        vaddr_t address,
+        u32 expected_val,
+        u32 count,
+        bool lifo_wake = false
+    );
+
 private:
     struct WaitQueue {
         std::condition_variable cv;

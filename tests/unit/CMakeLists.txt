@@ -602,3 +602,20 @@ target_link_libraries(test_xbox_platform PRIVATE
 target_compile_features(test_xbox_platform PRIVATE cxx_std_20)
 add_test(NAME test_xbox_platform COMMAND test_xbox_platform)
 
+# LDN & Nintendo PIA Mesh Networking Tests
+add_executable(test_network
+    network/test_network.cpp
+)
+
+target_include_directories(test_network PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_network PRIVATE
+    Nemu.Network
+    Nemu.Platform
+)
+
+target_compile_features(test_network PRIVATE cxx_std_20)
+add_test(NAME test_network COMMAND test_network)
+

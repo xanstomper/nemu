@@ -6,8 +6,16 @@
 #include <windows.h>
 #include <xinput.h>
 
+struct XINPUT_VIBRATION_EX {
+    WORD wLeftMotorSpeed;
+    WORD wRightMotorSpeed;
+    WORD wLeftTriggerMotorSpeed;
+    WORD wRightTriggerMotorSpeed;
+};
+
 typedef DWORD (WINAPI *PFN_XInputGetState)(DWORD dwUserIndex, XINPUT_STATE* pState);
 typedef DWORD (WINAPI *PFN_XInputSetState)(DWORD dwUserIndex, XINPUT_VIBRATION* pVibration);
+typedef DWORD (WINAPI *PFN_XInputSetStateEx)(DWORD dwUserIndex, XINPUT_VIBRATION_EX* pVibration);
 #endif
 
 namespace nemu::core::hid {
@@ -37,6 +45,11 @@ bool XboxControllerDriver::InitializeXInput() {
 #endif
             auto get_state = reinterpret_cast<PFN_XInputGetState>(GetProcAddress(mod, "XInputGetState"));
             auto set_state = reinterpret_cast<PFN_XInputSetState>(GetProcAddress(mod, "XInputSetState"));
+            auto set_state_ex = reinterpret_cast<PFN_XInputSetStateEx>(GetProcAddress(mod, "XInputSetStateEx"));
+            if (!set_state_ex) {
+                // Ordinal 100 on Xbox OS / Windows provides XInputSetStateEx for impulse triggers
+                set_state_ex = reinterpret_cast<PFN_XInputSetStateEx>(GetProcAddress(mod, reinterpret_cast<LPCSTR>(100)));
+            }
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
@@ -44,8 +57,10 @@ bool XboxControllerDriver::InitializeXInput() {
                 xinput_module_ = mod;
                 fn_get_state_ = reinterpret_cast<void*>(get_state);
                 fn_set_state_ = reinterpret_cast<void*>(set_state);
+                fn_set_state_ex_ = reinterpret_cast<void*>(set_state_ex);
                 xinput_available_ = true;
-                NEMU_LOG_INFO("HID", "Xbox Wireless Controller driver initialized via {}", dll);
+                NEMU_LOG_INFO("HID", "Xbox Wireless Controller driver initialized via {} (Impulse triggers: {})",
+                              dll, set_state_ex ? "Supported" : "Emulated");
                 return true;
             }
             FreeLibrary(mod);
@@ -129,12 +144,22 @@ bool XboxControllerDriver::SetVibration4(size_t player_index, float left_motor, 
     };
 
 #ifdef _WIN32
-    if (xinput_available_ && fn_set_state_) {
-        auto set_state = reinterpret_cast<PFN_XInputSetState>(fn_set_state_);
-        XINPUT_VIBRATION vib{};
-        vib.wLeftMotorSpeed = static_cast<WORD>(last_vibration_[player_index][0] * 65535.0f);
-        vib.wRightMotorSpeed = static_cast<WORD>(last_vibration_[player_index][1] * 65535.0f);
-        return set_state(static_cast<DWORD>(player_index), &vib) == ERROR_SUCCESS;
+    if (xinput_available_) {
+        if (fn_set_state_ex_) {
+            auto set_state_ex = reinterpret_cast<PFN_XInputSetStateEx>(fn_set_state_ex_);
+            XINPUT_VIBRATION_EX vib_ex{};
+            vib_ex.wLeftMotorSpeed = static_cast<WORD>(last_vibration_[player_index][0] * 65535.0f);
+            vib_ex.wRightMotorSpeed = static_cast<WORD>(last_vibration_[player_index][1] * 65535.0f);
+            vib_ex.wLeftTriggerMotorSpeed = static_cast<WORD>(last_vibration_[player_index][2] * 65535.0f);
+            vib_ex.wRightTriggerMotorSpeed = static_cast<WORD>(last_vibration_[player_index][3] * 65535.0f);
+            return set_state_ex(static_cast<DWORD>(player_index), &vib_ex) == ERROR_SUCCESS;
+        } else if (fn_set_state_) {
+            auto set_state = reinterpret_cast<PFN_XInputSetState>(fn_set_state_);
+            XINPUT_VIBRATION vib{};
+            vib.wLeftMotorSpeed = static_cast<WORD>(last_vibration_[player_index][0] * 65535.0f);
+            vib.wRightMotorSpeed = static_cast<WORD>(last_vibration_[player_index][1] * 65535.0f);
+            return set_state(static_cast<DWORD>(player_index), &vib) == ERROR_SUCCESS;
+        }
     }
 #endif
     return true; // Virtual / headless success

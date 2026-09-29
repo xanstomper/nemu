@@ -76,6 +76,21 @@ int main() {
         NEMU_TEST_ASSERT(hud.find("RAM:") != std::string::npos, "HUD contains RAM prefix");
         NEMU_TEST_ASSERT(hud.find("5.1GB") != std::string::npos, "HUD contains 5.1GB ceiling");
 
+
+        // Verify Dynamic Resolution Scaling based on frame time
+        gov.SimulateCommitBytes(2000ULL * 1024 * 1024); // Nominal memory
+        gov.EvaluateAndEnforce(); // Reset dynamic scale to 1.0f
+        NEMU_TEST_ASSERT(gov.GetDynamicResolutionScale() == 1.0f, "Initial scale is 1.0");
+
+        float dyn_scale = 1.0f;
+        gov.RegisterResolutionScaleCallback([&](float scale) { dyn_scale = scale; });
+        for (int i = 0; i < 40; ++i) {
+            gov.RecordFrameTime(35.0f); // High frame times (> 16.6ms) simulate GPU load
+        }
+        gov.EvaluateAndEnforce();
+        NEMU_TEST_ASSERT(dyn_scale < 1.0f, "Resolution scaled down under frame pressure");
+        NEMU_TEST_ASSERT(gov.GetDynamicResolutionScale() < 1.0f, "Governor dynamic resolution scale updated");
+
         gov.ResetSimulatedCommit();
         std::cout << "  - Memory Governor & Hysteresis: PASSED" << std::endl;
     }
