@@ -17,6 +17,10 @@ struct NvMapObject {
     u8  kind{0};
     vaddr_t guest_va{0};
     bool is_allocated{false};
+    // Refcount model (yuzu nvmap port): handles are dup'd across engine sessions;
+    // Free releases only when references hit zero.
+    u32 internal_refs{1};   // creator reference
+    u32 external_refs{0};   // Dup handles
 };
 
 class NvMap {
@@ -34,6 +38,10 @@ public:
     bool Alloc(u32 handle, u32 heap_mask, u32 flags, u32 align, u8 kind, vaddr_t guest_va);
 
     /// Release an nvmap handle. Returns true if the handle was valid and freed.
+    /// Dup a handle: increments the external reference count (yuzu NVGPU_IOCTL_NVMAP_DUP).
+    bool Dup(u32 handle);
+    /// Free with refcount semantics: releases at zero refs. Returns false if
+    /// unknown handle; the handle stays alive while other refs exist.
     bool Free(u32 handle);
 
     /// Query parameter: 1=size, 2=align, 3=base, 4=heap, 5=kind.

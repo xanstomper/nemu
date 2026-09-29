@@ -267,6 +267,19 @@ int main() {
 
         NEMU_TEST_ASSERT(nvmap.Free(h1), "NvMap::Free h1");
         NEMU_TEST_ASSERT(nvmap.GetObject(h1) == nullptr, "Freed handle must be null");
+
+        // Refcount semantics (yuzu nvmap port): dup'd handles survive a Free.
+        {
+            const u32 hd = nvmap.Create(0x1000);
+            NEMU_TEST_ASSERT(hd != 0, "Create for refcount test");
+            NEMU_TEST_ASSERT(nvmap.Dup(hd), "Dup increments external refs");
+            NEMU_TEST_ASSERT(nvmap.Free(hd), "Free with external refs succeeds (deferred)");
+            NEMU_TEST_ASSERT(nvmap.GetObject(hd) != nullptr,
+                             "Dup'd handle must survive one Free (deferred release)");
+            NEMU_TEST_ASSERT(nvmap.Free(hd), "Second Free drops the external ref");
+            NEMU_TEST_ASSERT(nvmap.GetObject(hd) == nullptr,
+                             "Handle released only after all refs drop");
+        }
         std::cout << "  - NvMap memory handle manager tests: PASSED" << std::endl;
     }
 

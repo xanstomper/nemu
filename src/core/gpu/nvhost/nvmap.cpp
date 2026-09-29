@@ -34,11 +34,37 @@ bool NvMap::Alloc(u32 handle, u32 heap_mask, u32 flags, u32 align, u8 kind, vadd
     return true;
 }
 
+bool NvMap::Dup(u32 handle) {
+    std::unique_lock lock(mutex_);
+    auto it = handles_.find(handle);
+    if (it == handles_.end()) {
+        return false;
+    }
+    ++it->second->external_refs;
+    NEMU_LOG_DEBUG("NvMap", "Dup'd nvmap handle 0x{:X} (external refs={})", handle,
+                   it->second->external_refs);
+    return true;
+}
+
 bool NvMap::Free(u32 handle) {
     std::unique_lock lock(mutex_);
     auto it = handles_.find(handle);
     if (it == handles_.end()) {
         return false;
+    }
+    // Refcount release (yuzu semantics): a Free against a handle with live
+    // external refs only drops the internal reference; the mapping stays
+    // alive for the other engines until their refs are released too.
+    if (it->second->internal_refs > 0) {
+        --it->second->internal_refs;
+    } else if (it->second->external_refs > 0) {
+        --it->second->external_refs;
+    }
+    // Release deferred while ANY reference (internal or external) remains.
+    if (it->second->internal_refs > 0 || it->second->external_refs > 0) {
+        NEMU_LOG_DEBUG("NvMap", "Deferred free of nvmap handle 0x{:X} (internal={}, external={})",
+                       handle, it->second->internal_refs, it->second->external_refs);
+        return true;
     }
     if (it->second->id != 0) {
         ids_.erase(it->second->id);
