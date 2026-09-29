@@ -10,8 +10,12 @@ set(GPU_SOURCES
     buffer_cache.cpp
     maxwell_3d.hpp
     maxwell_3d.cpp
+    maxwell_macro.hpp
+    maxwell_macro.cpp
     maxwell_dma.hpp
     maxwell_dma.cpp
+    engine_upload.hpp
+    engine_upload.cpp
     fermi_2d.hpp
     fermi_2d.cpp
     kepler_compute.hpp
@@ -48,6 +52,8 @@ set(GPU_SOURCES
     presentation/nvnflinger.cpp
     texture/astc_decoder.hpp
     texture/astc_decoder.cpp
+    texture/astc_compute.hpp
+    texture/astc_compute.cpp
     texture/bc1_encoder.hpp
     texture/bc1_encoder.cpp
     texture/texture_types.hpp

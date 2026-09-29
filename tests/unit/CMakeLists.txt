@@ -439,6 +439,17 @@ target_link_libraries(test_kepler_compute PRIVATE
 target_compile_features(test_kepler_compute PRIVATE cxx_std_20)
 add_test(NAME test_kepler_compute COMMAND test_kepler_compute)
 
+add_executable(test_engine_upload
+    gpu/test_engine_upload.cpp
+)
+
+target_include_directories(test_engine_upload PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+target_compile_features(test_engine_upload PRIVATE cxx_std_20)
+target_link_libraries(test_engine_upload PRIVATE Nemu.Core)
+add_test(NAME test_engine_upload COMMAND test_engine_upload)
+
 add_executable(test_aligned_alloc
     common/test_aligned_alloc.cpp
 )

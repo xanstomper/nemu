@@ -5,6 +5,8 @@
 #include "gpu_interface.hpp"
 #include "gmmu.hpp"
 #include "buffer_cache.hpp"
+#include "engine_upload.hpp"
+#include "maxwell_macro.hpp"
 #include <span>
 #include <array>
 #include <memory>
@@ -15,11 +17,14 @@ namespace nemu::core::memory {
 class VirtualMemory;
 }
 
+
 namespace nemu::core::gpu {
 
 namespace MaxwellMethod {
     // Control, DMA & Synchronization
     constexpr u32 ObjectId = 0x0000;
+    constexpr u32 BindMacro = 0x0038;
+    constexpr u32 LoadMacro = 0x0039;
     constexpr u32 Nop = 0x0200;
     constexpr u32 NopHw = 0x0040;
     constexpr u32 Notify = 0x0041;
@@ -34,6 +39,18 @@ namespace MaxwellMethod {
     constexpr u32 FragmentBarrier = 0x0378;
     constexpr u32 PipeNop = 0x068B;
     constexpr u32 ReportSemaphore = 0x06C0;
+    constexpr u32 MacroCallBase = 0x0E00;
+    constexpr u32 MacroCallEnd = 0x0E7F;
+
+    // Transform Feedback (Stream Output)
+    constexpr u32 StreamOutEnable = 0x05A7;
+    constexpr u32 StreamOutBufferAddressHigh = 0x05A8;
+    constexpr u32 StreamOutBufferAddressLow = 0x05A9;
+    constexpr u32 StreamOutBufferSize = 0x05AA;
+    constexpr u32 StreamOutStride = 0x05AB;
+
+    // Viewport Depth Clipping / Reverse-Z
+    constexpr u32 ViewportClipControl = 0x0599;
 
     // Viewports & Scissors
     constexpr u32 ViewportTransform = 0x0280;
@@ -286,6 +303,8 @@ public:
     void SetGpuMemory(std::shared_ptr<GpuMemoryManager> gmmu);
     [[nodiscard]] GpuMemoryManager* GetGpuMemory() const noexcept { return gmmu_.get(); }
     [[nodiscard]] BufferCache* GetBufferCache() const noexcept { return buffer_cache_.get(); }
+    [[nodiscard]] MaxwellMacroEngine& GetMacroEngine() noexcept { return macro_engine_; }
+    [[nodiscard]] const MaxwellMacroEngine& GetMacroEngine() const noexcept { return macro_engine_; }
 
 private:
     void ExecuteDrawArrays(u32 argument);
@@ -293,6 +312,7 @@ private:
     void ExecuteDrawTexture(u32 argument);
     void ExecuteDispatchCompute(u32 argument);
     void ExecuteClearSurface(u32 argument);
+    void ExecuteMacro(u32 slot, u32 argument);
     void EmitDebugGeometry(); // stage a recognizable test triangle for draws
     void EmitDebugIndexedGeometry(); // stage indexed test geometry
     void BindGuestShaders(); // upload guest VS/PS bytecode to the backend
@@ -306,6 +326,8 @@ private:
     memory::VirtualMemory* memory_{nullptr};
     std::shared_ptr<GpuMemoryManager> gmmu_;
     std::shared_ptr<BufferCache> buffer_cache_;
+    std::unique_ptr<EngineUpload> upload_;  // inline-to-memory uploader
+    MaxwellMacroEngine macro_engine_{};
     Maxwell3DRegisters regs_{};
     bool programs_dirty_{false};
     bool textures_dirty_{false};

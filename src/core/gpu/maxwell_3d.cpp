@@ -1,6 +1,7 @@
 #include "maxwell_3d.hpp"
 #include "core/debug/breadcrumbs.hpp"
 #include "compute_qmd.hpp"
+#include "engine_upload.hpp"
 #include "texture/astc_decoder.hpp"
 #include "texture/texture_types.hpp"
 #include "core/memory/virtual_memory.hpp"
@@ -100,11 +101,20 @@ void Maxwell3D::InitializeRegisterDefaults() {
 void Maxwell3D::SetGpuMemory(std::shared_ptr<GpuMemoryManager> gmmu) {
     gmmu_ = std::move(gmmu);
     buffer_cache_ = std::make_shared<BufferCache>(gmmu_);
+    upload_ = std::make_unique<EngineUpload>(gmmu_.get());
 }
 
 void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
     const u32 reg_idx = method & 0xFFF;
     regs_.regs[reg_idx] = argument;
+
+    if (method >= MaxwellMethod::MacroCallBase && method <= MaxwellMethod::MacroCallEnd) {
+        const u32 slot = method - MaxwellMethod::MacroCallBase;
+        if (macro_engine_.HasMacro(slot)) {
+            ExecuteMacro(slot, argument);
+            return;
+        }
+    }
 
     switch (method) {
         case MaxwellMethod::Nop:
@@ -114,6 +124,35 @@ void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
         case MaxwellMethod::SyncInfo:
         case MaxwellMethod::FragmentBarrier:
         case MaxwellMethod::PipeNop:
+            break;
+
+        // Inline-to-memory upload engine (yuzu engine_upload port).
+        case 0x0060: case 0x0061: case 0x0062: case 0x0063:
+        case 0x0064: case 0x0065: case 0x0066: case 0x0067:
+        case 0x0068: case 0x0069: case 0x006A: case 0x006B:
+            if (upload_) upload_->SetReg(method, argument);
+            break;
+        case MaxwellMethod::LaunchDma:
+            if (upload_) upload_->ProcessExec((argument & 1) != 0);
+            break;
+        case MaxwellMethod::InlineData:
+            if (upload_) upload_->ProcessData(argument, true);
+            break;
+
+        case MaxwellMethod::BindMacro:
+            macro_engine_.BindMacro(argument);
+            break;
+
+        case MaxwellMethod::LoadMacro:
+            macro_engine_.LoadMacroCode(argument);
+            break;
+
+        case MaxwellMethod::StreamOutEnable:
+        case MaxwellMethod::StreamOutBufferAddressHigh:
+        case MaxwellMethod::StreamOutBufferAddressLow:
+        case MaxwellMethod::StreamOutBufferSize:
+        case MaxwellMethod::StreamOutStride:
+        case MaxwellMethod::ViewportClipControl:
             break;
 
         case MaxwellMethod::ClearSurface:
@@ -311,6 +350,12 @@ void Maxwell3D::ProcessMethod(u32 method, u32 argument) {
             NEMU_LOG_DEBUG("GPU", "Maxwell3D method 0x{:04X} = 0x{:08X}", method, argument);
             break;
     }
+}
+
+void Maxwell3D::ExecuteMacro(u32 slot, u32 argument) {
+    macro_engine_.Execute(slot, std::span<const u32>(&argument, 1), [this](u32 m, u32 a) {
+        ProcessMethod(m, a);
+    });
 }
 
 void Maxwell3D::ExecuteClearSurface(u32 argument) {
@@ -911,8 +956,16 @@ void Maxwell3D::SubmitPushbuffer(std::span<const u32> pushbuffer) {
         const u32 count = (header >> 16) & 0x1FFF;
         const u32 mode = (header >> 29) & 0x07;
 
-        if (mode == 2) { // InlineData: count field encodes the inline data
-            ProcessMethod(method, count);
+        if (mode == 2) {
+            if (method == MaxwellMethod::InlineData && upload_ && index < pushbuffer.size()) {
+                upload_->ProcessExec(true);
+                const size_t avail = std::min<size_t>(count, pushbuffer.size() - index);
+                std::span<const u32> payload{pushbuffer.data() + index, avail};
+                upload_->ProcessData(payload);
+                index += avail;
+            } else {
+                ProcessMethod(method, count);
+            }
             continue;
         }
 
