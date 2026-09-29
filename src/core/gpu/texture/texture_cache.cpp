@@ -113,6 +113,44 @@ std::shared_ptr<CachedTexture> TextureCache::GetOrCreateTexture(
     const size_t linear_size = desc.CalculateLinearSize();
     cached->linear_pixel_data.resize(linear_size > 0 ? linear_size : 16);
 
+    // --- Alias reuse (yuzu texture_cache overlap semantics) ----------------
+    // A new texture whose address range is fully covered by an existing cached
+    // texture with the same layout family reuses the already-deswizzled pixels
+    // (mip chains, RT reinterpretations, subresources). Cuts re-uploads for
+    // the common "same surface sampled as multiple views" pattern.
+    {
+        const u64 new_start = desc.gpu_address;
+        const u64 new_end = new_start + linear_size;
+        for (const auto& [key_other, tex] : textures_) {
+            if (!tex || tex->linear_pixel_data.empty()) continue;
+            const u64 other_start = key_other.gpu_address;
+            const u64 other_end = other_start + tex->desc.CalculateLinearSize();
+            const bool contains = new_start >= other_start && new_end <= other_end;
+            const bool same_layout = tex->desc.is_block_linear == desc.is_block_linear;
+            const bool same_bpp = tex->desc.CalculateLinearSize() != 0 &&
+                                  (linear_size % std::max<size_t>(1, desc.width * desc.height)) ==
+                                  ((tex->desc.CalculateLinearSize() % std::max<size_t>(1, key_other.width * key_other.height)));
+            if (contains && same_layout && same_bpp) {
+                // Offset into the parent's pixel data preserving bytes-per-pixel.
+                const size_t offset_bytes = static_cast<size_t>(new_start - other_start);
+                if (offset_bytes + linear_size <= tex->linear_pixel_data.size()) {
+                    std::memcpy(cached->linear_pixel_data.data(),
+                                tex->linear_pixel_data.data() + offset_bytes,
+                                linear_size);
+                    cached->is_valid = true;
+                    cached->last_used_frame = frame_++;
+                    textures_[key] = cached;
+                    if (total_resident_bytes_ < SIZE_MAX - linear_size) {
+                        total_resident_bytes_ += linear_size;
+                    }
+                    NEMU_LOG_DEBUG("Texture", "Alias reuse: 0x{:X} ({}) served from parent 0x{:X}",
+                                   new_start, linear_size, other_start);
+                    return cached;
+                }
+            }
+        }
+    }
+
     // Read and convert texture data from guest memory if available
     if (memory && desc.gpu_address != 0) {
         if (desc.IsAstc()) {
