@@ -235,6 +235,7 @@ static int MainInternal(int argc, char** argv) {
         else if (initial_dialog == "tas") frontend.SetTasOverlayOpen(true);
         else if (initial_dialog == "quickmenu") frontend.SetQuickMenuOpen(true);
         else if (initial_dialog == "context") frontend.SetContextMenuOpen(true);
+        else if (initial_dialog == "gameoptions") frontend.SetActiveSubView(frontend::ActiveSubView::GameOptions);
     }
     if (!initial_menu.empty()) {
         if (initial_menu == "file") frontend.OpenTopMenuCategory(0);

@@ -315,6 +315,21 @@ public:
     void SetModManagerOpen(bool open) noexcept { mod_manager_open_ = open; }
     void ToggleModManager() noexcept { mod_manager_open_ = !mod_manager_open_; }
 
+    [[nodiscard]] bool HasActiveModal() const noexcept {
+        return active_subview_ == ActiveSubView::PowerMenu ||
+               active_subview_ == ActiveSubView::GameOptions ||
+               show_game_options_ ||
+               about_dialog_open_ ||
+               amiibo_scanner_.is_open ||
+               per_game_properties_open_ ||
+               cheat_manager_open_ ||
+               install_nand_dialog_open_ ||
+               mod_manager_open_ ||
+               multiplayer_lobby_open_ ||
+               context_menu_open_ ||
+               menu_bar_.is_open;
+    }
+
     [[nodiscard]] LibraryFilterCategory GetFilterCategory() const noexcept { return filter_category_; }
     void SetFilterCategory(LibraryFilterCategory cat);
     void CycleFilterCategory();
