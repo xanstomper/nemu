@@ -964,6 +964,112 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             break;
         }
 
+        // ---- 3-same comparisons / min-max / multiply (32-bit lanes) ----
+        case Opcode::CMGT_vec: {  // signed >
+            for (u32 l = 0; l < 4; ++l) {
+                const s32 a = static_cast<s32>(state_.GetVectorLane32(inst.rn, l));
+                const s32 b = static_cast<s32>(state_.GetVectorLane32(inst.rm, l));
+                state_.SetVectorLane32(inst.rd, l, (a > b) ? 0xFFFFFFFFu : 0u);
+            }
+            break;
+        }
+        case Opcode::CMHI_vec: {  // unsigned >
+            for (u32 l = 0; l < 4; ++l) {
+                state_.SetVectorLane32(inst.rd, l,
+                    state_.GetVectorLane32(inst.rn, l) > state_.GetVectorLane32(inst.rm, l)
+                        ? 0xFFFFFFFFu : 0u);
+            }
+            break;
+        }
+        case Opcode::CMEQ_vec: {
+            for (u32 l = 0; l < 4; ++l) {
+                state_.SetVectorLane32(inst.rd, l,
+                    state_.GetVectorLane32(inst.rn, l) == state_.GetVectorLane32(inst.rm, l)
+                        ? 0xFFFFFFFFu : 0u);
+            }
+            break;
+        }
+        case Opcode::SMAX_vec:
+        case Opcode::UMAX_vec: {
+            for (u32 l = 0; l < 4; ++l) {
+                u32 r;
+                if (inst.opcode == Opcode::SMAX_vec) {
+                    r = static_cast<u32>(std::max(static_cast<s32>(state_.GetVectorLane32(inst.rn, l)),
+                                                  static_cast<s32>(state_.GetVectorLane32(inst.rm, l))));
+                } else {
+                    r = std::max(state_.GetVectorLane32(inst.rn, l), state_.GetVectorLane32(inst.rm, l));
+                }
+                state_.SetVectorLane32(inst.rd, l, r);
+            }
+            break;
+        }
+        case Opcode::SMIN_vec:
+        case Opcode::UMIN_vec: {
+            for (u32 l = 0; l < 4; ++l) {
+                u32 r;
+                if (inst.opcode == Opcode::SMIN_vec) {
+                    r = static_cast<u32>(std::min(static_cast<s32>(state_.GetVectorLane32(inst.rn, l)),
+                                                  static_cast<s32>(state_.GetVectorLane32(inst.rm, l))));
+                } else {
+                    r = std::min(state_.GetVectorLane32(inst.rn, l), state_.GetVectorLane32(inst.rm, l));
+                }
+                state_.SetVectorLane32(inst.rd, l, r);
+            }
+            break;
+        }
+        case Opcode::MUL_vec: {
+            for (u32 l = 0; l < 4; ++l) {
+                state_.SetVectorLane32(inst.rd, l,
+                    state_.GetVectorLane32(inst.rn, l) * state_.GetVectorLane32(inst.rm, l));
+            }
+            break;
+        }
+        case Opcode::MLA_vec: {  // accumulate into rd
+            for (u32 l = 0; l < 4; ++l) {
+                state_.SetVectorLane32(inst.rd, l,
+                    state_.GetVectorLane32(inst.rd, l) +
+                    state_.GetVectorLane32(inst.rn, l) * state_.GetVectorLane32(inst.rm, l));
+            }
+            break;
+        }
+        case Opcode::SQADD_vec: {  // saturating add (32-bit lanes)
+            for (u32 l = 0; l < 4; ++l) {
+                const s64 a = static_cast<s32>(state_.GetVectorLane32(inst.rn, l));
+                const s64 b = static_cast<s32>(state_.GetVectorLane32(inst.rm, l));
+                s64 r = a + b;
+                if (r > 0x7FFFFFFF) r = 0x7FFFFFFF;
+                if (r < -0x80000000LL) r = -0x80000000LL;
+                state_.SetVectorLane32(inst.rd, l, static_cast<u32>(static_cast<s32>(r)));
+            }
+            break;
+        }
+        case Opcode::SHL_vec:
+        case Opcode::SSHR_vec:
+        case Opcode::USHR_vec: {
+            // shift amount = (16 << size) - immh:imb; stored in shift_amount (immh only
+            // when emulating 32-bit lanes: amount = 32 - immr-encoding shift)
+            const u32 esz = (inst.vec_size == 2) ? 32u : 64u;
+            u32 amount = esz - inst.shift_amount;
+            if (inst.opcode == Opcode::SHL_vec) {
+                const u32 amt = inst.shift_amount; // SHL shifts left by immh:imb directly
+                for (u32 l = 0; l < 4; ++l) {
+                    state_.SetVectorLane32(inst.rd, l,
+                        state_.GetVectorLane32(inst.rn, l) << amt);
+                }
+            } else if (inst.opcode == Opcode::USHR_vec) {
+                for (u32 l = 0; l < 4; ++l) {
+                    state_.SetVectorLane32(inst.rd, l,
+                        state_.GetVectorLane32(inst.rn, l) >> amount);
+                }
+            } else { // SSHR arithmetic
+                for (u32 l = 0; l < 4; ++l) {
+                    state_.SetVectorLane32(inst.rd, l,
+                        static_cast<u32>(static_cast<s32>(state_.GetVectorLane32(inst.rn, l)) >> amount));
+                }
+            }
+            break;
+        }
+
         case Opcode::DUP_gen: {
             if (inst.vec_size == 3) {
                 const u64 val = state_.GetX(inst.rn);

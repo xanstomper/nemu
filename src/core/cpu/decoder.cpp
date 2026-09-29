@@ -111,6 +111,19 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::ORR_vec: return "ORR (vector)";
         case Opcode::EOR_vec: return "EOR (vector)";
         case Opcode::NOT_vec: return "NOT (vector)";
+        case Opcode::CMGT_vec: return "CMGT (vector)";
+        case Opcode::CMHI_vec: return "CMHI (vector)";
+        case Opcode::CMEQ_vec: return "CMEQ (vector)";
+        case Opcode::SMAX_vec: return "SMAX (vector)";
+        case Opcode::UMAX_vec: return "UMAX (vector)";
+        case Opcode::SMIN_vec: return "SMIN (vector)";
+        case Opcode::UMIN_vec: return "UMIN (vector)";
+        case Opcode::MLA_vec: return "MLA (vector)";
+        case Opcode::MUL_vec: return "MUL (vector)";
+        case Opcode::SQADD_vec: return "SQADD (vector)";
+        case Opcode::SSHR_vec: return "SSHR (vector)";
+        case Opcode::USHR_vec: return "USHR (vector)";
+        case Opcode::SHL_vec: return "SHL (vector)";
 
         // Atomics
         case Opcode::LDXR: return "LDXR";
@@ -667,6 +680,32 @@ DecodedInstruction Decoder::DecodeDataProcSimdFp(u32 raw) noexcept {
                 else   inst.opcode = o23 ? Opcode::ORR_vec : Opcode::AND_vec;
                 return inst;
             }
+            // Comparisons: CMGT(00110 u0) CMHI(00110 u1) CMEQ(10001 u1)
+            if (opcode == 0b00110) { inst.opcode = u ? Opcode::CMHI_vec : Opcode::CMGT_vec; return inst; }
+            if (opcode == 0b10001 && u) { inst.opcode = Opcode::CMEQ_vec; return inst; }
+            // Min/max: SMAX(01100 u0) UMAX(01100 u1) SMIN(01101 u0) UMIN(01101 u1)
+            if (opcode == 0b01100) { inst.opcode = u ? Opcode::UMAX_vec : Opcode::SMAX_vec; return inst; }
+            if (opcode == 0b01101) { inst.opcode = u ? Opcode::UMIN_vec : Opcode::SMIN_vec; return inst; }
+            // Multiply: MLA(10010 u0) MUL(10011 u0)
+            if (opcode == 0b10010 && !u) { inst.opcode = Opcode::MLA_vec; return inst; }
+            if (opcode == 0b10011 && !u) { inst.opcode = Opcode::MUL_vec; return inst; }
+            // Saturating add: SQADD(00001 u0)
+            if (opcode == 0b00001 && !u) { inst.opcode = Opcode::SQADD_vec; return inst; }
+        }
+
+        // Shift-immediate: SHL/SSHR/USHR/SSRA/USRA — 01111 group, bit23=0
+        // opcode = bits[15:12] (4b) + Q; shift amount = immh:imb
+        if (ExtractBit(raw, 23) == 0 && ExtractBits(raw, 28, 5) == 0b01111) {
+            const u32 sh_op = ExtractBits(raw, 12, 4);
+            const bool u_bit = ExtractBit(raw, 29);
+            const u32 immh = ExtractBits(raw, 19, 4);
+            // SHL(0100 u0) SSHR(0000 u0) USHR(0000 u1) — the game-critical trio
+            if (sh_op == 0b0100 && !u_bit) { inst.opcode = Opcode::SHL_vec; }
+            else if (sh_op == 0b0000 && !u_bit) { inst.opcode = Opcode::SSHR_vec; }
+            else if (sh_op == 0b0000 && u_bit) { inst.opcode = Opcode::USHR_vec; }
+            else return inst;
+            inst.shift_amount = immh; // caller combines with element size at exec
+            return inst;
         }
 
         // DUP, INS, UMOV

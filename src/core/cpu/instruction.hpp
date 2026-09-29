@@ -128,6 +128,23 @@ enum class Opcode : u16 {
     ORR_vec,
     EOR_vec,
     NOT_vec,
+    // 3-same comparisons (opcode bits 15:11, u selects signed/unsigned)
+    CMGT_vec,   // 00110 u=0 (signed >)
+    CMHI_vec,   // 00110 u=1 (unsigned >)
+    CMEQ_vec,   // 10001 u=1
+    SMAX_vec,   // 01100 u=0
+    UMAX_vec,   // 01100 u=1
+    SMIN_vec,   // 01101 u=0
+    UMIN_vec,   // 01101 u=1
+    MLA_vec,    // 10010 u=0
+    MUL_vec,    // 10011 u=0
+    SQADD_vec,  // 00001 u=0 (saturating add)
+    // Shift-immediate group (0f/1f, bit23=0)
+    SSHR_vec,   // opcode 0000 u=0
+    USHR_vec,   // opcode 0000 u=1
+    SHL_vec,    // opcode 0100 u=0
+    // Narrowing
+    XTN_vec,    // 3-diff group, opcode 10010 u=0
 
     // Exclusive & Atomic Memory Operations (ARMv8.0/ARMv8.1-A LSE)
     LDXR,
