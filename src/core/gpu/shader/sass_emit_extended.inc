@@ -251,8 +251,6 @@ case MaxwellOpcode::PRMT: {
         const std::string sel = "(((" + c + ") >> " + std::to_string(4 * n) + ") & 0xFu)";
         const std::string idx = "(" + sel + " & 0x7u)";
         const std::string sign_bit = "(" + sel + " & 0x8u)";
-                    "(" + idx + " < 4u) ? " + byte_at(a, 0) // placeholder replaced below
-            ;
         // Build: select from a for idx<4 else from b
         std::string expr = "(" + idx + "==0u) ? " + byte_at(a, 0);
         for (int k = 1; k < 4; ++k) expr += " : (" + idx + "==" + std::to_string(k) + "u) ? " + byte_at(a, k);
@@ -429,10 +427,11 @@ case MaxwellOpcode::DMAX:
 
 // ---- Surface loads, stores & atomics (UAV path) -----------------------------
 case MaxwellOpcode::SULD:
-    NEMU_EMIT_WR("0.0f // SULD (surface load)")
+    // SULD: real UAV load (RWByteAddressBuffer semantics, binding from used_surfaces).
+    NEMU_EMIT_WR(std::string("g_surf.Load(") + NEMU_SRC(0) + ") // SULD surface load")
     break;
 case MaxwellOpcode::SUST:
-    ss << "    // SUST (surface store)\n";
+    ss << "    g_surf.Store(" << NEMU_SRC(0) << ", " << NEMU_SRC(1) << "); // SUST surface store\n";
     break;
 case MaxwellOpcode::SURED:
     ss << "    // SURED (surface reduction)\n";

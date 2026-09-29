@@ -588,6 +588,7 @@ DecompiledProgram MaxwellShaderDecoder::DecodeAndDecompile(
 
     std::set<u32> used_cbufs;
     std::set<u32> used_texs;
+    std::set<u32> used_surfs;
     std::set<u32> used_attrs;
 
     const size_t inst_size = 8;
@@ -634,6 +635,18 @@ DecompiledProgram MaxwellShaderDecoder::DecodeAndDecompile(
             program.has_discard = true;
         }
 
+        // Surface (UAV) binding discovery for SULD/SUST/SURED/SUATOM: the surface
+        // index arrives via a cbuf-indirect descriptor in src0.
+        switch (inst.opcode) {
+        case MaxwellOpcode::SULD: case MaxwellOpcode::SUST:
+        case MaxwellOpcode::SURED: case MaxwellOpcode::SUATOM:
+            if (!inst.sources.empty() && inst.sources[0].type == OperandType::ConstantBuffer) {
+                used_surfs.insert(inst.sources[0].cbuf.bank);
+            }
+            break;
+        default: break;
+        }
+
         program.instructions.push_back(inst);
 
         if (inst.opcode == MaxwellOpcode::EXIT) {
@@ -642,6 +655,7 @@ DecompiledProgram MaxwellShaderDecoder::DecodeAndDecompile(
         }
     }
 
+    program.used_surfaces.assign(used_surfs.begin(), used_surfs.end());
     program.used_cbuf_banks.assign(used_cbufs.begin(), used_cbufs.end());
     program.used_textures.assign(used_texs.begin(), used_texs.end());
     program.used_attrs.assign(used_attrs.begin(), used_attrs.end());
