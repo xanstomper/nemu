@@ -1,7 +1,7 @@
 # Nemulator — Project Status
 
 **Date:** current
-**Status:** **Commercial-game stack complete & validated — 29/29 test suites green**
+**Status:** **Commercial-game stack complete & validated — 43/43 test suites green**
 **Active Gate:** On-device D3D12 pixel-exact verification (hardware)
 
 ---
@@ -79,7 +79,7 @@ D3D12 path renders correctly on a real Dev Mode Xbox.
 | 8 | Xbox packaging & AppX | **PASSED** (3.8 MB `Nemulator_1.0.0.0_x64.appx`) |
 | 9–10 | JIT perf, Horizon IPC HLE | **PASSED** |
 | 11 | **Commercial-game load (NCA/NSO decrypt + relocate)** | **PASSED** (unit-verified) |
-| 12 | **Full shader/GPU translation incl. MRT** | **PASSED** (29/29) |
+| 12 | **Full shader/GPU translation incl. MRT** | **PASSED** (43/43) |
 | 13 | **Complete syscall + service surface** | **PASSED** |
 | 14 | **5 GiB budget optimizations** | **PASSED** |
 | 15 | **On-device D3D12 pixel-exact render** | **READY — needs Xbox** |
@@ -92,8 +92,8 @@ D3D12 path renders correctly on a real Dev Mode Xbox.
 | :--- | :--- |
 | **CPU** | ARM64 interpreter + x86-64 JIT (~65–84×), block cache, fastmem |
 | **Memory** | Guest RAM + 40-bit GPU world, 5 GiB governor (`MemoryBudget`) |
-| **Kernel** | 49 SVCs, KProcess/KThread/events/arbiters, 54 services |
-| **GPU** | Maxwell3D → D3D12, 166 SASS cases, MRT, compute+QMD, GMMU, caches |
+| **Kernel** | 75 SVCs, KProcess/KThread/events/arbiters, 50 services |
+| **GPU** | Maxwell3D → D3D12, 162 SASS families/279 encodings, MRT, compute+QMD, GMMU, caches |
 | **Loader** | NCA/NSO/NRO/PFS0/**XCI**/RomFS, AES-XTS/CTR, LZ4, relocs, `.tik` |
 | **Audio** | XAudio2 + Null, SPSC ring, Nintendo DSP ADPCM |
 | **Input** | Xbox pads → Npad map, UWP `xinputuap`, deadzones, vibration, gyro |

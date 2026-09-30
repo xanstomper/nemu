@@ -4,9 +4,9 @@
 
 ### The Nintendo Switch Emulator for **Xbox Series S/X Developer Mode**
 
-**Run commercial-grade Switch software on your console — full D3D12 renderer, 166 SASS shader opcodes, 5 GiB budget engineering, and a desktop-vetted pipeline.**
+**Run commercial-grade Switch software on your console — full D3D12 renderer, 162 SASS shader families, 5 GiB budget engineering, and a desktop-vetted pipeline.**
 
-<b>EXPERIMENTAL STAGE &nbsp;·&nbsp; Commercial load &nbsp;·&nbsp; Multi-Render-Target &nbsp;·&nbsp; 4 GPU engines (3D/DMA/Blit/Compute) &nbsp;·&nbsp; 54 IPC services &nbsp;·&nbsp; 75 SVCs &nbsp;·&nbsp; 33 test suites + E2E chain</b>
+<b>EXPERIMENTAL STAGE &nbsp;·&nbsp; Commercial load &nbsp;·&nbsp; Multi-Render-Target &nbsp;·&nbsp; 4 GPU engines (3D/DMA/Blit/Compute) &nbsp;·&nbsp; 50 IPC services &nbsp;·&nbsp; 75 SVCs &nbsp;·&nbsp; 43 test suites + E2E chain</b>
 
 [![Stage](https://img.shields.io/badge/stage-EXPERIMENTAL-orange)](docs/PROJECT_STATUS.md)
 [![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
@@ -34,9 +34,9 @@
 <a href="#"><img align="right" width="360" alt="Nemulator" src="packaging/xbox/Assets/Square150x150Logo.png" onerror="this.style.display='none'"/></a>
 
 - 🗃️ **Commercial-game pipeline** — real **NCA AES-XTS decrypt** + CTR sections, NSO **LZ4** + **AArch64 relocations**, PFS0/NSP, **XCI cartridge unwrap**, RomFS, `.tik` tickets.
-- 🎨 **All 166 Maxwell SASS opcode cases / all 162 families** — predicated branches, exact LOP3, compute + Queue-Meta-Descriptor (QMD).
+- 🎨 **All 162 Maxwell SASS families / 279 encodings** — predicated branches, exact LOP3, compute + Queue-Meta-Descriptor (QMD).
 - 🎯 **Multi-Render-Target (MRT) deferred rendering** + D32 depth-stencil — the render path commercial games rely on.
-- ⚙️ **Complete Horizon OS HLE** — **49 system calls** + **54 IPC services** (`hid`, `fs`, `vi`, `applet`, `nvhost`, `ldn`, `bsd`, …).
+- ⚙️ **Complete Horizon OS HLE** — **75 system calls** + **50 IPC services** (`hid`, `fs`, `vi`, `applet`, `nvhost`, `ldn`, `bsd`, …).
 - 💾 **5 GiB budget engineering** — buffer dedup, BC1 alpha punch-through, texture byte-budget LRU, live **`RAM Used / Peak (5 GiB cap)`** diagnostics, `--texture-budget` tuning.
 - 🔒 **Persistent saves** — atomic store + **USB backup / restore**.
 - 🎮 **Controller input** — full Npad mapping, UWP `xinputuap`, 8-player support.
@@ -52,7 +52,7 @@
 mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build . -j
-ctest                  # → 29/29 suites green
+ctest                  # → 43/43 suites green
 ```
 
 ### 2 · Package the Xbox AppX
@@ -91,7 +91,7 @@ nemulator/
 ├── src/
 │   ├── core/
 │   │   ├── cpu/          # AArch64 interpreter + x86-64 JIT (fastmem, block cache)
-│   │   ├── kernel/       # Horizon HLE — 49 SVCs, KProcess/KThread, IPC (54 svcs)
+│   │   ├── kernel/       # Horizon HLE — 75 SVCs, KProcess/KThread, IPC (50 svcs)
 │   │   ├── memory/       # Guest RAM, 40-bit GPU VA, fastmem, 5 GiB governor
 │   │   ├── gpu/          # Maxwell3D → D3D12, GMMU, caches, shaders, MRT, compute
 │   │   ├── audio/        # XAudio2 + Null, SPSC ring, Nintendo DSP ADPCM
@@ -165,7 +165,7 @@ The emulator is validated with **29 automated suites** across every subsystem:
 | :--- | :--- |
 | **GPU / rendering** | `test_gpu`, `test_tier_a` (GMMU, BufferCache dedup, MRT, BC1/alpha, byte-budget, SASS, predicated branches), `test_render_pipeline`, `test_pipeline_bridge`, `test_hlsl_validator` |
 | **CPU / JIT** | `test_jit` (differential vs interpreter, ~65–84× speedup), `test_cpu` |
-| **Kernel / IPC** | `test_ipc` (54 services + commercial-game syscalls), `test_kernel` |
+| **Kernel / IPC** | `test_ipc` (50 services + commercial-game syscalls), `test_kernel` |
 | **Memory** | `test_memory`, `test_memory_budget` (5 GiB governor) |
 | **Audio** | `test_audio` (SPSC ring, **Nintendo DSP ADPCM**) |
 | **Files / saves** | `test_vfs`, `test_loader`, `test_save` (atomic + **USB backup/restore**) |
