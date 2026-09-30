@@ -253,6 +253,24 @@ target_link_libraries(test_gdb_stub PRIVATE
 target_compile_features(test_gdb_stub PRIVATE cxx_std_20)
 add_test(NAME test_gdb_stub COMMAND test_gdb_stub)
 
+# On-console crash handler: fork-based (POSIX), so Windows/MinGW skips.
+if(NOT WIN32)
+add_executable(test_crash_handler
+    debug/test_crash_handler.cpp
+)
+
+target_include_directories(test_crash_handler PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_crash_handler PRIVATE
+    Nemu.Debug
+)
+
+target_compile_features(test_crash_handler PRIVATE cxx_std_20)
+add_test(NAME test_crash_handler COMMAND test_crash_handler)
+endif()
+
 add_executable(test_frontend
     frontend/test_frontend.cpp
 )

@@ -3,6 +3,8 @@ add_library(Nemu.Debug STATIC
     crash_dump.cpp
     breadcrumbs.hpp
     breadcrumbs.cpp
+    crash_handler.hpp
+    crash_handler.cpp
     gdb_stub.hpp
     gdb_stub.cpp
 )

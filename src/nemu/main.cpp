@@ -1,4 +1,5 @@
 #include "platform/logger.hpp"
+#include "core/debug/crash_handler.hpp"
 #include "core/system/emulator.hpp"
 #include "core/memory/memory_budget.hpp"
 #include "frontend/xbox_frontend.hpp"
@@ -142,6 +143,20 @@ static int MainInternal(int argc, char** argv) {
         NEMU_LOG_FATAL("Init", "Failed to initialize Nemu emulator engine");
         return 1;
     }
+
+    // On-console crash visibility: install the diagnostic handler so a fault
+    // (SIGSEGV/ABRT/FPE/ILL or Windows SEH) writes a CrashReporter report to
+    // LOCAL:/crash/ before dying, instead of silently terminating. Reports
+    // carry the guest breadcrumb trail so a failure is pin-pointable on the
+    // Xbox via the Device Portal — no live debugger needed to see what crashed.
+    debug::CrashHandler::Install(debug::CrashHandler::kDefaultCrashDir);
+    debug::CrashHandler::SetTitleProvider([&emulator](unsigned long long& out_tid,
+                                             std::string& out_name) {
+        if (auto p = emulator.GetProcess()) {
+            out_tid  = p->GetPid();
+            out_name = p->GetName();
+        }
+    });
 
     // Headless boot probe (all platforms): --run <path.nro> loads a title and
     // runs a bounded number of frames, then reports a BOOT verdict. Scriptable
