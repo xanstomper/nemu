@@ -2,6 +2,7 @@
 #include "nro.hpp"
 #include "nso.hpp"
 #include "pfs0.hpp"
+#include "xci.hpp"
 #include "nca.hpp"
 #include "ncz.hpp"
 #include "romfs.hpp"
@@ -210,7 +211,40 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
         return LoadExeFS(exefs, vm, name_hint, nca.GetTitleId(), base_address);
     }
 
-    // 4. Check for PFS0 container (.nsp or raw ExeFS)
+    // 4. Check for XCI cartridge image (partition table HFS0 at offset 0x200).
+    //    Unpack the game payloads (NSP/PFS0/NCAs) and load them recursively.
+    if (XciArchive::IsXci(data) && name_hint.ends_with(".xci")) {
+        XciArchive xci;
+        if (xci.Initialize(data)) {
+            std::vector<XciPayload> payloads;
+            if (xci.UnpackGame(payloads)) {
+                // Sort game payloads by size descending so the Program NCA (the
+                // largest) is tried first — matches the NSP candidate ordering.
+                std::stable_sort(payloads.begin(), payloads.end(),
+                                 [](const XciPayload& a, const XciPayload& b) {
+                                     return a.data.size() > b.data.size();
+                                 });
+                // Exclude known non-loadable entries before recursing.
+                for (const auto& pl : payloads) {
+                    if (pl.name == "main" || pl.name == "rtld") {
+                        continue; // ExeFS handled elsewhere; skip partition-level.
+                    }
+                    auto loaded = LoadFromMemory(pl.data, vm, pl.name, base_address);
+                    if (loaded) {
+                        return loaded;
+                    }
+                }
+                NEMU_LOG_ERROR("Loader", "No loadable payload found inside XCI cart");
+                return std::nullopt;
+            }
+            NEMU_LOG_WARN("Loader", "XCI parsed but normal partition yielded no payloads");
+        } else {
+            NEMU_LOG_ERROR("Loader", "Failed to initialize XCI cartridge: {}", name_hint);
+        }
+        return std::nullopt;
+    }
+
+    // 5. Check for PFS0 container (.nsp or raw ExeFS)
     if (magic_0 == Pfs0Archive::PFS0_MAGIC) {
         NEMU_LOG_INFO("Loader", "Identified PFS0 container (.nsp or ExeFS): {}", name_hint);
         Pfs0Archive pfs0;

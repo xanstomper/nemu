@@ -23,7 +23,7 @@
 
 ## ✨ Description
 
-> **Nemulator** is a clean-room, HLE-first Nintendo Switch emulator built specifically for **Xbox Series S and Xbox Series X in Developer Mode**. It takes a real Switch title — NCA, NSP, NSO, or homebrew NRO — decrypts it, executes it through an ARM64→x86-64 JIT with a full Horizon OS system-call layer, translates **every Maxwell shader** to native **Direct3D 12**, and renders with **multi-render-target** deferred graphics, all inside the Xbox Developer Mode **5 GiB memory budget**.
+> **Nemulator** is a clean-room, HLE-first Nintendo Switch emulator built specifically for **Xbox Series S and Xbox Series X in Developer Mode**. It takes a real Switch title — NCA, NSP, NSO, **XCI cartridge**, or homebrew NRO — decrypts it, executes it through an ARM64→x86-64 JIT with a full Horizon OS system-call layer, translates **every Maxwell shader** to native **Direct3D 12**, and renders with **multi-render-target** deferred graphics, all inside the Xbox Developer Mode **5 GiB memory budget**.
 
 > The same codebase runs on **Linux for continuous validation** (29 automated suites) and packages to a **spec-compliant Xbox AppX** for sideloading — so the entire pipeline is proven on a desktop before you ever touch the console.
 
@@ -33,7 +33,7 @@
 
 <a href="#"><img align="right" width="360" alt="Nemulator" src="packaging/xbox/Assets/Square150x150Logo.png" onerror="this.style.display='none'"/></a>
 
-- 🗃️ **Commercial-game pipeline** — real **NCA AES-XTS decrypt** + CTR sections, NSO **LZ4** + **AArch64 relocations**, PFS0/NSP, RomFS, `.tik` tickets.
+- 🗃️ **Commercial-game pipeline** — real **NCA AES-XTS decrypt** + CTR sections, NSO **LZ4** + **AArch64 relocations**, PFS0/NSP, **XCI cartridge unwrap**, RomFS, `.tik` tickets.
 - 🎨 **All 166 Maxwell SASS opcode cases / all 162 families** — predicated branches, exact LOP3, compute + Queue-Meta-Descriptor (QMD).
 - 🎯 **Multi-Render-Target (MRT) deferred rendering** + D32 depth-stencil — the render path commercial games rely on.
 - ⚙️ **Complete Horizon OS HLE** — **49 system calls** + **54 IPC services** (`hid`, `fs`, `vi`, `applet`, `nvhost`, `ldn`, `bsd`, …).

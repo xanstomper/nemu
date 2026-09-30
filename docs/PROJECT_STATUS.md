@@ -43,6 +43,8 @@ D3D12 path renders correctly on a real Dev Mode Xbox.
     `KeyStore`, `.tik` tickets).
   - NSO **LZ4** decompress + segment load + BSS + **AArch64 RELA relocations**.
   - NRO, PFS0/NSP, RomFS, title loader.
+  - **XCI cartridge unwrap** (`xci.{hpp,cpp}`) — HFS0 partition table at +0x200,
+    `normal` partition → nested NSP/PFS0/NCAs, zero-copy spans.
 - [x] **M14 — Full GPU translation**
   - **166 opcode cases / all 162 `maxwell.inc` SASS families**; predicated
     `BRA`; exact LOP3; `[untranslated]` diagnostics.
@@ -92,7 +94,7 @@ D3D12 path renders correctly on a real Dev Mode Xbox.
 | **Memory** | Guest RAM + 40-bit GPU world, 5 GiB governor (`MemoryBudget`) |
 | **Kernel** | 49 SVCs, KProcess/KThread/events/arbiters, 54 services |
 | **GPU** | Maxwell3D → D3D12, 166 SASS cases, MRT, compute+QMD, GMMU, caches |
-| **Loader** | NCA/NSO/NRO/PFS0/RomFS, AES-XTS/CTR, LZ4, relocs, `.tik` |
+| **Loader** | NCA/NSO/NRO/PFS0/**XCI**/RomFS, AES-XTS/CTR, LZ4, relocs, `.tik` |
 | **Audio** | XAudio2 + Null, SPSC ring, Nintendo DSP ADPCM |
 | **Input** | Xbox pads → Npad map, UWP `xinputuap`, deadzones, vibration, gyro |
 | **Save** | atomic store, FNV-1a checksum, `.bak` rotation, **USB backup/restore** |

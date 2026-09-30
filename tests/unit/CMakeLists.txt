@@ -73,6 +73,21 @@ target_link_libraries(test_patch_manager PRIVATE
 target_compile_features(test_patch_manager PRIVATE cxx_std_20)
 add_test(NAME test_patch_manager COMMAND test_patch_manager)
 
+add_executable(test_xci
+    loader/test_xci.cpp
+)
+
+target_include_directories(test_xci PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_xci PRIVATE
+    Nemu.Core
+)
+
+target_compile_features(test_xci PRIVATE cxx_std_20)
+add_test(NAME test_xci COMMAND test_xci)
+
 add_executable(test_vfs
     filesystem/test_vfs.cpp
 )

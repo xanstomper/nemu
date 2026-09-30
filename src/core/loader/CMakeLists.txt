@@ -5,6 +5,8 @@ add_library(Nemu.Loader STATIC
     nso.cpp
     pfs0.hpp
     pfs0.cpp
+    xci.hpp
+    xci.cpp
     nca.hpp
     nca.cpp
     ncz.hpp
