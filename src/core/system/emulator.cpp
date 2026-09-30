@@ -5,6 +5,8 @@
 #include "core/audio/audio_factory.hpp"
 #include "core/kernel/svc.hpp"
 #include "core/kernel/ipc/service_bootstrap.hpp"
+#include "core/kernel/ipc/applet_service.hpp"
+#include "core/kernel/ipc/apm_service.hpp"
 #include "core/cpu/title_compat.hpp"
 #include "platform/logger.hpp"
 #include <filesystem>
@@ -256,7 +258,24 @@ void Emulator::ApplyRuntimeConfig() {
         }
     }
 
-    NEMU_LOG_INFO("System", "Runtime config applied: layout={}, deadzone={:.2f}-{:.2f}, audio={}, upscaler={}, aa={}, framegen={}",
+    // Console Operation Mode (Handheld / Switch Lite 720p vs Docked 1080p TV)
+    const bool is_docked = (cfg.console_mode == config::ConsoleMode::Docked);
+    kernel::ipc::CommonStateGetterService::SetGlobalDockedMode(is_docked);
+    if (service_registry_) {
+        if (auto apm_base = service_registry_->Find("apm")) {
+            if (auto apm = std::dynamic_pointer_cast<kernel::ipc::ApmService>(apm_base)) {
+                apm->SetMode(is_docked ? kernel::ipc::PerformanceMode::Docked : kernel::ipc::PerformanceMode::Handheld);
+            }
+        }
+        if (auto apm_p_base = service_registry_->Find("apm:p")) {
+            if (auto apm_p = std::dynamic_pointer_cast<kernel::ipc::ApmService>(apm_p_base)) {
+                apm_p->SetMode(is_docked ? kernel::ipc::PerformanceMode::Docked : kernel::ipc::PerformanceMode::Handheld);
+            }
+        }
+    }
+
+    NEMU_LOG_INFO("System", "Runtime config applied: mode={}, layout={}, deadzone={:.2f}-{:.2f}, audio={}, upscaler={}, aa={}, framegen={}",
+                  is_docked ? "Docked" : "Handheld",
                   static_cast<u32>(cfg.button_layout), cfg.inner_deadzone, cfg.outer_deadzone,
                   cfg.audio_enabled ? "on" : "off",
                   static_cast<u32>(cfg.upscaler), static_cast<u32>(cfg.anti_aliasing),

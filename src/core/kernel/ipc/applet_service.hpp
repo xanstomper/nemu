@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <deque>
+#include <atomic>
 
 namespace nemu::core::kernel::ipc {
 
@@ -30,12 +31,15 @@ public:
     u32 HandleRequest(const IpcContext& ctx, const IpcRequestReader& request,
                       IpcReplyWriter& reply, u32 x_id) override;
 
-    void SetDockedMode(bool docked) noexcept { docked_ = docked; }
-    [[nodiscard]] bool IsDockedMode() const noexcept { return docked_; }
+    void SetDockedMode(bool docked) noexcept { s_global_docked_mode_.store(docked); }
+    [[nodiscard]] bool IsDockedMode() const noexcept { return s_global_docked_mode_.load(); }
+
+    static void SetGlobalDockedMode(bool docked) noexcept { s_global_docked_mode_.store(docked); }
+    [[nodiscard]] static bool IsGlobalDockedMode() noexcept { return s_global_docked_mode_.load(); }
 
 private:
     std::shared_ptr<KEvent> message_event_;
-    bool docked_{true}; // Xbox console defaults to Docked performance mode
+    static inline std::atomic<bool> s_global_docked_mode_{true};
 };
 
 class ApplicationFunctionsService final : public IIpcService {

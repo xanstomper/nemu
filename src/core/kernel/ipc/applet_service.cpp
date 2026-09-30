@@ -49,7 +49,7 @@ u32 CommonStateGetterService::HandleRequest(
 
         case GetOperationMode: {
             // 0 = Handheld (720p), 1 = Docked (1080p/TV mode)
-            const u8 mode = docked_ ? 1 : 0;
+            const u8 mode = s_global_docked_mode_.load() ? 1 : 0;
             reply.Begin(0, 5);
             reply.Payload<u32>(0, static_cast<u32>(IpcResult::Success));
             reply.Payload<u8>(4, mode);
@@ -58,7 +58,7 @@ u32 CommonStateGetterService::HandleRequest(
 
         case GetPerformanceMode: {
             // 0 = Normal/Handheld, 1 = Boost/Docked
-            const u32 perf = docked_ ? 1 : 0;
+            const u32 perf = s_global_docked_mode_.load() ? 1 : 0;
             reply.Begin(0, 8);
             reply.Payload<u32>(0, static_cast<u32>(IpcResult::Success));
             reply.Payload<u32>(4, perf);
