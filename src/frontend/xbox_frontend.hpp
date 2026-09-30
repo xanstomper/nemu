@@ -576,8 +576,11 @@ private:
 
     // In-game button edge detection
     bool prev_btn_back_in_game_{false};
+    bool prev_btn_start_in_game_{false};
     bool prev_stick_l_in_game_{false};
     bool prev_stick_r_in_game_{false};
+    // Toggleable top-right live spec overlay (CPU/RAM/FPS/GPU)
+    bool show_spec_overlay_{false};
     bool prev_qm_up_{false};
     bool prev_qm_down_{false};
     bool prev_qm_left_{false};

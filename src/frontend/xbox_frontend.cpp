@@ -1788,16 +1788,27 @@ void XboxFrontend::RenderQuickMenu(core::gpu::IGpuBackend& gpu) {
 }
 
 bool XboxFrontend::ProcessInGameInput(const core::hid::XboxGamepadState& input) {
-    // Quick menu toggle combo: Back (View button) or L3 + R3 (Thumbstick clicks)
-    const bool back_pressed = input.back && !prev_btn_back_in_game_;
+    // Quick menu toggle combo: Back + Start pressed TOGETHER (RetroArch-style).
+    // L3+R3 (thumbstick clicks) remains a secondary, equally-valid trigger for
+    // controllers where View/Menu are awkward.
+    const bool back_edge   = input.back   && !prev_btn_back_in_game_;
+    const bool start_edge  = input.start  && !prev_btn_start_in_game_;
+    const bool combo_back_start = back_edge && input.start;    // Back hit while Start held
+    const bool combo_start_back = start_edge && input.back;    // Start hit while Back held
     const bool stick_click = (input.lsb && input.rsb) &&
                              (!prev_stick_l_in_game_ || !prev_stick_r_in_game_);
 
     prev_btn_back_in_game_ = input.back;
+    prev_btn_start_in_game_ = input.start;
     prev_stick_l_in_game_ = input.lsb;
     prev_stick_r_in_game_ = input.rsb;
 
-    if (back_pressed || stick_click) {
+    // Toggle spec monitor (no combo, in case the user just wants stats on).
+    if (back_edge) {
+        show_spec_overlay_ = !show_spec_overlay_;
+    }
+
+    if (combo_back_start || combo_start_back || stick_click) {
         show_quick_menu_ = !show_quick_menu_;
         quick_menu_row_ = 0;
         NEMU_LOG_INFO("Frontend", "RetroArch Quick Menu {}", show_quick_menu_ ? "Opened" : "Closed");
@@ -2419,6 +2430,51 @@ void XboxFrontend::DrawSwitchHomeChrome(std::vector<core::gpu::RasterVertex>& ou
                 gpu->UiImageOverlay("wifi", wifi_path, 1105.0f, 29.0f, 22.0f, 18.0f);
             }
             gpu->UiTextOverlay(clock_str, 1140.0f, 30.0f, 18.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1);
+
+            // Toggleable live spec monitor (Back toggles in-game). Compact panel,
+            // top-right, seeded entirely from real telemetry (live_diag_).
+            if (show_spec_overlay_) {
+                char sb[160];
+                const u64 cap_mb2 = cap_mb > 0 ? cap_mb : 5120;
+                // Host CPU (real, measured): Linux /proc, Windows fallback to N/A.
+                float cpu_pct = -1.0f;
+#ifdef __linux__
+                long ut, st;
+                FILE* proc = ::fopen("/proc/self/stat", "r");
+                if (proc) {
+                    const int k = static_cast<int>(::fscanf(proc,
+                        "%*d %*s %*c %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %ld %ld",
+                        &ut, &st));
+                    ::fclose(proc);
+                    if (k == 2 && (ut + st) > 0) {
+                        static long last_total = 0; static long last_ut = 0; static long last_st = 0;
+                        const long total = ut + st;
+                        const long d_total = total - last_total;
+                        const long d_cpu   = (ut - last_ut) + (st - last_st);
+                        if (d_total > 0) cpu_pct = 100.0f * static_cast<float>(d_cpu) / static_cast<float>(d_total);
+                        last_total = total; last_ut = ut; last_st = st;
+                    }
+                }
+#endif
+                std::string cpu_str = (cpu_pct >= 0.0f)
+                    ? "CPU: " + std::to_string(static_cast<int>(cpu_pct)) + "%"
+                    : "CPU: --";
+                std::snprintf(sb, sizeof(sb),
+                              "%s\nFPS: %.1f\nRAM: %llu / %llu MB\nGPU: %llu frames / %llu draws\nJIT: %llu blk\nINS: %llu",
+                              cpu_str.c_str(),
+                              live_diag_.frame_count > 1 ? 60.0f : 0.0f,
+                              static_cast<unsigned long long>(used_mb),
+                              static_cast<unsigned long long>(cap_mb2),
+                              static_cast<unsigned long long>(live_diag_.gpu_frames_presented),
+                              static_cast<unsigned long long>(live_diag_.gpu_draw_calls),
+                              static_cast<unsigned long long>(live_diag_.jit_blocks_compiled),
+                              static_cast<unsigned long long>(live_diag_.total_instructions));
+
+                // Panel background + lines (top-right, below the clock/pills).
+                gpu->UiFillRectOverlay(1000.0f, 60.0f, 240.0f, 150.0f, 0.06f, 0.07f, 0.09f, 0.82f);
+                gpu->UiRectOutlineOverlay(1000.0f, 60.0f, 240.0f, 150.0f, 1.0f, 0.0f, 0.85f, 0.95f, 0.7f);
+                gpu->UiTextOverlay(sb, 1010.0f, 68.0f, 12.0f, 0.85f, 0.92f, 0.95f, 1.0f, -1);
+            }
         } else {
             UiGeometryBuilder::AddText(out, ram_buf, 880.0f, 30.0f, 1.1f, UiColor::NeonGreen());
             UiGeometryBuilder::AddText(out, mode_str, 1015.0f, 30.0f, 1.1f, UiColor::EdenCyan());
