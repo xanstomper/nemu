@@ -289,11 +289,15 @@ void Aes128::DecryptXts(
         const u64 curr_sector = sector_index + s;
         const size_t sector_byte_offset = s * sector_size;
 
-        // Compute tweak T0 = Encrypt_key2(sector_index)
+        // Compute tweak T0 = Encrypt_key2(sector_index).
+        // Nintendo's NCA-header XTS uses the sector index BIG-ENDIAN in the
+        // UPPER 8 bytes of the tweak (0x00...00 || index_be), matching the
+        // standard XTS-AES test vectors (IEEE 1619). The index_le form
+        // produces wrong decryption for NCA headers.
         std::array<u8, 16> tweak{};
         std::array<u8, 16> sector_bytes{};
         for (size_t i = 0; i < 8; ++i) {
-            sector_bytes[i] = static_cast<u8>((curr_sector >> (8 * i)) & 0xFF);
+            sector_bytes[8 + i] = static_cast<u8>((curr_sector >> (8 * (7 - i))) & 0xFF);
         }
 
         key2.EncryptBlock(sector_bytes, tweak);

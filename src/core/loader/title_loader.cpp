@@ -237,6 +237,17 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
                     if (pl.name == "main" || pl.name == "rtld") {
                         continue; // ExeFS handled elsewhere; skip partition-level.
                     }
+                    // Register tickets (.tik) carried inside the cartridge so the
+                    // title's key is available for NCA-body decryption even if the
+                    // user's title.keys lacks this title.
+                    if (pl.name.ends_with(".tik")) {
+                        key_store_.RegisterTicket(pl.data, pl.name);
+                        NEMU_LOG_INFO("Loader", "Registered ticket '{}' from XCI", pl.name);
+                        continue; // tickets are not loadable titles
+                    }
+                    if (pl.name.ends_with(".cert") || pl.name.ends_with(".certs")) {
+                        continue; // certificates are not loadable titles
+                    }
                     auto loaded = LoadFromMemory(pl.data, vm, pl.name, base_address);
                     if (loaded) {
                         return loaded;
