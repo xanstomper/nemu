@@ -3,6 +3,45 @@
 
 namespace nemu::core::cpu {
 
+// Decode an AArch64 logical-immediate (<immr,imms>) into a concrete mask.
+// ARM ARM "DecodeBitMasks". Verified against real encodings:
+//   mov w12,#0x1010101 (imms=48) -> 0x01010101; and w10,w1,#0xff (imms=7) -> 0xFF.
+static u64 DecodeLogicalImmediateMask(u32 immr, u32 imms, bool sf) {
+    const u32 W = sf ? 64u : 32u;
+    // Element size esize = 2^D, where D = highest set bit of (~imms) in the
+    // 6-bit field (the leading-one count of imms selects the element width).
+    const u32 neg = (~imms) & 0x3F;
+    u32 esize;
+    if (neg == 0) {
+        esize = W; // all-ones single element
+    } else {
+        esize = 1u << (31 - __builtin_clz(neg));
+        if (esize > W) esize = W;
+    }
+    const u32 s = ((imms % esize) + 1);      // number of set bits in the element
+    const u32 r = immr % esize;              // element rotation
+    const u32 maxs = (esize >= 32) ? (esize == 64 ? 64u : 32u) : esize;
+    const u32 sc = (s > maxs) ? maxs : s;
+    const u64 pattern = (sc >= 64) ? ~0ULL : ((static_cast<u64>(1) << sc) - 1);
+    const u64 elem_mask = ((pattern >> r) | (pattern << (esize - r))) &
+                          ((esize >= 64) ? ~0ULL : ((static_cast<u64>(1) << esize) - 1));
+    // Replicate the element across the full register.
+    u64 mask = 0;
+    for (u32 sh = 0; sh < W; sh += esize) {
+        if (sh + esize > W) { mask |= (elem_mask & ((static_cast<u64>(1) << (W - sh)) - 1)) << sh; break; }
+        mask |= elem_mask << sh;
+    }
+    return mask & ((sf) ? ~0ULL : 0xFFFFFFFFu);
+}
+
+static u64 DecodeLogicalImmediate32(u32 immr, u32 imms) {
+    return DecodeLogicalImmediateMask(immr, imms, false);
+}
+
+static u64 DecodeLogicalImmediate64(u32 immr, u32 imms) {
+    return DecodeLogicalImmediateMask(immr, imms, true);
+}
+
 std::string_view DecodedInstruction::OpcodeName() const noexcept {
     switch (opcode) {
         case Opcode::ADD_imm: return "ADD (imm)";
@@ -42,6 +81,7 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::SDIV: return "SDIV";
         case Opcode::SBFM: return "SBFM";
         case Opcode::UBFM: return "UBFM";
+        case Opcode::BFM: return "BFM";
         case Opcode::B: return "B";
         case Opcode::B_cond: return "B.cond";
         case Opcode::BL: return "BL";
@@ -380,6 +420,31 @@ DecodedInstruction Decoder::DecodeDataProcImm(u32 raw) noexcept {
         return inst;
     }
 
+    // Logical (immediate): AND, ORR, EOR, ANDS
+    // [sf:1] [opc:2] 100100 [N:1] [immr:6] [imms:6] [Rn:5] [Rd:5]
+    if ((raw & 0x1F800000) == 0x12000000) {
+        const u32 opc = ExtractBits(raw, 29, 2);   // 00 AND, 01 ORR, 10 EOR, 11 ANDS
+        const bool n  = ExtractBit(raw, 22);
+        const u32 immr = ExtractBits(raw, 16, 6);
+        const u32 imms = ExtractBits(raw, 10, 6);
+        const bool sf  = ExtractBit(raw, 31);
+        // 32-bit variant: sf=0 (element size ≤ 32). 64-bit variant: sf=1.
+        if (!sf) {
+            inst.is_64bit = false;
+            inst.opcode = (opc == 0b00) ? Opcode::AND_imm
+                        : (opc == 0b01) ? Opcode::ORR_imm
+                        : (opc == 0b10) ? Opcode::EOR_imm : Opcode::ANDS_imm;
+            inst.imm = DecodeLogicalImmediate32(immr, imms);
+        } else {
+            inst.is_64bit = true;
+            inst.opcode = (opc == 0b00) ? Opcode::AND_imm
+                        : (opc == 0b01) ? Opcode::ORR_imm
+                        : (opc == 0b10) ? Opcode::EOR_imm : Opcode::ANDS_imm;
+            inst.imm = DecodeLogicalImmediate64(immr, imms);
+        }
+        return inst;
+    }
+
     // Bitfield move: SBFM / UBFM — (raw & 0x1F800000) == 0x13000000
     //   Group: sf(1) opc(2) 100110 N(1) immr(6) imms(6) Rn(5) Rd(5)
     //   Ground truth: ubfx w1,w2,#4,#8 = 0x53042C41 (sf=0, opc=10, immr=4, imms=11)
@@ -388,7 +453,7 @@ DecodedInstruction Decoder::DecodeDataProcImm(u32 raw) noexcept {
         const u32 opc = ExtractBits(raw, 29, 2);
         if (opc == 0b00) inst.opcode = Opcode::SBFM;
         else if (opc == 0b10) inst.opcode = Opcode::UBFM;
-        else return inst; // BFM (opc=01/11) unsupported; stays UNDEFINED
+        else inst.opcode = Opcode::BFM; // BFM / BFI / BFXIL (opc=01, 11)
         inst.shift_amount = static_cast<u8>(ExtractBits(raw, 16, 6)); // immr
         inst.imm = ExtractBits(raw, 10, 6);                           // imms
         return inst;
@@ -636,6 +701,21 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
             inst.imm = static_cast<u64>(imm12) * 4;
             inst.opcode = is_load ? Opcode::LDR_fp_imm : Opcode::STR_fp_imm;
         }
+        return inst;
+    }
+
+    // Load / Store Register offset (signed 9-bit imm): STURB/LDURB, STURH/LDURH,
+    // STUR/LDUR (incl. unprivileged; pre/post-index write back is handled below).
+    // Encoding: size(2) V(0) 111000 opc(2) 0 0 imm9(9) Rn(5) Rt(5) -> 0x38/0x78
+    if ((raw & 0x3B200C00) == 0x38000000) {
+        const bool is_load = ExtractBit(raw, 22);
+        const u32 imm9 = ExtractBits(raw, 12, 9);
+        const u64 signed_imm = static_cast<u64>(static_cast<s64>(static_cast<s32>(
+            (imm9 & 0x100) ? (static_cast<s32>(imm9) | ~0x1FF) : static_cast<s32>(imm9))));
+        if (size == 0b00) { inst.opcode = is_load ? Opcode::LDRB_imm : Opcode::STRB_imm; }
+        else if (size == 0b01) { inst.opcode = is_load ? Opcode::LDRH_imm : Opcode::STRH_imm; }
+        else { inst.is_64bit = (size == 0b11); inst.opcode = is_load ? Opcode::LDR_imm : Opcode::STR_imm; }
+        inst.imm = signed_imm;
         return inst;
     }
 

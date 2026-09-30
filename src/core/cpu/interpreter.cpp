@@ -286,6 +286,44 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             break;
         }
 
+        // Logical (immediate): AND / ORR / EOR / ANDS with a decoded mask in inst.imm.
+        case Opcode::AND_imm: {
+            if (inst.is_64bit) {
+                state_.SetX(inst.rd, state_.GetX(inst.rn) & inst.imm);
+            } else {
+                state_.SetW(inst.rd, state_.GetW(inst.rn) & static_cast<u32>(inst.imm));
+            }
+            break;
+        }
+        case Opcode::ORR_imm: {
+            if (inst.is_64bit) {
+                state_.SetX(inst.rd, state_.GetX(inst.rn) | inst.imm);
+            } else {
+                state_.SetW(inst.rd, state_.GetW(inst.rn) | static_cast<u32>(inst.imm));
+            }
+            break;
+        }
+        case Opcode::EOR_imm: {
+            if (inst.is_64bit) {
+                state_.SetX(inst.rd, state_.GetX(inst.rn) ^ inst.imm);
+            } else {
+                state_.SetW(inst.rd, state_.GetW(inst.rn) ^ static_cast<u32>(inst.imm));
+            }
+            break;
+        }
+        case Opcode::ANDS_imm: {
+            if (inst.is_64bit) {
+                const u64 res = state_.GetX(inst.rn) & inst.imm;
+                state_.SetNZ_Logical64(res);
+                state_.SetX(inst.rd, res);
+            } else {
+                const u32 res = state_.GetW(inst.rn) & static_cast<u32>(inst.imm);
+                state_.SetNZ_Logical32(res);
+                state_.SetW(inst.rd, res);
+            }
+            break;
+        }
+
         case Opcode::BIC_reg: {
             const u64 rm = ApplyShift(inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm),
                                       inst.shift_type, inst.shift_amount, inst.is_64bit);
@@ -405,6 +443,28 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
                 const u64 sext = (ds == 64) ? ones : 0xFFFFFFFFULL;
                 result = neg ? (field | (sext & ~mask)) : field;
             }
+            if (inst.is_64bit) state_.SetX(inst.rd, result);
+            else state_.SetW(inst.rd, static_cast<u32>(result));
+            break;
+        }
+
+        case Opcode::BFM: {
+            // BFM / BFI / BFXIL: dst = (dst & ~mask) | (ROR(src, immr) & mask)
+            // Same rotate+mask as SBFM/UBFM, but preserves dst bits outside the field.
+            const u32 immr = inst.shift_amount;
+            const u32 imms = static_cast<u32>(inst.imm);
+            const u32 ds = inst.is_64bit ? 64 : 32;
+            const u64 srcval = inst.is_64bit ? state_.GetX(inst.rn) : state_.GetW(inst.rn);
+            const u64 dstval = inst.is_64bit ? state_.GetX(inst.rd) : state_.GetW(inst.rd);
+
+            const u64 ror = (immr == 0) ? srcval
+                          : ((srcval >> immr) | (srcval << (ds - immr)));
+            const u64 ror32 = (ds == 32) ? (ror & 0xFFFFFFFFULL) : ror;
+            const u32 nbits = (imms >= immr) ? (imms - immr + 1)
+                                             : (ds - immr + imms + 1);
+            const u64 mask = (nbits >= 64) ? ~0ULL
+                          : (((1ULL << nbits) - 1) & ((ds == 32) ? 0xFFFFFFFFULL : ~0ULL));
+            const u64 result = (dstval & ~mask) | (ror32 & mask);
             if (inst.is_64bit) state_.SetX(inst.rd, result);
             else state_.SetW(inst.rd, static_cast<u32>(result));
             break;

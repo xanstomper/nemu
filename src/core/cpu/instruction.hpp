@@ -49,6 +49,7 @@ enum class Opcode : u16 {
     SDIV,
     SBFM,   // signed bitfield move (covers SXTB/SXTH/SXTW/ASR imm)
     UBFM,   // unsigned bitfield move (covers UXTB/UXTH/Lsr imm/Lsl imm)
+    BFM,    // bitfield move (covers BFI/BFXIL: dst = (dst&~m)|(ror&m))
 
     // Branches & Control Flow
     B,
