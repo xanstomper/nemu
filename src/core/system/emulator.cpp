@@ -45,6 +45,15 @@ bool Emulator::Initialize() {
     std::filesystem::create_directories(sdmc_p);
     std::filesystem::create_directories(save_p);
 
+    // User-facing drop folders (auto-created so there is always a FAT target):
+    //   PC:   ./games/  ./roms/      (LOCAL:/games, LOCAL:/roms)
+    //   Xbox: E:/games/ E:/roms/     (USB drive, scanned by RefreshLibrary)
+    // Drop your .xci/.nsp/.nca/.nro game files + prod.keys here and the library
+    // auto-scan (RefreshLibrary on boot) discovers and lists them.
+    std::error_code fsec;
+    std::filesystem::create_directories(std::filesystem::path("./games"), fsec);
+    std::filesystem::create_directories(std::filesystem::path("./roms"),  fsec);
+
     vfs_->Mount("sdmc:/", sdmc_p, false);
     vfs_->Mount("save:/", save_p, false);
     vfs_->Mount("LOCAL:/", std::filesystem::path("."), false);
