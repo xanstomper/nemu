@@ -1,5 +1,6 @@
 #include "xbox_memory_governor.hpp"
 #include "logger.hpp"
+#include "core/memory/memory_budget.hpp"
 #include <iomanip>
 #include <sstream>
 
@@ -26,12 +27,12 @@ u64 XboxMemoryGovernor::GetCommittedBytes() const noexcept {
         return simulated_bytes_.load(std::memory_order_relaxed);
     }
 
+    u64 host_bytes = 0;
 #if defined(_WIN32)
     PROCESS_MEMORY_COUNTERS_EX pmc{};
     if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc))) {
-        return static_cast<u64>(pmc.PrivateUsage);
+        host_bytes = static_cast<u64>(pmc.PrivateUsage);
     }
-    return 0;
 #else
     // Linux host environment: read from /proc/self/statm (pages * page_size)
     std::ifstream statm("/proc/self/statm");
@@ -41,12 +42,12 @@ u64 XboxMemoryGovernor::GetCommittedBytes() const noexcept {
         if (statm >> size_pages >> resident_pages) {
             const long page_size = sysconf(_SC_PAGESIZE);
             if (page_size > 0) {
-                return resident_pages * static_cast<u64>(page_size);
+                host_bytes = resident_pages * static_cast<u64>(page_size);
             }
         }
     }
-    return 0;
 #endif
+    return std::max<u64>(host_bytes, nemu::core::memory::MemoryBudget::TotalEstimated());
 }
 
 MemoryPressureLevel XboxMemoryGovernor::GetPressureLevel() const noexcept {

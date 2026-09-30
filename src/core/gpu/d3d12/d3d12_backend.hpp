@@ -73,6 +73,7 @@ public:
     bool PresentNVDECFrame(const NVDECFrame& frame) override;
     u32 WarmupShaderStorm() override;
     void SetStrictFormats(bool strict) override { texture_cache_.SetStrictFormats(strict); }
+    void TrimMemory() override;
 
     // Guest rasterizer state block (Tier-A2)
     void SetRasterizerState(const RasterizerState& state) override;

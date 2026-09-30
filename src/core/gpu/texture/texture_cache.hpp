@@ -97,6 +97,9 @@ public:
     /// Explicit byte budget for resident texture memory (0 = the constant cap).
     void SetByteBudget(size_t bytes) noexcept;
 
+    /// Evict transient textures unused for more than max_age_frames to reclaim memory
+    void EvictOldTextures(u64 max_age_frames);
+
     /// Per-title gpu_strict_formats tweak: when set, GetOrCreateTexture
     /// requires an exact format match instead of tolerant reinterpretation
     /// (Ryujinx 'gpu'-labeled titles, 154 games, render incorrectly with

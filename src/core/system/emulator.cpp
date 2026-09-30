@@ -147,6 +147,25 @@ bool Emulator::Initialize() {
         }
     });
 
+    // 14. Xbox Memory Governor & 5GB Dev Mode Protection Guard
+    memory_governor_ = std::make_shared<platform::XboxMemoryGovernor>();
+    memory_governor_->RegisterTextureTrimCallback([this]() {
+        NEMU_LOG_WARN("System", "MemoryGovernor: Executing aggressive GPU texture and resource trim");
+        if (gpu_backend_) {
+            gpu_backend_->TrimMemory();
+        }
+    });
+    memory_governor_->RegisterResolutionScaleCallback([this](float scale) {
+        NEMU_LOG_INFO("System", "MemoryGovernor: Adjusting dynamic render scale to {:.2f}x under load", scale);
+        if (config_manager_) {
+            auto& cfg = config_manager_->GetConfig();
+            if (scale <= 0.75f && cfg.resolution_scale != config::ResolutionScale::Native_1_0x) {
+                cfg.resolution_scale = config::ResolutionScale::Native_1_0x;
+                ApplyRuntimeConfig();
+            }
+        }
+    });
+
     state_ = EmulatorState::Ready;
     NEMU_LOG_INFO("System", "Nemu System Runtime initialized successfully (GPU: {}, Audio: {})",
                   gpu_backend_->GetBackendName(), audio_backend_->GetBackendName());
@@ -634,6 +653,11 @@ bool Emulator::StepFrame() {
     }
 
     ++frame_count_;
+
+    // 4. Memory Governor evaluation & enforcement (periodically every 30 frames)
+    if (memory_governor_ && (frame_count_ % 30 == 0)) {
+        memory_governor_->EvaluateAndEnforce();
+    }
 
     if (process_ && process_->GetState() == kernel::ProcessState::Terminated) {
         state_ = EmulatorState::Terminated;

@@ -239,6 +239,9 @@ public:
     // texture cache serves (154 Ryujinx gpu-labeled titles). Default no-op.
     virtual void SetStrictFormats(bool /*strict*/) {}
 
+    /// Trim GPU memory resources (purge stale textures, trim descriptor/resource heaps).
+    virtual void TrimMemory() {}
+
     // --- Vertex / material binding and host-observable frame capture ---
     // These are the software-rasterizable entry points. Backends that only
     // forward to a hardware API (e.g. D3D12) may leave them as no-ops; the

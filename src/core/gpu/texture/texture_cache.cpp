@@ -463,6 +463,24 @@ void TextureCache::SetByteBudget(size_t bytes) noexcept {
     }
 }
 
+void TextureCache::EvictOldTextures(u64 max_age_frames) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (frame_ <= max_age_frames) return;
+    const u64 threshold = frame_ - max_age_frames;
+    for (auto it = textures_.begin(); it != textures_.end();) {
+        if (it->second->last_used_frame < threshold) {
+            if (total_resident_bytes_ >= it->second->linear_pixel_data.size()) {
+                total_resident_bytes_ -= it->second->linear_pixel_data.size();
+                memory::MemoryBudget::AccrueSubsystem(
+                    -static_cast<s64>(it->second->linear_pixel_data.size()));
+            }
+            it = textures_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 size_t TextureCache::GetTextureCount() const noexcept {
     std::lock_guard<std::mutex> lock(mutex_);
     return textures_.size();

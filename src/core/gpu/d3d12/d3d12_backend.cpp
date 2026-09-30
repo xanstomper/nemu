@@ -1239,5 +1239,17 @@ D3D12GpuBackend::PipelineValidation D3D12GpuBackend::GetPipelineValidation() con
     return v;
 }
 
+void D3D12GpuBackend::TrimMemory() {
+    if (device_) {
+        Microsoft::WRL::ComPtr<IDXGIDevice3> dxgi_device;
+        if (SUCCEEDED(device_.As(&dxgi_device)) && dxgi_device) {
+            dxgi_device->Trim();
+            NEMU_LOG_INFO("D3D12", "TrimMemory: invoked IDXGIDevice3::Trim() under memory governor");
+        }
+    }
+    // Purge textures older than 180 frames (3 seconds at 60 FPS)
+    texture_cache_.EvictOldTextures(180);
+}
+
 } // namespace nemu::core::gpu
 #endif // _WIN32

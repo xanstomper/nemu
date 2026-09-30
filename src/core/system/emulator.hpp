@@ -20,6 +20,7 @@
 #include "core/cpu/jit/jit_compiler.hpp"
 #include "core/network/ldn_network.hpp"
 #include "core/cpu/interpreter.hpp"
+#include "platform/xbox_memory_governor.hpp"
 #include <memory>
 #include <string>
 #include <string_view>
@@ -121,6 +122,9 @@ public:
     /// Shared UDP LAN multiplayer backend (also registered as ldn:u IPC).
     [[nodiscard]] const std::shared_ptr<network::LdnUdpNetwork>& GetLdnNetwork() const noexcept { return ldn_net_; }
 
+    /// Xbox memory governor (3-tier memory protection + dynamic resolution scaling)
+    [[nodiscard]] const std::shared_ptr<platform::XboxMemoryGovernor>& GetMemoryGovernor() const noexcept { return memory_governor_; }
+
 private:
     void PollInput();
     void StepCpuQuantum(size_t instruction_budget);
@@ -155,6 +159,7 @@ private:
     std::unique_ptr<cpu::jit::JitCompiler> jit_;
     std::shared_ptr<GuestThreadPool> thread_pool_;
     std::shared_ptr<network::LdnUdpNetwork> ldn_net_;
+    std::shared_ptr<platform::XboxMemoryGovernor> memory_governor_;
     bool is_nro_{true};
 };
 
