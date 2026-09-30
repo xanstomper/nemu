@@ -451,7 +451,18 @@ bool KeyStore::LoadDefaultKeys() {
         "switch/prod.keys",
         "switch/title.keys",
         "save/keys/prod.keys",
-        "save/keys/title.keys"
+        "save/keys/title.keys",
+        // User drop folders (auto-created, same roots the game library scans):
+        // you can drop your game + prod.keys together in one place and both
+        // get picked up.
+        "games/prod.keys",
+        "games/title.keys",
+        "roms/prod.keys",
+        "roms/title.keys",
+        "games/keys/prod.keys",
+        "games/keys/title.keys",
+        "roms/keys/prod.keys",
+        "roms/keys/title.keys",
     };
 
     for (const char* path : kFixedPaths) {
@@ -501,7 +512,10 @@ bool KeyStore::LoadDefaultKeys() {
         "title.tik",
         "keys/title.tik",
         "save/keys/title.tik",
-        "switch/title.tik"
+        "switch/title.tik",
+        // User drop folders: a title.tik next to your game in ./games or ./roms
+        "games/title.tik",
+        "roms/title.tik",
     };
 
     for (const char* path : kTicketPaths) {
@@ -513,7 +527,9 @@ bool KeyStore::LoadDefaultKeys() {
     static constexpr const char* const kKeyDirs[] = {
         "keys",
         "save/keys",
-        "switch"
+        "switch",
+        "games",
+        "roms",
     };
 
     for (const char* dir_path : kKeyDirs) {

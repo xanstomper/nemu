@@ -21,10 +21,14 @@ Games"** action too):
 Example (PC):
 ```
 ./games/
-├── Hollow.Kingdom.xci        # or .nsp / .nca / .nso / .nro
-├── Silksong.nsp
-└── prod.keys                 # your own dumped keys (optional, but needed for retail)
+├── Silksong.xci             # or .nsp / .nca / .nso / .nro
+├── prod.keys                # your dumped master keys (needed for retail)
+└── Silksong.tik             # optional: a title ticket, if your dump uses one
 ```
+**Drop everything for a title in one folder.** NEMU scans the *same* drop folders
+(`./games/`, `./roms/`) for the game files **and** for `prod.keys` / `title.keys`
+/ `.tik` tickets — so `MyGame.xci` + `prod.keys` (+ optional `.tik`) side by side
+is all you need; no separate key install step.
 
 ## 2 · Title keys
 
