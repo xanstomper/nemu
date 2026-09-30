@@ -14,7 +14,9 @@
 #include <vector>
 
 #ifdef _WIN32
-#  pragma comment(lib, "ws2_32.lib")
+#  ifdef _MSC_VER
+#    pragma comment(lib, "ws2_32.lib") // MSVC-only; MinGW links ws2_32 via CMake
+#  endif
 #else
 #  include <fcntl.h>
 #  include <netinet/tcp.h>
@@ -328,6 +330,13 @@ static std::string BytesToHex(const u8* data, size_t len) {
     return out;
 }
 
+// 8-byte value as little-endian hex (GDB AArch64 register byte order).
+static std::string U64ToLeHex(u64 v) {
+    u8 le[8];
+    for (size_t b = 0; b < 8; ++b) le[b] = static_cast<u8>(v >> (b * 8));
+    return BytesToHex(le, 8);
+}
+
 // Hex string → byte vector (up to `max_bytes`)
 static std::vector<u8> HexToBytes(const std::string& hex) {
     std::vector<u8> out;
@@ -403,31 +412,100 @@ std::string GdbStub::HandleHaltReason() {
     return "T05";
 }
 
+cpu::CpuState* GdbStub::GetLiveCpuState() noexcept {
+    std::lock_guard<std::mutex> lock(state_provider_mutex_);
+    if (!state_provider_) return nullptr;
+    return state_provider_();
+}
+
+u64 GdbStub::ReadGdbReg(u32 idx) const noexcept {
+    // The accessor needs a non-const CpuState*; live reads are inherently
+    // best-effort (the guest runs concurrently), so we take a snapshot via the
+    // live pointer the provider hands us. idx: 0-30 => x0-x30, 31 => pc, 32 => sp.
+    if (idx >= kNumGdbRegs) return 0;
+    // const_cast: the provider returns a live mutable state; we only read it.
+    std::lock_guard<std::mutex> lock(const_cast<GdbStub*>(this)->state_provider_mutex_);
+    if (!state_provider_) return 0;
+    cpu::CpuState* st = state_provider_();
+    if (!st) return 0;
+    if (idx < 31) return st->GetX(idx); // 0..30
+    if (idx == 31) return st->pc;
+    if (idx == 32) return st->sp;
+    return 0;
+}
+
+void GdbStub::WriteGdbReg(u32 idx, u64 val) noexcept {
+    if (idx >= kNumGdbRegs) return;
+    cpu::CpuState* st = GetLiveCpuState();
+    if (!st) return;
+    if (idx < 31) {
+        st->SetX(idx, val);
+    } else if (idx == 31) {
+        st->pc = val;
+    } else if (idx == 32) {
+        st->sp = val;
+    }
+}
+
 std::string GdbStub::HandleReadRegisters() {
-    // AArch64: x0-x30 (31 general-purpose 64-bit registers).
-    // GDB expects them as little-endian 64-bit values in hex.
-    // We return zeroes since we don't have live CPU state here.
-    constexpr int kNumRegs = 31;
-    constexpr int kRegBytes = 8; // 64-bit
+    // g → read all registers. GDB AArch64 expects x0..x30 then pc then sp,
+    // each 8 bytes little-endian hex. With live state wired we report the real
+    // guest registers; otherwise zeros (as before).
     std::string result;
-    result.reserve(kNumRegs * kRegBytes * 2);
-    // 16 hex '0' chars per register (8 bytes LE zero = "0000000000000000")
-    for (int i = 0; i < kNumRegs; ++i)
-        result += "0000000000000000";
+    result.reserve(kNumGdbRegs * 16);
+    for (u32 i = 0; i < kNumGdbRegs; ++i) {
+        result += U64ToLeHex(ReadGdbReg(i));
+    }
     return result;
 }
 
-std::string GdbStub::HandleWriteRegisters(const std::string& /*data*/) {
+std::string GdbStub::HandleWriteRegisters(const std::string& data) {
+    // G…<bytes> — write all registers. Only honor it when we have live state;
+    // otherwise silently OK (no-op) so GDB doesn't error out.
+    if (data.size() >= kNumGdbRegs * 16) {
+        for (u32 i = 0; i < kNumGdbRegs; ++i) {
+            const std::string hex = data.substr(i * 16, 16);
+            u64 v = 0;
+            for (size_t b = 0; b < 8; ++b) {
+                const auto nib = [](char c) -> u8 {
+                    if (c >= '0' && c <= '9') return static_cast<u8>(c - '0');
+                    if (c >= 'a' && c <= 'f') return static_cast<u8>(c - 'a' + 10);
+                    if (c >= 'A' && c <= 'F') return static_cast<u8>(c - 'A' + 10);
+                    return 0;
+                };
+                v |= static_cast<u64>(nib(hex[b * 2]) | (nib(hex[b * 2 + 1]) << 4)) << (b * 8);
+            }
+            WriteGdbReg(i, v);
+        }
+    }
     return "OK";
 }
 
 std::string GdbStub::HandleReadRegister(const std::string& args) {
-    // p N  – return 8 zero bytes (16 hex chars)
-    (void)args;
-    return "0000000000000000";
+    // p N — read a single register. N is hex. Return 16 hex digits, or E01.
+    u32 idx = 0;
+    try {
+        idx = static_cast<u32>(std::stoul(args, nullptr, 16));
+    } catch (...) {
+        return "E01";
+    }
+    if (idx >= kNumGdbRegs) return "E01";
+    return U64ToLeHex(ReadGdbReg(idx));
 }
 
-std::string GdbStub::HandleWriteRegister(const std::string& /*args*/) {
+std::string GdbStub::HandleWriteRegister(const std::string& args) {
+    // P N=value — write a single register. N and value are hex.
+    const auto eq = args.find('=');
+    if (eq == std::string::npos) return "E01";
+    u32 idx = 0;
+    u64 val = 0;
+    try {
+        idx = static_cast<u32>(std::stoul(args.substr(0, eq), nullptr, 16));
+        val = static_cast<u64>(std::stoull(args.substr(eq + 1), nullptr, 16));
+    } catch (...) {
+        return "E01";
+    }
+    WriteGdbReg(idx, val);
     return "OK";
 }
 

@@ -140,6 +140,13 @@ public:
     XboxFrontend(core::filesystem::VirtualFileSystem& vfs, core::config::ConfigManager& config);
     ~XboxFrontend() = default;
 
+    /// Wire a live guest-CPU-state provider into the GDB RSP stub so a remote
+    /// GDB/LLDB reads REAL registers/pc/sp, not zeros. The provider returns a
+    /// pointer to the emulator's current thread's CpuState (e.g. main thread).
+    void SetGdbCpuStateProvider(nemu::core::debug::GdbStub::CpuStateProvider provider) {
+        gdb_stub_server_.SetCpuStateProvider(std::move(provider));
+    }
+
     /// Refresh and scan available games from sdmc:/, romfs:/, and packages
     void RefreshLibrary();
 

@@ -29,12 +29,13 @@
 // Platform notes:
 //   Linux  → POSIX sockets  (sys/socket.h, netinet/in.h, unistd.h)
 //   Windows→ Winsock2       (winsock2.h, ws2tcpip.h)
-// ---------------------------------------------------------------------------
 
 #include "core/types.hpp"
 #include "core/memory/virtual_memory.hpp"
+#include "core/cpu/cpu_state.hpp"
 
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -85,6 +86,23 @@ public:
     // Optionally wire in a live VirtualMemory after construction.
     void SetMemory(memory::VirtualMemory* mem) noexcept { memory_ = mem; }
 
+    // Wire in a provider that returns the current guest CPU state (e.g. the
+    // emulator's current thread). Called on each register read/write packet so
+    // a remote GDB/LLDB inspects LIVE registers, not zeros. May be null — in
+    // which case register responses are zeros (as before). The provider may
+    // return a nullptr to indicate "no live state right now."
+    using CpuStateProvider = std::function<cpu::CpuState*(void)>;
+    void SetCpuStateProvider(CpuStateProvider provider) {
+        std::lock_guard<std::mutex> lock(state_provider_mutex_);
+        state_provider_ = std::move(provider);
+    }
+
+    // The AArch64 general-purpose register order the 'g'/'G'/'p'/'P' packets
+    // expose, matching GDB's expected layout: x0..x30, then PC, then SP,
+    // then xzr (always 0). GDB's AArch64 regset is x0-x30 (31), sp, pc, cpsr,
+    // but the minimal set we expose is x0-x30 + pc + sp (33 words).
+    static constexpr size_t kNumGdbRegs = 33; // x0..x30 (31) + pc + sp
+
 private:
     // Background thread entry – accept loop + per-client handler.
     void ServerThread();
@@ -125,10 +143,24 @@ private:
     std::string HandleWriteMemory(const std::string& args);
     std::string HandleQuery(const std::string& query);
 
+    // Return the live guest CPU state (guarded), or nullptr when none is wired
+    // or the provider currently reports none.
+    cpu::CpuState* GetLiveCpuState() noexcept;
+
+    // Read/write a single GDB register index (0-30 = x0-x30, 31 = pc, 32 = sp)
+    // from the live state. Returns 0 / no-op when no live state or invalid idx.
+    u64 ReadGdbReg(u32 idx) const noexcept;
+    void WriteGdbReg(u32 idx, u64 val) noexcept;
+
     // -----------------------------------------------------------------------
     // Members
     // -----------------------------------------------------------------------
     memory::VirtualMemory* memory_{nullptr};
+
+    // Live CPU-state provider (guarded — set from the frontend, read from the
+    // RSP server thread).
+    std::mutex state_provider_mutex_;
+    CpuStateProvider state_provider_;
 
     std::atomic<bool> running_{false};
     std::thread        server_thread_;

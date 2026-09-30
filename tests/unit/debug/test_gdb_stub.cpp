@@ -135,13 +135,15 @@ int main() {
     // 1. Halt reason.
     NEMU_TEST_ASSERT(Exchange(client, "?") == "T05", "halt reason -> T05 (SIGTRAP)");
 
-    // 2. Read all registers -> 31 x 16 hex '0'.
+    // 2. Read all registers. No CPU-state provider is wired yet, so the stub
+    // falls back to returning zeros for all kNumGdbRegs (x0-x30 + pc + sp).
     std::string regs = Exchange(client, "g");
-    NEMU_TEST_ASSERT(regs.size() == 31 * 16 && regs.find_first_not_of('0') == std::string::npos,
-                     "read regs -> 31 zero registers");
+    NEMU_TEST_ASSERT(regs.size() == debug::GdbStub::kNumGdbRegs * 16 &&
+                     regs.find_first_not_of('0') == std::string::npos,
+                     "read regs -> all-zero registers (no live provider)");
 
-    // 3. Read one register -> 16 hex '0'.
-    NEMU_TEST_ASSERT(Exchange(client, "p10") == "0000000000000000", "read reg 0x10");
+    // 3. Read one register -> 16 hex '0' (no provider yet).
+    NEMU_TEST_ASSERT(Exchange(client, "p10") == "0000000000000000", "read reg 0x10 (no provider)");
 
     // 4. qSupported / qAttached / qC.
     NEMU_TEST_ASSERT(Exchange(client, "qSupported").rfind("PacketSize=", 0) == 0, "qSupported");
@@ -191,6 +193,50 @@ int main() {
     stub.Stop();
     NEMU_TEST_ASSERT(!stub.IsRunning(), "IsRunning false after Stop");
     NEMU_TEST_ASSERT(stub.Start(port), "restart on same port after Stop");
+
+    // 9. LIVE registers: wire a CPU-state provider and verify real guest
+    //    values flow through 'g'/'p'/'P' (this is the live-remote-debug path).
+    //    Open a FRESH connection to the restarted server.
+    int client2 = ConnectClient(port);
+    {
+        cpu::CpuState live_state;
+        live_state.SetX(0, 0x1111222233334444ULL);
+        live_state.SetX(5, 0xAAAABBBBCCCCDDDDULL);
+        live_state.pc = 0x0000007100001000ULL;
+        live_state.sp = 0x0000007100FFE000ULL;
+
+        stub.SetCpuStateProvider([&live_state]() { return &live_state; });
+
+        // p5 -> x5 must match (16 hex), not zeros.
+        NEMU_TEST_ASSERT(Exchange(client2, "p5") == "ddddccccbbbbaaaa",
+                         "live read of x5 returns real value (LE hex)");
+        // p0 -> x0.
+        NEMU_TEST_ASSERT(Exchange(client2, "p0") == "4444333322221111",
+                         "live read of x0 returns real value");
+        // pc index 31 (0x1f), sp index 32 (0x20). Little-endian hex.
+        NEMU_TEST_ASSERT(Exchange(client2, "p1f") == "0010000071000000",
+                         "live read of pc (reg 31) returns real value");
+        NEMU_TEST_ASSERT(Exchange(client2, "p20") == "00e0ff0071000000",
+                         "live read of sp (reg 32) returns real value");
+
+        // 'g' full read: x5's 16-hex must appear at offset 5*16.
+        std::string all = Exchange(client2, "g");
+        NEMU_TEST_ASSERT(all.size() == debug::GdbStub::kNumGdbRegs * 16, "'g' returns kNumGdbRegs regs");
+        NEMU_TEST_ASSERT(all.substr(5 * 16, 16) == "ddddccccbbbbaaaa",
+                         "'g' embeds x5 at its slot");
+
+        // 'P' single-register write mutates live state.
+        NEMU_TEST_ASSERT(Exchange(client2, "P7=0011223344556677") == "OK", "'P' write -> OK");
+        NEMU_TEST_ASSERT(live_state.GetX(7) == 0x0011223344556677ULL,
+                         "'P' wrote through to live x7");
+
+        stub.SetCpuStateProvider(nullptr);
+        // With the provider removed, 'p0' should fall back to zeros.
+        NEMU_TEST_ASSERT(Exchange(client2, "p0") == "0000000000000000",
+                         "'p0' zero after provider removed");
+    }
+    ::close(client2);
+
     stub.Stop();
 
     std::cout << "[Test: GDB Remote Serial Protocol Stub] ALL PASSED" << std::endl;

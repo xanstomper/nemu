@@ -203,6 +203,14 @@ static int MainInternal(int argc, char** argv) {
     auto controller = emulator.GetControllerDriver();
     frontend.SetLdnNetwork(emulator.GetLdnNetwork());
 
+    // Live remote debugging: feed the GDB RSP stub the emulator's current guest
+    // CPU state so a remote gdb-multiarch/LLDB attached to :24689 reads REAL
+    // registers/pc/sp (not zeros). Best-effort live reads while the guest runs.
+    frontend.SetGdbCpuStateProvider([&emulator]() -> cpu::CpuState* {
+        auto th = emulator.GetMainThread();
+        return th ? &th->GetCpuState() : nullptr;
+    });
+
     if (!initial_subview.empty()) {
         if (initial_subview == "settings") {
             frontend.SetActiveSubView(frontend::ActiveSubView::SystemSettings);
