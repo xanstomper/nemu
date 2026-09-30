@@ -7,18 +7,34 @@ namespace nemu::core::loader {
 
 // Layout invariants (stable, well-documented across Switch tooling):
 //   * XCI header is 0x200 bytes.
-//   * The partition table is an HFS0 located at offset 0x200.
+//   * The partition table is an HFS0 whose offset depends on the cart layout:
+//       - 0x200  : headerless / minimal XCI (partition table right after header)
+//       - 0xF000 : standard XCI (0xF000 partition offset)
+//       - 0x00   : partition table at the very start
 //   * Partition names include "normal" (game content), "secure", "update",
 //     "logo". Only the "normal" partition holds the playable game payloads.
 constexpr size_t kXciHeaderSize = 0x200;
+constexpr size_t kXciPartitionOffset  = 0xF000;
+constexpr size_t kXciPartitionOffset2 = 0x0000;
+
+/// Detect the absolute file offset of the HFS0 partition table inside an XCI
+/// by scanning the known valid offsets. Returns kInvalidOffset if none match.
+/// This is why IsXci() must not hardcode a single offset (real carts use 0xF000).
+static constexpr size_t kInvalidOffset = static_cast<size_t>(-1);
+static size_t DetectPartitionTableOffset(std::span<const u8> data) {
+    for (const size_t off : {kXciHeaderSize, kXciPartitionOffset, kXciPartitionOffset2}) {
+        if (data.size() < off + 4) continue;
+        u32 magic = 0;
+        std::memcpy(&magic, data.data() + off, 4);
+        if (magic == Pfs0Archive::HFS0_MAGIC) {
+            return off;
+        }
+    }
+    return kInvalidOffset;
+}
 
 bool XciArchive::IsXci(std::span<const u8> data) {
-    if (data.size() < kXciHeaderSize + 4) {
-        return false;
-    }
-    u32 magic = 0;
-    std::memcpy(&magic, data.data() + kXciHeaderSize, 4);
-    return magic == Pfs0Archive::HFS0_MAGIC;
+    return DetectPartitionTableOffset(data) != kInvalidOffset;
 }
 
 bool XciArchive::Initialize(std::span<const u8> data) {
@@ -26,15 +42,17 @@ bool XciArchive::Initialize(std::span<const u8> data) {
     partition_names_.clear();
     valid_ = false;
 
-    if (!IsXci(data)) {
+    const size_t pt_off = DetectPartitionTableOffset(data);
+    if (pt_off == kInvalidOffset) {
         return false;
     }
+    partition_table_offset_ = pt_off;
 
-    // The partition table is an HFS0 at offset 0x200 within the XCI.
-    std::span<const u8> pt(data.data() + kXciHeaderSize, data.size() - kXciHeaderSize);
+    // The partition table is an HFS0 at the detected offset within the XCI.
+    std::span<const u8> pt(data.data() + pt_off, data.size() - pt_off);
     Pfs0Archive part_table;
     if (!part_table.Initialize(pt) || !part_table.IsHfs0()) {
-        NEMU_LOG_ERROR("XCI", "XCI partition table at +0x200 is not a valid HFS0");
+        NEMU_LOG_ERROR("XCI", "XCI partition table at +0x{:X} is not a valid HFS0", pt_off);
         return false;
     }
 
@@ -49,21 +67,22 @@ bool XciArchive::Initialize(std::span<const u8> data) {
 }
 
 bool XciArchive::UnpackGame(std::vector<XciPayload>& payloads) const {
-    if (!valid_) {
+    if (!valid_ || partition_table_offset_ == static_cast<size_t>(-1)) {
         return false;
     }
-    if (raw_data_.size() < kXciHeaderSize + 4) {
+    const size_t ptoff = partition_table_offset_;
+    if (raw_data_.size() < ptoff + 4) {
         return false;
     }
 
-    std::span<const u8> pt(raw_data_.data() + kXciHeaderSize, raw_data_.size() - kXciHeaderSize);
+    std::span<const u8> pt(raw_data_.data() + ptoff, raw_data_.size() - ptoff);
     Pfs0Archive part_table;
     if (!part_table.Initialize(pt) || !part_table.IsHfs0()) {
         return false;
     }
 
-    // Find the "normal" partition that holds the game.
-    auto normal = part_table.OpenFile("normal");
+    // Locate the "normal" partition that holds the game.
+    std::optional<std::span<const u8>> normal = part_table.OpenFile("normal");
     if (!normal) {
         // Some small / unusual carts expose the game directly in a partition
         // named differently; fall back to the largest non-system partition.
@@ -78,7 +97,6 @@ bool XciArchive::UnpackGame(std::vector<XciPayload>& payloads) const {
         NEMU_LOG_WARN("XCI", "No 'normal' partition found in XCI; nothing to boot");
         return false;
     }
-    NEMU_LOG_INFO("XCI", "Using 'normal' partition ({} bytes)", normal->size());
 
     // The "normal" partition is itself an HFS0 whose entries are the game's
     // NSP files / NCAs. Walk it and expose every payload as a span.
@@ -90,7 +108,6 @@ bool XciArchive::UnpackGame(std::vector<XciPayload>& payloads) const {
             payloads.push_back(XciPayload{
                 .name = f.name,
                 .data = *entry,
-                // Absolute offset into the original XCI buffer for diagnostics.
                 .offset = static_cast<size_t>((*entry).data() - raw_data_.data()),
                 .is_copy = false,
             });

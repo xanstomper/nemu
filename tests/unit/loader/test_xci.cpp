@@ -92,6 +92,25 @@ std::vector<u8> BuildXci() {
     return xci;
 }
 
+// Build a STANDARD cart-layout XCI: the HFS0 partition table lives at file
+// offset 0xF000 (with the 0x200 header + padding before it), as real Switch
+// carts do. Regression test for the fix that only checked 0x200.
+std::vector<u8> BuildXciAt0xF000() {
+    std::vector<u8> fake_nsp = {'N','S','P','0', 0xA0,0xB1,0xC2,0xD3, 1,2,3,4,5,6,7,8};
+    std::vector<u8> normal_body;
+    BuildHfs0({ {"cartgame.nsp", fake_nsp} }, normal_body);
+
+    std::vector<u8> part_table;
+    BuildHfs0({ {"normal", normal_body},
+                {"secure", std::vector<u8>(64, 0xBB)},
+                {"logo",   std::vector<u8>(32, 0xCC)} }, part_table);
+
+    // Pad so the partition table starts exactly at file offset 0xF000.
+    std::vector<u8> xci(0xF000, 0);
+    xci.insert(xci.end(), part_table.begin(), part_table.end());
+    return xci;
+}
+
 int main() {
     std::cout << "[Test: XCI Cartridge Reader]" << std::endl;
 
@@ -132,6 +151,28 @@ int main() {
     NEMU_TEST_ASSERT(payloads[0].data.data() >= xci.data() &&
                      payloads[0].data.data() < xci.data() + xci.size(),
                      "Payload data must alias the original XCI buffer (no copy)");
+
+    // 6. STANDARD cart layout: partition table at 0xF000 (regression).
+    //    Real Switch XCIs place the HFS0 partition table at 0xF000, not 0x200.
+    //    IsXci/Initialize must detect and parse this layout.
+    auto xci_f000 = BuildXciAt0xF000();
+    NEMU_TEST_ASSERT(loader::XciArchive::IsXci(xci_f000),
+                     "Standard (0xF000) XCI must be detected");
+    loader::XciArchive f000_archive;
+    NEMU_TEST_ASSERT(f000_archive.Initialize(xci_f000),
+                     "Standard (0xF000) XCI should initialize");
+    bool f000_normal = false;
+    for (const auto& p : f000_archive.PartitionNames()) {
+        if (p == "normal") f000_normal = true;
+    }
+    NEMU_TEST_ASSERT(f000_normal, "0xF000 XCI must contain a 'normal' partition");
+    std::vector<loader::XciPayload> f000_payloads;
+    NEMU_TEST_ASSERT(f000_archive.UnpackGame(f000_payloads),
+                     "0xF000 XCI UnpackGame should succeed");
+    NEMU_TEST_ASSERT(f000_payloads.size() == 1 && f000_payloads[0].name == "cartgame.nsp",
+                     "0xF000 XCI payload name must survive");
+    NEMU_TEST_ASSERT(f000_payloads[0].data.size() == 16 && f000_payloads[0].data[0] == 'N',
+                     "0xF000 XCI payload content must round-trip");
 
     std::cout << "[Test: XCI Cartridge Reader] ALL PASSED" << std::endl;
     return 0;

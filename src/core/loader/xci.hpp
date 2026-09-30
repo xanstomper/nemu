@@ -48,7 +48,7 @@ public:
 private:
     std::span<const u8> raw_data_;
     std::vector<std::string> partition_names_;
-    // Sorted map of non-normal partition (name -> HFS0 entry span) for logging.
+    size_t partition_table_offset_{0};  ///< detected HFS0 offset (0x200/0xF000/0x0)
     bool valid_{false};
 };
 

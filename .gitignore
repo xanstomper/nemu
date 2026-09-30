@@ -60,3 +60,14 @@ Testing/
 
 # Orphaned UI asset mockups (not wired into any source file)
 assets/ui/*.png
+
+# Clean-room: user game library + ROM files are NEVER committed (same isolation
+# as keys). These are big and belong to the user's own library.
+/games/
+/roms/
+*.nsp
+*.xci
+*.nca
+*.nso
+*.tik
+*.nro
