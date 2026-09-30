@@ -307,6 +307,40 @@ int main() {
         aes.DecryptCtr(ctr_enc, ctr_dec, iv, 0);
         NEMU_TEST_ASSERT(ctr_dec == msg, "AES-128-CTR round-trip must restore original plaintext");
 
+        // Test AES-128-CTR with a non-zero upper counter half (the NCA section
+        // nonce). A 128-bit big-endian counter must preserve bytes [0..7] and
+        // increment across the whole block.
+        {
+            std::array<u8, 16> ctr_nonce{};
+            for (size_t i = 0; i < 8; ++i) {
+                ctr_nonce[i] = static_cast<u8>(0xA5 + i);      // upper: nonce
+                ctr_nonce[8 + i] = static_cast<u8>(0x10 + i); // lower: counter
+            }
+            std::vector<u8> msg(64, 0x3C);
+            std::vector<u8> enc_n(64, 0);
+            std::vector<u8> dec_n(64, 0);
+            aes.DecryptCtr(msg, enc_n, ctr_nonce, 0);
+            aes.DecryptCtr(enc_n, dec_n, ctr_nonce, 0);
+            NEMU_TEST_ASSERT(dec_n == msg,
+                             "CTR round-trip must work with a non-zero counter upper half");
+
+            // Different block_offset must select a different keystream position.
+            std::vector<u8> enc_off(64, 0);
+            aes.DecryptCtr(msg, enc_off, ctr_nonce, 3);
+            NEMU_TEST_ASSERT(enc_off != enc_n,
+                             "CTR block_offset must change the keystream (counter must advance)");
+
+            // Carry across the 0xFF boundary into the nonce half.
+            std::array<u8, 16> ctr_carry{};
+            ctr_carry[15] = 0xFF;
+            std::vector<u8> m2(32, 0x77);
+            std::vector<u8> c2(32, 0);
+            std::vector<u8> d2(32, 0);
+            aes.DecryptCtr(m2, c2, ctr_carry, 0);
+            aes.DecryptCtr(c2, d2, ctr_carry, 0);
+            NEMU_TEST_ASSERT(d2 == m2, "CTR must survive a carry out of the low byte");
+        }
+
         // Test AES-128-XTS sector decryption round-trip
         std::vector<u8> sector_data(512, 0xAA);
         std::vector<u8> xts_out(512, 0);

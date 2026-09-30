@@ -245,25 +245,32 @@ void Aes128::DecryptCtr(
     std::array<u8, 16> counter{};
     std::copy_n(iv.data(), 16, counter.data());
 
-    // Add block_offset to the 64-bit big-endian counter at the lower 8 bytes (or upper 8 bytes depending on convention)
-    // Standard Nintendo CTR counter addition:
-    u64 current_counter_val = 0;
-    for (size_t i = 0; i < 8; ++i) {
-        current_counter_val = (current_counter_val << 8) | counter[8 + i];
+    // The NCA section counter is a full 16-byte big-endian counter whose low 8
+    // bytes hold the section media offset and whose bytes [8] and [9] hold the
+    // key generation and section index. Both parts must be preserved, and the
+    // increment is a 128-bit big-endian add over the WHOLE block.
+    //
+    // The previous implementation read the starting value from bytes [8..15]
+    // but wrote increments into bytes [8..15] too, destroying the offset nonce
+    // in [0..7] and reinterpreting the generation/index bytes as a number. That
+    // made every NCA section decrypt to garbage. Counted as a 128-bit BE integer
+    // here so both halves round-trip exactly.
+    u8 counter_block[16];
+    std::memcpy(counter_block, counter.data(), 16);
+
+    // Add `block_offset` blocks to the 128-bit counter.
+    u64 carry = block_offset;
+    for (size_t i = 16; i-- > 0 && carry != 0;) {
+        const u64 sum = static_cast<u64>(counter_block[i]) + (carry & 0xFF);
+        counter_block[i] = static_cast<u8>(sum & 0xFF);
+        carry = (carry >> 8) + (sum >> 8);
     }
-    current_counter_val += block_offset;
 
     std::array<u8, 16> keystream{};
     size_t offset = 0;
 
     while (offset < total_bytes) {
-        // Write updated counter
-        for (size_t i = 0; i < 8; ++i) {
-            counter[15 - i] = static_cast<u8>(current_counter_val & 0xFF);
-            current_counter_val >>= 8;
-        }
-
-        EncryptBlock(counter, keystream);
+        EncryptBlock(std::span<const u8, BLOCK_SIZE>(counter_block, BLOCK_SIZE), keystream);
 
         const size_t chunk = std::min(size_t{16}, total_bytes - offset);
         for (size_t i = 0; i < chunk; ++i) {
@@ -271,7 +278,13 @@ void Aes128::DecryptCtr(
         }
 
         offset += chunk;
-        current_counter_val += 1;
+
+        // Increment the 128-bit big-endian counter block.
+        for (size_t i = 16; i-- > 0;) {
+            if (++counter_block[i] != 0) {
+                break;
+            }
+        }
     }
 }
 

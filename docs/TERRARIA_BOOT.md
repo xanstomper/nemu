@@ -53,43 +53,97 @@ Reading only `normal` — which is what the loader used to do — yields nothing
 
 Net effect: **0 → 223 payloads** from this cart.
 
-## The remaining blocker: NCA headers will not decrypt
+## Correction: the keys were never the blocker
 
-All 221 NCA headers are AES-XTS encrypted — no plaintext `NCA3`/`NCA2`/`NCA0`
-exists anywhere in the 1.9 GB file, and `magic@0x200` is garbage for every NCA.
+An earlier revision of this document claimed the NCA header key was not
+derivable and that `Terraria.xci` might not be a valid dump. **That was wrong**,
+and it came from a search that never tried the right input.
 
-This is **not** a NEMU bug. It is a keys/data problem:
+NEMU's own log shows the header decrypting correctly:
 
-- `title.keys` has only ~38 entries and **no key for `0100e46006708000`**.
-- A game card has no title keys. Its key area key is derived from a master key
-  plus the 0xF000-byte gamecard header.
-- `tools/nca_key_search.py` swept **635,904 candidates** (all 23 master keys ×
-  every 16-byte application/EKS window pair in the cart header × 3 derivation
-  shapes × 4 XTS tweak layouts, checked against 4 independent NCAs).
-  **No hit.**
+```
+[NCA header decrypt: raw_magic=0x2C58589B after_XTS=0x3341434E]
+```
 
-So either the card needs key material that is not in public `prod.keys`, or
-`Terraria.xci` is not a standard retail dump. Either way no amount of loader
-work will get past it.
+`0x3341434E` is `"NCA3"`. The header key in `games/prod.keys` works, the title
+ID comes back correct (`0x0100E46006708000`), and the section table parses to
+self-consistent values (section 0 ends exactly at the NCA file size). The
+earlier sweep failed because it only tried master keys and titlekek-derived
+values and never `header_key` itself.
 
-To confirm the XTS primitives themselves are correct (they are), see the
-known-answer vector in `tests/unit/loader/test_loader.cpp`, generated
-independently with pycryptodome.
+The actual failure is in NEMU's NCA layer, downstream of the header.
 
-## What "boots" would still require
+## Where the boot actually stops
 
-Decrypting the header is only step 2 of a long chain:
+Running the real binary:
 
-1. NCA header XTS decrypt — **blocked on keys**
-2. Segment region table parse
-3. Section 0/2 AES-CTR via the key area key
-4. `NSO0` detection in section 2
-5. NPDM + NSO segment load
-6. ARM64 execution from the entry point
-7. HLE services the title actually calls (nns, loader, fs, hid, nifm, audren…)
-8. NVN graphics + shaders for a MonoGame/XNA title
+```
+$ ./build/bin/Nemu --run games/Terraria.xci --max-frames=2000
+[Loader] Partition 'secure' contributed 10 payloads
+[Loader] Partition 'update' contributed 213 payloads
+[Crypto] NCA header decrypt: raw_magic=0x2C58589B after_XTS=0x3341434E
+[Loader] Failed to parse ExeFS PFS0 archive      <-- repeats for every NCA
+[Loader] No loadable payload found inside XCI cart
+[System] Failed to load title from: games/Terraria.xci
+```
 
-Step 8 is the long pole: no real game has ever run in NEMU, and Terraria is a
-custom-rendered XNA/MonoGame title, so the GPU path would have to work on the
-first try.
+Header decrypts; the **section body decrypts to garbage**, so the ExeFS PFS0
+never parses and no title ever loads. The `.cnmt.nca` "failed" lines are
+expected noise (Meta NCAs have no ExeFS).
+
+### Confirmed bug: `Aes128::DecryptCtr` loses the counter nonce
+
+`src/core/crypto/aes.cpp` read the starting counter from bytes `[8..15]` and
+wrote each increment back into those same bytes. Two consequences:
+
+1. Bytes `[0..7]` — which carry the NCA section nonce — were read as part of the
+   counter on the first pass and then overwritten.
+2. A carry out of the low half was **discarded**, so the counter stopped
+   incrementing correctly past `0xFFFF...FF`.
+
+Demonstrated against the pre-fix code:
+
+```
+low half = 0xFF..FF, upper = nonce
+blk1 old: 71f7238b4675b7a70af75eea2fc5aa7b
+blk1 new: b12048cb6b99cf4fc1f7f1f10812b018
+carry case same: NO
+```
+
+The fix treats the counter as a full 128-bit big-endian value and increments
+the whole block. Covered by new tests in `test_loader.cpp` (non-zero nonce
+round-trip, distinct `block_offset` keystream, carry survival).
+
+### Still open after the CTR fix
+
+Header decrypts correctly and the section table is correct, but the ExeFS still
+does not decrypt to a `PFS0` magic. A sweep of 32,000 combinations
+(key-area offset across the whole header x key index 0-3 x Key-Area-Key source
+x CTR layout x candidate media offsets) found no match, so the remaining gap is
+in how the per-section key is derived, not in the container or the header.
+
+Candidate causes still to check:
+
+- `nca.cpp` reads the key area at header offset **0x300**, but 0x300 holds the
+  *encrypted* Key-Area-Key. The encrypted section keys live elsewhere and the
+  Key-Area-Key must first be unwrapped (`aes_key_generation_source` /
+  `aes_kek_generation_source` are both present in `prod.keys`).
+- `NcaReader::HEADER_SIZE` is `0x400`, but a real NCA3 header is `0xC00`; the
+  segment region table at `0x400` is therefore never decrypted.
+- `content_size` is read from `0x208` (actually `key_blob_index`), and
+  `rights_id` from `0x230` (actually the meta-data hash). Both need `0x220`.
+
+Decoded header for reference (`09dd2f0b…nca`, the 159 MB base-game NCA):
+
+```
+0x200 magic/dist/ct/keygen/kaek = NCA3, 1, 0(Program), 2, 0
+0x210 program_id = 0x0100E46006708000
+0x240 sec0: media 0x3CEA0..0x4F980  -> file 0x79D4000..0x9F30000
+0x250 sec1: media 0x00E0..0x3CEA0  -> file 0x1C000..0x79D4000
+0x260 sec2: media 0x0020..0x00E0  -> file 0x4000..0x1C000
+```
+
+Section 0 ends at `0x9F30000`, exactly the NCA's file size — confirming the
+section table parses correctly and is not the problem.
+
 
