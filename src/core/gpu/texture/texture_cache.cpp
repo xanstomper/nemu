@@ -223,6 +223,31 @@ std::shared_ptr<CachedTexture> TextureCache::GetOrCreateTexture(
                 cached->is_valid = true;
             }
         }
+
+        // Budget-pressure recompression (yuzu depth): large RGBA8 surfaces
+        // re-encode to BC1 when the cache is within 25% of its byte budget —
+        // 8x smaller resident footprint, GPU decodes at draw. 4x4-aligned
+        // dims only (BC1 block requirement).
+        if (cached->is_valid && desc.bytes_per_pixel == 4 &&
+            desc.width % 4 == 0 && desc.height % 4 == 0 &&
+            linear_size >= 256 * 1024 &&
+            total_resident_bytes_ + linear_size > (max_texture_bytes_ / 4) * 3) {
+            const u8* rgba_bytes = cached->linear_pixel_data.data();
+            std::vector<u8> bc1;
+            if (Bc1Encoder::EncodeRGBA8(
+                    std::span<const u8>(rgba_bytes, cached->linear_pixel_data.size()),
+                    desc.width, desc.height, bc1)) {
+                if (total_resident_bytes_ >= cached->linear_pixel_data.size()) {
+                    total_resident_bytes_ -= cached->linear_pixel_data.size();
+                    memory::MemoryBudget::AccrueSubsystem(
+                        -static_cast<s64>(cached->linear_pixel_data.size()));
+                }
+                cached->linear_pixel_data = std::move(bc1);
+                cached->host_storage = CachedTexture::HostStorage::BC1;
+                NEMU_LOG_DEBUG("gpu", "TextureCache: budget-pressure RGBA8 {}x{} -> BC1 ({} B)",
+                               desc.width, desc.height, cached->linear_pixel_data.size());
+            }
+        }
     } else {
         // Fallback procedural checkerboard pattern for test/debug
         cached->is_valid = true;
