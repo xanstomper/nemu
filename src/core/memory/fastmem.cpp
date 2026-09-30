@@ -33,12 +33,15 @@ bool FastmemManager::Initialize(MemoryTier tier, bool reserve_full_39bit) {
     switch (tier) {
     case MemoryTier::Retail4GB:
         dram_size_ = SIZE_4GB;
+        guest_commit_cap_ = DEFAULT_GUEST_COMMIT_CAP;
         break;
     case MemoryTier::Oled6GB:
         dram_size_ = SIZE_6GB;
+        guest_commit_cap_ = SIZE_6GB;
         break;
     case MemoryTier::DevKit8GB:
         dram_size_ = SIZE_8GB;
+        guest_commit_cap_ = SIZE_8GB;
         break;
     }
 
@@ -73,10 +76,11 @@ bool FastmemManager::Initialize(MemoryTier tier, bool reserve_full_39bit) {
 #endif
 
     is_initialized_ = true;
-    NEMU_LOG_INFO("Fastmem", "Initialized Fastmem at host base {:p} (Reserved: {} GiB, DRAM Tier: {} GiB)",
+    NEMU_LOG_INFO("Fastmem", "Initialized Fastmem at host base {:p} (Reserved: {} GiB, DRAM Tier: {} GiB, Emulation Cap: {} MiB)",
                   static_cast<void*>(base_pointer_),
                   reservation_size_ / (1024 * 1024 * 1024ULL),
-                  dram_size_ / (1024 * 1024 * 1024ULL));
+                  dram_size_ / (1024 * 1024 * 1024ULL),
+                  guest_commit_cap_ / (1024 * 1024ULL));
     return true;
 }
 
@@ -108,6 +112,13 @@ bool FastmemManager::Commit(vaddr_t address, size_t size, MemoryPermission perms
     if (address + size > reservation_size_) {
         NEMU_LOG_ERROR("Fastmem", "Commit range [0x{:X}, 0x{:X}] exceeds reservation 0x{:X}",
                        address, address + size, reservation_size_);
+        return false;
+    }
+
+    if (guest_commit_cap_ > 0 &&
+        (MemoryBudget::CommittedFastmem() + size > guest_commit_cap_)) {
+        NEMU_LOG_WARN("Fastmem", "Commit of {} bytes at 0x{:X} exceeds guest {} MiB cap (current: {} MiB). Enforcing 3.0 GiB boundary to guarantee 2+ GiB translation headroom.",
+                      size, address, guest_commit_cap_ / (1024 * 1024), MemoryBudget::CommittedFastmem() / (1024 * 1024));
         return false;
     }
 

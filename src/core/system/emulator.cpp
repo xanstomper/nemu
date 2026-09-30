@@ -155,6 +155,11 @@ bool Emulator::Initialize() {
             gpu_backend_->TrimMemory();
         }
     });
+    memory_governor_->RegisterTextureBudgetCallback([this](size_t budget) {
+        if (gpu_backend_) {
+            gpu_backend_->SetTextureByteBudget(budget);
+        }
+    });
     memory_governor_->RegisterResolutionScaleCallback([this](float scale) {
         NEMU_LOG_INFO("System", "MemoryGovernor: Adjusting dynamic render scale to {:.2f}x under load", scale);
         if (config_manager_) {

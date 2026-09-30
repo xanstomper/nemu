@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <memory>
 #include <vector>
+#include <mutex>
 
 namespace nemu::core::cpu::jit {
 
@@ -101,11 +102,14 @@ private:
         return (static_cast<size_t>(pc >> 2)) & (PATCH_CACHE_SLOTS - 1);
     }
 
+    void ClearInternal();
+
     /// Captured guest VirtualMemory address, patched into generated code at
     /// block compile time. The block cache is only valid while the same
     /// VirtualMemory object backs execution.
     u64 mem_addr_{0};
 
+    mutable std::mutex mutex_;
     CodeCache code_cache_;
     X64Emitter emitter_;
     std::unordered_map<vaddr_t, JitBlockFn> block_map_;

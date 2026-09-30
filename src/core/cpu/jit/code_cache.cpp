@@ -1,4 +1,5 @@
 #include "code_cache.hpp"
+#include "core/memory/memory_budget.hpp"
 #include "platform/logger.hpp"
 
 #ifdef _WIN32
@@ -37,12 +38,14 @@ CodeCache::CodeCache(size_t total_size)
     }
 #endif
     if (base_ptr_) {
+        memory::MemoryBudget::AccrueJit(static_cast<s64>(total_size_));
         NEMU_LOG_INFO("JIT", "Allocated {} MiB executable code cache at {:p}", total_size_ / (1024 * 1024), static_cast<void*>(base_ptr_));
     }
 }
 
 CodeCache::~CodeCache() {
     if (base_ptr_) {
+        memory::MemoryBudget::AccrueJit(-static_cast<s64>(total_size_));
 #ifdef _WIN32
         VirtualFree(base_ptr_, 0, MEM_RELEASE);
 #else

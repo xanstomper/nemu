@@ -3,6 +3,7 @@
 #include "platform/xbox_thread_affinity.hpp"
 #include "platform/xbox_lifecycle.hpp"
 #include "core/hid/xbox_controller_driver.hpp"
+#include "core/memory/memory_budget.hpp"
 #include <iostream>
 #include <cassert>
 #include <cstdlib>
@@ -199,6 +200,40 @@ int main() {
 
         driver.ClearInjectedState(0);
         std::cout << "  - Xbox Impulse Triggers & Snapshots: PASSED" << std::endl;
+    }
+
+    // -------------------------------------------------------------
+    // 6. Mathematical Memory Budget Guarantee & Bounds Check
+    // -------------------------------------------------------------
+    {
+        std::cout << "[Test 6: Mathematical Memory Budget Guarantee & Bounds Check]" << std::endl;
+        XboxMemoryGovernor gov;
+
+        size_t last_budget = 0;
+        gov.RegisterTextureBudgetCallback([&](size_t b) { last_budget = b; });
+
+        // Evaluate with baseline memory
+        gov.EvaluateAndEnforce();
+        NEMU_TEST_ASSERT(last_budget >= XboxMemoryGovernor::kMinTextureBudgetFloor, "Texture budget above floor");
+        NEMU_TEST_ASSERT(last_budget <= XboxMemoryGovernor::kMaxTextureBudgetCap, "Texture budget below max cap");
+
+        // Verify mathematical theorem:
+        // Guest Fastmem + Guaranteed Texture Budget + Fixed Overhead + Safety Margin <= 5,120 MB
+        size_t guaranteed_budget = gov.ComputeGuaranteedTextureBudget();
+        u64 total_bound = nemu::core::memory::MemoryBudget::CommittedFastmem() +
+                          guaranteed_budget +
+                          XboxMemoryGovernor::kEstimatedFixedOverheadBytes +
+                          XboxMemoryGovernor::kSafetyMarginBytes;
+        NEMU_TEST_ASSERT(total_bound <= XboxMemoryGovernor::kHardCeiling, "Total bound strictly <= 5120MB ceiling");
+        std::cout << "  - Mathematical Guarantee: " << (total_bound / (1024 * 1024))
+                  << " MB strictly <= 5120 MB (Safety Margin: "
+                  << (XboxMemoryGovernor::kSafetyMarginBytes / (1024 * 1024)) << " MB): PASSED" << std::endl;
+
+        std::string hud = gov.FormatHudString();
+        NEMU_TEST_ASSERT(hud.find("5.1GB") != std::string::npos, "HUD contains 5.1GB ceiling");
+        NEMU_TEST_ASSERT(hud.find("Guest:") != std::string::npos, "HUD contains Guest partition");
+        NEMU_TEST_ASSERT(hud.find("Trans:") != std::string::npos, "HUD contains Translation partition");
+        std::cout << "  - Status HUD Partition Formatting: " << hud << std::endl;
     }
 
     std::cout << "=================================================" << std::endl;

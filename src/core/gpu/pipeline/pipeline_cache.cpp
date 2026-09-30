@@ -1,4 +1,5 @@
 #include "pipeline_cache.hpp"
+#include "core/memory/memory_budget.hpp"
 #include "platform/logger.hpp"
 #include <cstring>
 #include <vector>
@@ -155,7 +156,9 @@ size_t PipelineCache::GetCachedPipelineCount() const noexcept {
 
 void PipelineCache::Clear() {
     std::lock_guard<std::mutex> lock(mutex_);
+    const size_t count = cache_.size();
     cache_.clear();
+    memory::MemoryBudget::AccrueShader(-static_cast<s64>(count * 64 * 1024));
     next_id_ = 1;
     cache_hits_ = 0;
     cache_misses_ = 0;
@@ -429,12 +432,21 @@ bool PipelineCache::GetOrCreatePipeline(
         }
     }
 
+    if (cache_.size() >= 2048) {
+        size_t to_evict = 256;
+        for (auto eit = cache_.begin(); eit != cache_.end() && to_evict > 0;) {
+            eit = cache_.erase(eit);
+            --to_evict;
+            memory::MemoryBudget::AccrueShader(-static_cast<s64>(64 * 1024));
+        }
+    }
     CachedPipeline cp;
     cp.id = next_id_++;
     cp.pso = std::move(pso);
     cp.root_signature = std::move(root_sig);
     cp.valid = true;
     cache_.emplace(key, std::move(cp));
+    memory::MemoryBudget::AccrueShader(static_cast<s64>(64 * 1024));
     return true;
 #else
     // Headless/POSIX pipeline caching simulation
@@ -465,10 +477,19 @@ bool PipelineCache::GetOrCreatePipeline(
             }
         }
     }
+    if (cache_.size() >= 2048) {
+        size_t to_evict = 256;
+        for (auto eit = cache_.begin(); eit != cache_.end() && to_evict > 0;) {
+            eit = cache_.erase(eit);
+            --to_evict;
+            memory::MemoryBudget::AccrueShader(-static_cast<s64>(64 * 1024));
+        }
+    }
     CachedPipeline cp;
     cp.id = next_id_++;
     cp.valid = true;
     cache_.emplace(key, std::move(cp));
+    memory::MemoryBudget::AccrueShader(static_cast<s64>(64 * 1024));
     return true;
 #endif
 }

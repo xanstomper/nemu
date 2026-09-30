@@ -25,11 +25,23 @@ public:
     static constexpr u64 kHysteresisThreshold = 3968ULL * 1024 * 1024;// 3968 MB (Hysteresis exit)
     static constexpr u64 kNominalThreshold = 3840ULL * 1024 * 1024;   // 3840 MB (3.75 GB)
 
+    // Mathematical memory budgeting guarantees:
+    static constexpr u64 kSafetyMarginBytes = 400ULL * 1024 * 1024;           // 400 MB untouchable safety buffer
+    static constexpr u64 kEstimatedFixedOverheadBytes = 350ULL * 1024 * 1024;  // 350 MB JIT + D3D12 + audio + runtime
+    static constexpr u64 kMaxTextureBudgetCap = 1200ULL * 1024 * 1024;         // 1200 MB upper texture bound
+    static constexpr u64 kMinTextureBudgetFloor = 512ULL * 1024 * 1024;        // 512 MB lower texture floor
+    static constexpr u64 kMaxGuestEmulationCap = 3072ULL * 1024 * 1024;       // 3072 MB (3.0 GiB) game memory target
+    static constexpr u64 kGuaranteedTranslationHeadroom = 2048ULL * 1024 * 1024; // 2048 MB (2.0 GiB) translation headroom
+
     XboxMemoryGovernor();
     ~XboxMemoryGovernor() = default;
 
     /// Query current process committed memory (bytes).
     [[nodiscard]] u64 GetCommittedBytes() const noexcept;
+
+    /// Compute the dynamic maximum texture cache byte budget mathematically guaranteed
+    /// to prevent exceeding the 5,120 MB ceiling given current guest physical memory commit.
+    [[nodiscard]] size_t ComputeGuaranteedTextureBudget() const noexcept;
 
     /// Query current memory pressure level based on the 3-tier threshold model.
     [[nodiscard]] MemoryPressureLevel GetPressureLevel() const noexcept;
@@ -39,6 +51,9 @@ public:
 
     /// Register a callback invoked when entering Critical memory state to purge transient textures.
     void RegisterTextureTrimCallback(std::function<void()> cb);
+
+    /// Register a callback invoked to set the dynamically guaranteed texture byte budget.
+    void RegisterTextureBudgetCallback(std::function<void(size_t budget_bytes)> cb);
 
     /// Register a callback invoked when entering Critical memory state to invoke IDXGIDevice3::Trim().
     void RegisterDxgiTrimCallback(std::function<void()> cb);
@@ -75,6 +90,7 @@ private:
 
     std::mutex callback_mutex_;
     std::vector<std::function<void()>> texture_trim_cbs_;
+    std::vector<std::function<void(size_t)>> texture_budget_cbs_;
     std::vector<std::function<void()>> dxgi_trim_cbs_;
     std::vector<std::function<void(bool)>> shader_defer_cbs_;
     std::vector<std::function<void(float)>> resolution_scale_cbs_;

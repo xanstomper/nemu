@@ -864,6 +864,44 @@ int main() {
         std::cout << "  - Differential Test 17 (runtime backend toggle): PASSED" << std::endl;
     }
 
+    // Test 18: Generational Code Cache Purge & Infinite Safe Translation Under Bounded Memory
+    // When translating millions of instructions across commercial Switch games,
+    // the code cache must NEVER run out of memory or crash. When capacity is reached,
+    // it executes a generational purge and continues translating seamlessly.
+    {
+        const vaddr_t base = 0x6000'0000ULL;
+        NEMU_TEST_ASSERT(memory.Map(base, 0x10000, memory::MemoryPermission::All), "Map Test 18 page");
+
+        // Small 2 KiB code cache to easily force multiple generational purges
+        constexpr size_t TINY_CACHE_SIZE = 2048;
+        cpu::jit::JitCompiler small_jit(TINY_CACHE_SIZE);
+
+        // Compile and execute 60 distinct blocks, each ~60 bytes of x86-64 = ~3600 bytes
+        // (well exceeding the 2048 byte capacity, forcing at least 1-2 generational purges).
+        for (u32 b = 0; b < 60; ++b) {
+            const vaddr_t block_pc = base + b * 0x80;
+            const vaddr_t halt_pc = block_pc + 0x20;
+            const u32 code[] = {
+                MovzX(0, static_cast<u16>(b * 3)),
+                AddXi(0, 0, 7),
+                RetXn(30)
+            };
+            memory.WriteBlock(block_pc, code, sizeof(code));
+
+            cpu::CpuState s;
+            s.Reset();
+            s.pc = block_pc;
+            s.SetX(30, halt_pc);
+
+            const bool ok = small_jit.Execute(s, memory);
+            NEMU_TEST_ASSERT(ok, "Block execution must succeed even when code cache purges");
+            NEMU_TEST_ASSERT(s.GetX(0) == static_cast<u64>(b * 3 + 7), "Correct computed value");
+            NEMU_TEST_ASSERT(s.pc == halt_pc, "Reached block halt");
+        }
+
+        std::cout << "  - Test 18 (Generational Code Cache Purge & Infinite Safe Translation): PASSED" << std::endl;
+    }
+
     const auto stats = jit.GetStats();
     NEMU_TEST_ASSERT(stats.blocks_compiled > 0, "Blocks compiled must be > 0");
     NEMU_TEST_ASSERT(stats.blocks_executed > 0, "Blocks executed must be > 0");

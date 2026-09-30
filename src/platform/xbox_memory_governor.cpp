@@ -56,10 +56,14 @@ MemoryPressureLevel XboxMemoryGovernor::GetPressureLevel() const noexcept {
 
 std::string XboxMemoryGovernor::FormatHudString() const {
     const u64 bytes = GetCommittedBytes();
+    const u64 guest_bytes = nemu::core::memory::MemoryBudget::CommittedFastmem();
+    const u64 trans_bytes = nemu::core::memory::MemoryBudget::SubsystemBytes();
     const double gb = static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0);
+    const double guest_gb = static_cast<double>(guest_bytes) / (1024.0 * 1024.0 * 1024.0);
+    const double trans_gb = static_cast<double>(trans_bytes) / (1024.0 * 1024.0 * 1024.0);
     std::ostringstream ss;
     ss << std::fixed << std::setprecision(1);
-    ss << "[RAM: " << gb << "GB / 5.1GB • ";
+    ss << "[RAM: " << gb << "GB / 5.1GB (Guest: " << guest_gb << "G/3.0G • Trans: " << trans_gb << "G/2.0G) • ";
 
     switch (current_level_.load(std::memory_order_relaxed)) {
         case MemoryPressureLevel::Nominal:
@@ -78,6 +82,20 @@ std::string XboxMemoryGovernor::FormatHudString() const {
 void XboxMemoryGovernor::RegisterTextureTrimCallback(std::function<void()> cb) {
     std::lock_guard lock(callback_mutex_);
     texture_trim_cbs_.push_back(std::move(cb));
+}
+
+size_t XboxMemoryGovernor::ComputeGuaranteedTextureBudget() const noexcept {
+    const u64 guest_bytes = nemu::core::memory::MemoryBudget::CommittedFastmem();
+    if (guest_bytes + kSafetyMarginBytes + kEstimatedFixedOverheadBytes >= kHardCeiling) {
+        return static_cast<size_t>(kMinTextureBudgetFloor);
+    }
+    const u64 available = kHardCeiling - guest_bytes - kSafetyMarginBytes - kEstimatedFixedOverheadBytes;
+    return static_cast<size_t>(std::clamp<u64>(available, kMinTextureBudgetFloor, kMaxTextureBudgetCap));
+}
+
+void XboxMemoryGovernor::RegisterTextureBudgetCallback(std::function<void(size_t budget_bytes)> cb) {
+    std::lock_guard lock(callback_mutex_);
+    texture_budget_cbs_.push_back(std::move(cb));
 }
 
 void XboxMemoryGovernor::RegisterDxgiTrimCallback(std::function<void()> cb) {
@@ -154,6 +172,15 @@ bool XboxMemoryGovernor::EvaluateAndEnforce() {
         std::lock_guard lock(callback_mutex_);
         for (const auto& cb : resolution_scale_cbs_) {
             if (cb) cb(target_scale);
+        }
+    }
+
+    // Compute mathematically guaranteed texture cache budget and enforce
+    const size_t guaranteed_budget = ComputeGuaranteedTextureBudget();
+    {
+        std::lock_guard lock(callback_mutex_);
+        for (const auto& cb : texture_budget_cbs_) {
+            if (cb) cb(guaranteed_budget);
         }
     }
 

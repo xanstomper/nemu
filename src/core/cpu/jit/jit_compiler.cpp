@@ -502,6 +502,8 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
             return slot.fn;
         }
     }
+
+    std::lock_guard lock(mutex_);
     auto it = block_map_.find(guest_pc);
     if (it != block_map_.end()) {
         patch_cache_[PatchIndex(guest_pc)] = {guest_pc, it->second};
@@ -1314,8 +1316,14 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
     // 4. Allocate into code cache
     u8* exec_ptr = code_cache_.Allocate(emitter_.GetSize());
     if (!exec_ptr) {
-        NEMU_LOG_ERROR("JIT", "Failed to allocate code cache buffer for block 0x{:016X}", guest_pc);
-        return nullptr;
+        NEMU_LOG_WARN("JIT", "Code cache capacity reached (used {} / {} bytes). Executing generational purge to ensure continuous safe translation.",
+                      code_cache_.GetUsedBytes(), code_cache_.GetTotalCapacity());
+        ClearInternal();
+        exec_ptr = code_cache_.Allocate(emitter_.GetSize());
+        if (!exec_ptr) {
+            NEMU_LOG_ERROR("JIT", "Failed to allocate code cache buffer for block 0x{:016X} after purge", guest_pc);
+            return nullptr;
+        }
     }
 
     std::memcpy(exec_ptr, emitter_.GetCode().data(), emitter_.GetSize());
@@ -1354,11 +1362,13 @@ void JitCompiler::InvokeSvcHandler(CpuState* state, u32 svc_id) {
 }
 
 void JitCompiler::InvalidateBlock(vaddr_t guest_pc) {
+    std::lock_guard lock(mutex_);
     block_map_.erase(guest_pc);
     patch_cache_[PatchIndex(guest_pc)] = {static_cast<vaddr_t>(-1), nullptr};
 }
 
 void JitCompiler::InvalidateRange(vaddr_t start, size_t size) {
+    std::lock_guard lock(mutex_);
     const vaddr_t end = start + size;
     for (auto it = block_map_.begin(); it != block_map_.end();) {
         if (it->first >= start && it->first < end) {
@@ -1370,10 +1380,15 @@ void JitCompiler::InvalidateRange(vaddr_t start, size_t size) {
     }
 }
 
-void JitCompiler::Clear() {
+void JitCompiler::ClearInternal() {
     block_map_.clear();
     std::fill(patch_cache_.begin(), patch_cache_.end(), BlockPatchSlot{static_cast<vaddr_t>(-1), nullptr});
     code_cache_.Reset();
+}
+
+void JitCompiler::Clear() {
+    std::lock_guard lock(mutex_);
+    ClearInternal();
 }
 
 s32 JitCompiler::RegOrSpSlot(u8 reg) const noexcept {

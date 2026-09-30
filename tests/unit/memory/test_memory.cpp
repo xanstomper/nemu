@@ -105,8 +105,18 @@ void TestFastmemAndTiers() {
     // Change protection
     NEMU_TEST_ASSERT(fm.Protect(test_va, test_sz, MemoryPermission::Read));
 
-    // Decommit and shutdown
+    // Decommit
     NEMU_TEST_ASSERT(fm.Decommit(test_va, test_sz));
+
+    // Test guest commit cap enforcement
+    NEMU_TEST_ASSERT(fm.GetGuestCommitCap() == FastmemManager::DEFAULT_GUEST_COMMIT_CAP);
+    fm.SetGuestCommitCap(128 * 1024); // 128 KiB test cap
+    NEMU_TEST_ASSERT(fm.Commit(0x10000, 64 * 1024, MemoryPermission::ReadWrite));
+    // Attempting to commit past the 128 KiB cap must be rejected
+    NEMU_TEST_ASSERT(!fm.Commit(0x20000, 128 * 1024, MemoryPermission::ReadWrite));
+    fm.Decommit(0x10000, 64 * 1024);
+    fm.SetGuestCommitCap(FastmemManager::DEFAULT_GUEST_COMMIT_CAP);
+
     fm.Shutdown();
     NEMU_TEST_ASSERT(!fm.IsEnabled());
     NEMU_TEST_ASSERT(fm.GetBase() == nullptr);

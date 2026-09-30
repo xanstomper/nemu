@@ -53,6 +53,12 @@ public:
     [[nodiscard]] size_t GetTotalReservationSize() const noexcept { return reservation_size_; }
     [[nodiscard]] size_t GetDramSize() const noexcept { return dram_size_; }
     [[nodiscard]] MemoryTier GetTier() const noexcept { return tier_; }
+    static constexpr size_t DEFAULT_GUEST_COMMIT_CAP = 3072ULL * 1024 * 1024; // 3.0 GiB (3072 MiB)
+    static constexpr size_t MAX_GUEST_APP_LIMIT = 3250ULL * 1024 * 1024;      // 3250 MiB Switch retail max app pool
+
+    /// Set guest commit cap (0 disables limit)
+    void SetGuestCommitCap(size_t cap) noexcept { guest_commit_cap_ = cap; }
+    [[nodiscard]] size_t GetGuestCommitCap() const noexcept { return guest_commit_cap_; }
 
     static FastmemManager& Instance();
 
@@ -60,6 +66,7 @@ private:
     u8* base_pointer_{nullptr};
     size_t reservation_size_{0};
     size_t dram_size_{0};
+    size_t guest_commit_cap_{DEFAULT_GUEST_COMMIT_CAP};
     MemoryTier tier_{MemoryTier::Retail4GB};
     bool is_initialized_{false};
     mutable std::mutex mutex_;

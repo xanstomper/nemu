@@ -9,7 +9,7 @@ namespace nemu::core::cpu::jit {
 
 class CodeCache {
 public:
-    static constexpr size_t DEFAULT_CACHE_SIZE = 16 * 1024 * 1024; // 16 MiB code cache
+    static constexpr size_t DEFAULT_CACHE_SIZE = 64 * 1024 * 1024; // 64 MiB code cache
 
     explicit CodeCache(size_t total_size = DEFAULT_CACHE_SIZE);
     ~CodeCache();
