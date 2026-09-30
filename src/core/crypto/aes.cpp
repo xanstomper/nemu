@@ -283,54 +283,69 @@ void Aes128::DecryptXts(
     size_t sector_size
 ) const {
     const size_t total_bytes = std::min(src.size(), dst.size());
-    const size_t sectors = total_bytes / sector_size;
+    if (sector_size == 0 || total_bytes == 0) {
+        return;
+    }
+    const size_t full_sectors = total_bytes / sector_size;
+    const size_t tail_bytes = total_bytes % sector_size;
 
-    for (size_t s = 0; s < sectors; ++s) {
-        const u64 curr_sector = sector_index + s;
-        const size_t sector_byte_offset = s * sector_size;
-
-        // Compute tweak T0 = Encrypt_key2(sector_index).
-        // Nintendo's NCA-header XTS uses the sector index BIG-ENDIAN in the
-        // UPPER 8 bytes of the tweak (0x00...00 || index_be), matching the
-        // standard XTS-AES test vectors (IEEE 1619). The index_le form
-        // produces wrong decryption for NCA headers.
-        std::array<u8, 16> tweak{};
+    // Decrypt one sector. `len` may be short for the final partial sector;
+    // whole 16-byte blocks are still processed and the remainder is skipped
+    // because XTS cannot decrypt a sub-block unit.
+    auto decrypt_sector = [&](size_t sector_byte_offset, size_t len, u64 curr_sector) {
+        // Tweak T0 = Encrypt_key2(tweak_block(sector_index)).
+        //
+        // Nintendo places the sector index in the UPPER 8 bytes of the 16-byte
+        // tweak, big-endian (0x00000000_00000000 || index_be). This is the
+        // de-facto NCA-header convention in the emulator ecosystem and it is
+        // deliberately NOT IEEE 1619, whose XTS puts the index in the LOW 8
+        // bytes little-endian. Do not "fix" this to the standard: it breaks
+        // every NCA header decrypt. Covered by the XTS known-answer test in
+        // tests/unit/loader/test_loader.cpp.
         std::array<u8, 16> sector_bytes{};
         for (size_t i = 0; i < 8; ++i) {
             sector_bytes[8 + i] = static_cast<u8>((curr_sector >> (8 * (7 - i))) & 0xFF);
         }
 
+        std::array<u8, 16> tweak{};
         key2.EncryptBlock(sector_bytes, tweak);
 
-        const size_t blocks_in_sector = sector_size / 16;
-        for (size_t b = 0; b < blocks_in_sector; ++b) {
-            const size_t block_offset = sector_byte_offset + b * 16;
-            if (block_offset + 16 > total_bytes) break;
-
+        for (size_t block_offset = 0; block_offset + 16 <= len; block_offset += 16) {
             std::array<u8, 16> block_in{};
             std::array<u8, 16> block_out{};
 
             for (size_t i = 0; i < 16; ++i) {
-                block_in[i] = src[block_offset + i] ^ tweak[i];
+                block_in[i] = src[sector_byte_offset + block_offset + i] ^ tweak[i];
             }
 
             DecryptBlock(block_in, block_out);
 
             for (size_t i = 0; i < 16; ++i) {
-                dst[block_offset + i] = block_out[i] ^ tweak[i];
+                dst[sector_byte_offset + block_offset + i] = block_out[i] ^ tweak[i];
             }
 
-            // Multiply tweak by alpha in GF(2^128)
+            // Multiply tweak by alpha in GF(2^128) for the next block.
             u8 carry = 0;
             for (size_t i = 0; i < 16; ++i) {
-                u8 next_carry = (tweak[i] >> 7) & 1;
+                const u8 next_carry = static_cast<u8>((tweak[i] >> 7) & 1);
                 tweak[i] = static_cast<u8>((tweak[i] << 1) | carry);
                 carry = next_carry;
             }
-            if (carry) {
+            if (carry != 0) {
                 tweak[0] ^= 0x87;
             }
         }
+    };
+
+    for (size_t s = 0; s < full_sectors; ++s) {
+        decrypt_sector(s * sector_size, sector_size, sector_index + s);
+    }
+
+    // A trailing partial sector still needs its own tweak; without this the
+    // final bytes of any buffer that is not a multiple of sector_size are left
+    // as ciphertext.
+    if (tail_bytes != 0) {
+        decrypt_sector(full_sectors * sector_size, tail_bytes, sector_index + full_sectors);
     }
 }
 

@@ -39,13 +39,12 @@ void BuildHfs0(const std::vector<std::pair<std::string, std::vector<u8>>>& paylo
         strtab.push_back(0);
     }
 
-    const size_t header_size = sizeof(Hfs0Header) + count * sizeof(Entry);
-    const size_t data_offset_base = header_size + strtab.size();
-    // NOTE: Pfs0Archive::OpenFile computes abs_offset = data_offset_base_ +
-    // entry.offset, where data_offset_base_ is the UNALIGNED end of the
-    // container header. So data starts immediately at header_size + strtab.size()
-    // (no alignment pad), and entry.offset is relative to that base.
-    const size_t data_start = data_offset_base;
+    // The container header (header + entries + string table) is padded up to
+    // the next 0x200 boundary; Pfs0Archive::OpenFile resolves
+    // abs_offset = HeaderSize() + entry.offset, where HeaderSize() is that
+    // aligned value. entry.offset is therefore relative to `data_start`.
+    const size_t header_end = sizeof(Hfs0Header) + count * sizeof(Entry) + strtab.size();
+    const size_t data_start = (header_end + 0x1FF) & ~static_cast<size_t>(0x1FF);
 
     out.assign(data_start, 0);
     for (size_t i = 0; i < payloads.size(); ++i) {
@@ -106,6 +105,32 @@ std::vector<u8> BuildXciAt0xF000() {
                 {"logo",   std::vector<u8>(32, 0xCC)} }, part_table);
 
     // Pad so the partition table starts exactly at file offset 0xF000.
+    std::vector<u8> xci(0xF000, 0);
+    xci.insert(xci.end(), part_table.begin(), part_table.end());
+    return xci;
+}
+
+// Build a cart whose "normal" partition is only a 0x200 stub and whose real
+// game NCAs live in "secure", with the update partition holding extra NCAs.
+// This is the real-world layout observed on retail dumps (e.g. Terraria.xci):
+// the base game sits in "secure" and "normal" is a pointer stub. A loader that
+// only reads "normal" yields zero payloads and reports "nothing to boot".
+std::vector<u8> BuildXciSecureOnly() {
+    std::vector<u8> nca_a(0x400, 0xAB);
+    std::vector<u8> nca_b(0x200, 0xCD);
+    std::vector<u8> secure_body;
+    BuildHfs0({ {"aaaaaaaa.nca", nca_a},
+                {"bbbbbbbb.cnmt.nca", nca_b} }, secure_body);
+
+    std::vector<u8> update_body;
+    BuildHfs0({ {"cccccccc.nca", std::vector<u8>(0x300, 0xEF)} }, update_body);
+
+    std::vector<u8> part_table;
+    BuildHfs0({ {"update", update_body},
+                {"normal", std::vector<u8>(0x200, 0x11)},   // stub, not a container
+                {"secure", secure_body},
+                {"logo",   std::vector<u8>(0x40, 0x22)} }, part_table);
+
     std::vector<u8> xci(0xF000, 0);
     xci.insert(xci.end(), part_table.begin(), part_table.end());
     return xci;
@@ -173,6 +198,33 @@ int main() {
                      "0xF000 XCI payload name must survive");
     NEMU_TEST_ASSERT(f000_payloads[0].data.size() == 16 && f000_payloads[0].data[0] == 'N',
                      "0xF000 XCI payload content must round-trip");
+
+    // 7. REGRESSION: game content lives in "secure"/"update" while "normal" is
+    //    a 0x200 stub. This is the layout of the real Terraria cart and the
+    //    exact reason the loader used to report "no payloads, nothing to boot".
+    auto xci_secure = BuildXciSecureOnly();
+    loader::XciArchive secure_archive;
+    NEMU_TEST_ASSERT(secure_archive.Initialize(xci_secure),
+                     "secure-only XCI should initialize");
+    std::vector<loader::XciPayload> secure_payloads;
+    NEMU_TEST_ASSERT(secure_archive.UnpackGame(secure_payloads),
+                     "secure-only XCI must still yield payloads");
+    NEMU_TEST_ASSERT(secure_payloads.size() == 3,
+                     "secure-only XCI must yield 2 secure + 1 update NCA");
+    bool saw_secure_nca = false;
+    bool saw_update_nca = false;
+    for (const auto& p : secure_payloads) {
+        if (p.name == "aaaaaaaa.nca") {
+            saw_secure_nca = true;
+            NEMU_TEST_ASSERT(p.data.size() == 0x400 && p.data[0] == 0xAB,
+                             "secure partition NCA content must round-trip");
+        }
+        if (p.name == "cccccccc.nca") {
+            saw_update_nca = true;
+        }
+    }
+    NEMU_TEST_ASSERT(saw_secure_nca, "base-game NCA from 'secure' must be collected");
+    NEMU_TEST_ASSERT(saw_update_nca, "update NCA from 'update' must be collected");
 
     std::cout << "[Test: XCI Cartridge Reader] ALL PASSED" << std::endl;
     return 0;

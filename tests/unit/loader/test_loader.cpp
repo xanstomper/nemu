@@ -314,6 +314,85 @@ int main() {
         aes.DecryptXts(sector_data, xts_out, tweak_key, 0, 512);
         NEMU_TEST_ASSERT(xts_out.size() == 512, "XTS output size == 512");
 
+        // XTS known-answer test (NCA convention: sector index in the UPPER 8
+        // bytes of the tweak, big-endian; 0x200 sectors).
+        //
+        //   data key   = 00 01 02 ... 0f
+        //   tweak key  = 10 11 12 ... 1f
+        //   plaintext  = (i * 7 + 3) mod 256 for i in [0, 0x400)
+        //   ciphertext = e9 e4 c0 29 40 45 c8 e6 99 03 8e d3 8c 14 92 e8 ...
+        //
+        // Generated independently with pycryptodome; see tools/xci_probe.py.
+        // This pins the tweak layout so a well-meaning change to IEEE 1619
+        // ordering cannot silently break every NCA header decrypt again.
+        {
+            std::array<u8, 16> xts_key1{};
+            std::array<u8, 16> xts_key2{};
+            for (size_t i = 0; i < 16; ++i) {
+                xts_key1[i] = static_cast<u8>(i);
+                xts_key2[i] = static_cast<u8>(0x10 + i);
+            }
+
+            std::vector<u8> xts_plain(0x400);
+            for (size_t i = 0; i < xts_plain.size(); ++i) {
+                xts_plain[i] = static_cast<u8>((i * 7 + 3) & 0xFF);
+            }
+
+            // The recorded ciphertext for that plaintext (independently
+            // generated with pycryptodome). Two full sectors so the test also
+            // pins the per-sector tweak advance, not just block 0.
+            static const char* kXtsCipherHex =
+                "e9e4c0294045c8e699038ed38c1492e8816242a7bbee575625e05b31cff60941df04be102fb03464907ac2688094baa8"
+                "6937b0d63d31df36a474c5f2820d2ecdb0662bb7cf5cdf379ab352ab3a8f3c35dce0afd2cfde9ba1e2a818660a3e5fe6"
+                "bd6e7f1c26252ded96eaf98d1d821d16ff1a83cced5f8b16aa4684fde4e48ac035aaa94d79ffb8aaef9973ef02f837fc"
+                "cdfee435e3a0b796256b1de19b71e9f3c7048165782da1c47742f3361310898b1affbe719f5695c051ecea6d42a233a8"
+                "81343007117c655d9cc5b3f5f96780c2a66a26619c817530a7b2e56337428443ae0ce06c13f9a3edbb2a1c9600da1a4c"
+                "38bf2575988cd7df5cd1ffff836a9f28f76c898f018e8b7530d3edf67a5329234b1345c16e0f9243f3a1c4b9959527c0"
+                "9d2589b2fc49c69b3ee88e2def0838b42e20c1b32d6e145edb31dda52216d2ce4c821eb3f3eed9c32b34cdac9b7d6475"
+                "f0351c016f659396c4396f51b9a123f90e81b283c75c8390e36147dd378f29e8de3b60d9a525053cf2e1702ca972eaaf"
+                "4d1e1d95ceba3793dc7ce9f3cf3aa581cd56346cfa9930edb2b262302826cdaa64177f7b9d77993097cf1146fb43e815"
+                "611ec56d6a08f6e2afd120764170babfbb3a1f4412ad2f7c3c0693602c85462a506113e74b21b3cb3a79b33bba5e33bc"
+                "b2f6624aa3c8ab0b1378ab3a1c2fa9e3bed7452526e79aa38a2fc5da770340826a06992f802b9bc9c620c0c8a9111dba"
+                "3b011130de747e13e54aac97317b83b6f2032bdeff6ebdfc9b1a990ceed68aaf6f4d427cc6f5650cdb415b9f5c1b87d9"
+                "3fa809d697281177727261b50baef289049040cac5a479d566db442a97edd4c16569f0d57ce8f6fea56cd4ea722c4a33"
+                "4e186842a72bed8a3a412d9f9dd5c178b06ab0e5bee43eee652e09b9d24d26c3a665593a8b8db4925eaf04e067e6086e"
+                "948b8afdff53cc171d33c8cb877de700d2745d8a794d7776b38f03b74eea65b79dd0600d68bba26b0d35255bee5e77e3"
+                "4cb8cdc8ab206123f975be1cde3f6b2e818172413b6d7d6b5f7583256120fcf0a9353b2b7199f255de9cb766ea8b8d53"
+                "7fd74934a024b3f45babae8a7c5c0940330c76e395e31d62200d48dc3a7db82261716c253e43a631fbf2b3022f822893"
+                "a73ff8e8b7d7e31926ec6e80bfc8eba1aaf40b0ebc5cfd7fecedaae500a6d3d781d64d74a1425f28849c1e292d19016e"
+                "20d728c7210a4fe42cf43b21e31e4b2bf7a75c1829a9d0cda78d068ce02a6998a2577b8c85170040e9755d3e19bee4ad"
+                "b3d9a1a1efabc23089104b7d9243954ecb28ff3bd350d53c699c9a306558ca967009c6c389312e9897e9392c4d9c7f62"
+                "85f8765f9fec2f8e62178d934378881c9d94ceb6a87d528a25e20694a379ec7553106eaee9eb05f1c90e69d11cdd0021"
+                "835073674e070733ec2e84ba391a143a";
+
+            std::vector<u8> xts_cipher(xts_plain.size());
+            for (size_t i = 0; i < xts_cipher.size(); ++i) {
+                const char hi = kXtsCipherHex[i * 2];
+                const char lo = kXtsCipherHex[i * 2 + 1];
+                auto nib = [](char c) -> u8 {
+                    return (c >= 'a') ? static_cast<u8>(c - 'a' + 10)
+                                      : static_cast<u8>(c - '0');
+                };
+                xts_cipher[i] = static_cast<u8>((nib(hi) << 4) | nib(lo));
+            }
+
+            std::vector<u8> xts_dec(xts_cipher.size());
+            Aes128 k1(xts_key1);
+            Aes128 k2(xts_key2);
+            k1.DecryptXts(xts_cipher, xts_dec, k2, 0, 0x200);
+            NEMU_TEST_ASSERT(xts_dec == xts_plain,
+                             "XTS known-answer vector mismatch (tweak layout regressed)");
+
+            // A trailing partial sector must not be left as ciphertext.
+            std::vector<u8> odd(0x240, 0x5A);
+            std::vector<u8> odd_out(odd.size(), 0);
+            k1.DecryptXts(odd, odd_out, k2, 0, 0x200);
+            for (size_t i = 0x200; i < 0x240; ++i) {
+                NEMU_TEST_ASSERT(odd_out[i] != 0x5A,
+                                 "XTS trailing partial sector left as ciphertext");
+            }
+        }
+
         std::cout << "  - Cryptographic Engine (FIPS-197 AES-128 ECB, CTR, XTS): PASSED" << std::endl;
     }
 
@@ -443,7 +522,11 @@ int main() {
         const std::string content_b = "Binary content in file B 1234567890";
 
         const u32 string_table_size = static_cast<u32>(name_a.size() + 1 + name_b.size() + 1);
-        const u32 header_size = 16 + 2 * 24 + string_table_size; // Header(16) + 2 entries(48) + string table
+        const u32 raw_header_end = 16 + 2 * 24 + string_table_size; // Header(16) + 2 entries(48) + strtab
+        // HFS0/PFS0 pad the header up to a 0x200 boundary; the u32 stored right
+        // after the string table is that header size, and all file data begins
+        // there. Verified against real carts (data bases 0x200 / 0x600 / 0x5800).
+        const u32 header_size = (raw_header_end + 0x1FF) & ~0x1FFu;
 
         std::vector<u8> pfs0_buf(header_size + content_a.size() + content_b.size(), 0);
 
@@ -668,7 +751,8 @@ int main() {
             // Package into PFS0
             const std::string name = "main";
             const u32 string_table_size = static_cast<u32>(name.size() + 1);
-            const u32 header_size = 16 + 24 + string_table_size;
+            // 0x200-aligned header, matching the real container layout.
+            const u32 header_size = ((16 + 24 + string_table_size) + 0x1FF) & ~0x1FFu;
             std::vector<u8> pfs0(header_size + nso_buf.size(), 0);
 
             *reinterpret_cast<u32*>(pfs0.data() + 0) = Pfs0Archive::PFS0_MAGIC;
@@ -716,7 +800,8 @@ int main() {
             // (2) Package the NSO into an ExeFS PFS0 archive (single 'main' file).
             const std::string main_name = "main";
             const u32 exefs_str_size = static_cast<u32>(main_name.size() + 1);
-            const u32 exefs_hdr_size = 16 + 24 + exefs_str_size;
+            // 0x200-aligned ExeFS header, matching the real container layout.
+            const u32 exefs_hdr_size = ((16 + 24 + exefs_str_size) + 0x1FF) & ~0x1FFu;
             std::vector<u8> exefs(exefs_hdr_size + main_nso.size(), 0);
             *reinterpret_cast<u32*>(exefs.data() + 0) = Pfs0Archive::PFS0_MAGIC;
             *reinterpret_cast<u32*>(exefs.data() + 4) = 1;                    // file count
@@ -867,7 +952,9 @@ int main() {
         *reinterpret_cast<s64*>(rodata_ptr + 0x110) = 0x4242; // r_addend
 
         // Pack into ExeFS PFS0 archive containing 'rtld' and 'main'
-        std::vector<u8> exefs_pfs0(16 + 2 * 24 + 10 + rtld_nso.size() + main_nso.size(), 0);
+        // 0x200-aligned ExeFS header, matching the real container layout.
+        const size_t exefs_data_base = ((16 + 2 * 24 + 10) + 0x1FF) & ~static_cast<size_t>(0x1FF);
+        std::vector<u8> exefs_pfs0(exefs_data_base + rtld_nso.size() + main_nso.size(), 0);
         *reinterpret_cast<u32*>(exefs_pfs0.data() + 0) = loader::Pfs0Archive::PFS0_MAGIC;
         *reinterpret_cast<u32*>(exefs_pfs0.data() + 4) = 2; // 2 files
         *reinterpret_cast<u32*>(exefs_pfs0.data() + 8) = 10; // "rtld\0main\0"
@@ -883,8 +970,8 @@ int main() {
         *reinterpret_cast<u32*>(exefs_pfs0.data() + 56) = 5; // "main"
 
         std::memcpy(exefs_pfs0.data() + 64, "rtld\0main\0", 10);
-        std::memcpy(exefs_pfs0.data() + 74, rtld_nso.data(), rtld_nso.size());
-        std::memcpy(exefs_pfs0.data() + 74 + rtld_nso.size(), main_nso.data(), main_nso.size());
+        std::memcpy(exefs_pfs0.data() + exefs_data_base, rtld_nso.data(), rtld_nso.size());
+        std::memcpy(exefs_pfs0.data() + exefs_data_base + rtld_nso.size(), main_nso.data(), main_nso.size());
 
         loader::Pfs0Archive exefs_archive;
         NEMU_TEST_ASSERT(exefs_archive.Initialize(exefs_pfs0), "ExeFS PFS0 must initialize");
