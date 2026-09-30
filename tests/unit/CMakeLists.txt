@@ -238,6 +238,21 @@ target_link_libraries(test_debug PRIVATE
 target_compile_features(test_debug PRIVATE cxx_std_20)
 add_test(NAME test_debug COMMAND test_debug)
 
+add_executable(test_gdb_stub
+    debug/test_gdb_stub.cpp
+)
+
+target_include_directories(test_gdb_stub PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
+target_link_libraries(test_gdb_stub PRIVATE
+    Nemu.Debug
+)
+
+target_compile_features(test_gdb_stub PRIVATE cxx_std_20)
+add_test(NAME test_gdb_stub COMMAND test_gdb_stub)
+
 add_executable(test_frontend
     frontend/test_frontend.cpp
 )

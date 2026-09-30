@@ -4011,8 +4011,13 @@ void XboxFrontend::HandleSettingsInput(const core::hid::XboxGamepadState& input,
                 else settings_log_level_ = "Info / Warnings / Errors (Standard)";
                 ShowToast(std::format("Log Verbosity: {}", settings_log_level_));
             } else if (settings_row_ == 1) {
-                if (settings_gdb_stub_.find("Listening") != std::string::npos) settings_gdb_stub_ = "Disabled";
-                else settings_gdb_stub_ = "Listening on TCP 24689";
+                if (gdb_stub_server_.IsRunning()) {
+                    gdb_stub_server_.Stop();
+                    settings_gdb_stub_ = "Disabled";
+                } else {
+                    gdb_stub_server_.Start(24689);
+                    settings_gdb_stub_ = "Listening on TCP 24689";
+                }
                 ShowToast("GDB Debugger Stub: " + settings_gdb_stub_);
             } else if (settings_row_ == 2) ShowToast(std::format("ARM64 Instructions: {}", live_diag_.total_instructions));
             else if (settings_row_ == 3) ShowToast(std::format("JIT Blocks: {} / {}", live_diag_.jit_blocks_compiled, live_diag_.jit_blocks_executed));

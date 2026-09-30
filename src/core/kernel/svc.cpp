@@ -788,19 +788,48 @@ void SvcDispatcher::SvcConnectToNamedPort(cpu::CpuState& state, KProcess& proces
 }
 
 void SvcDispatcher::SvcSendSyncRequestLight(cpu::CpuState& state, KProcess& process, KThread& thread) {
-    // svcSendSyncRequestLight(session): X0=session handle, X1=light data.
-    // Light IPC has no shared message buffer; full light-session payload routing
-    // is not needed by current titles (they use it for TMA/graphics firmware
-    // channels). Return Success-with-zero-data to keep callers progressing.
+    // svcSendSyncRequestLight: X0=session handle, X1-X7=light IPC payload words.
+    // Light IPC passes its 7-word payload directly in registers rather than
+    // through TLS. We marshal those registers into the standard IPC buffer at
+    // TLS+0x100, dispatch through the HLE service registry, then unmarshal the
+    // reply words from the buffer back into X1-X7.
+
+    if (!ipc_registry_) {
+        state.SetX(0, static_cast<u64>(Result::NotSupported));
+        return;
+    }
+
     const Handle session_handle = static_cast<Handle>(state.GetX(0));
     auto session = process.GetHandleTable().GetObject<ipc::KClientSession>(session_handle);
     if (!session) {
         state.SetX(0, static_cast<u64>(Result::ResultInvalidHandle));
         return;
     }
-    NEMU_LOG_DEBUG("IPC", "svcSendSyncRequestLight(session {}) -> Success (light payload stub)", session_handle);
-    (void)thread;
-    state.SetX(0, static_cast<u64>(Result::Success));
+
+    // Build the 0x40-byte light IPC buffer:
+    //   word[0] (offset  0): IPC header — type=4 (Light IPC), 0 X/A descriptors
+    //   word[1..7] (offsets 8..56): payload words from X1-X7
+    std::array<u64, 8> ipc_buf{};
+    ipc_buf[0] = 0x0000'0004ULL; // Light IPC command type = 4
+    for (int i = 1; i <= 7; ++i) {
+        ipc_buf[static_cast<size_t>(i)] = state.GetX(static_cast<u32>(i));
+    }
+
+    const vaddr_t tls_ipc_addr = thread.GetTlsAddress() + ipc::IpcBufferOffsetTls;
+    auto& vmem = process.GetVirtualMemory();
+    vmem.WriteBlock(tls_ipc_addr, ipc_buf.data(), sizeof(ipc_buf));
+
+    NEMU_LOG_DEBUG("IPC", "svcSendSyncRequestLight(session {}) dispatching light payload", session_handle);
+
+    const u32 result = ipc::DispatchSyncRequest(process, thread, *session, *ipc_registry_);
+
+    // Unmarshal reply words from the IPC buffer back into X1-X7.
+    vmem.ReadBlock(tls_ipc_addr, ipc_buf.data(), sizeof(ipc_buf));
+    for (int i = 1; i <= 7; ++i) {
+        state.SetX(static_cast<u32>(i), ipc_buf[static_cast<size_t>(i)]);
+    }
+
+    state.SetX(0, result);
 }
 
 void SvcDispatcher::SvcSendSyncRequestWithUserBuffer(cpu::CpuState& state) {

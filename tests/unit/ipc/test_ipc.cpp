@@ -32,6 +32,7 @@
 #include "core/kernel/ipc/pctl_service.hpp"
 #include "core/kernel/ipc/prepo_service.hpp"
 #include "core/kernel/ipc/friend_service.hpp"
+#include "core/kernel/ipc/spl_service.hpp"
 #include "core/filesystem/vfs.hpp"
 #include "core/audio/null_audio_backend.hpp"
 #include "core/gpu/null_backend.hpp"
@@ -987,6 +988,121 @@ void TestNifmService() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 16b: spl — Security / Cryptography service (real AES-128-CMAC + HLE key
+// derivation). Verifies the ComputeCmac output against the official RFC 4493
+// test vector (proving cryptographic correctness, not just "returns bytes"),
+// plus GenerateKey determinism and input-sensitivity.
+// ---------------------------------------------------------------------------
+void TestSplService() {
+    std::cout << "[TEST] spl security/crypto service ...\n";
+    ServiceRegistry reg;
+    reg.Register(std::make_shared<SplService>("spl"));
+
+    auto proc = std::make_shared<KProcess>(1, "SplTest");
+    KThread thread(1, proc, 44, 0, KProcess::DEFAULT_STACK_TOP, kTlsBase);
+
+    auto port = reg.CreatePort("spl");
+    NEMU_IPC_ASSERT(port.has_value());
+    auto session = std::make_shared<KClientSession>();
+    session->SetService((*port)->GetService());
+
+    auto hexbyte = [](char c) -> u8 {
+        if (c >= '0' && c <= '9') return static_cast<u8>(c - '0');
+        if (c >= 'a' && c <= 'f') return static_cast<u8>(c - 'a' + 10);
+        if (c >= 'A' && c <= 'F') return static_cast<u8>(c - 'A' + 10);
+        return 0;
+    };
+    auto hex2bytes = [&](const char* hex, size_t n) {
+        std::vector<u8> out(n / 2);
+        for (size_t i = 0; i < n; i += 2) {
+            out[i / 2] = static_cast<u8>((hexbyte(hex[i]) << 4) | hexbyte(hex[i + 1]));
+        }
+        return out;
+    };
+    // Read the 16-byte tag from the reply payload (offset 8) as 8+8 bytes.
+    auto read_tag = [&]() -> std::vector<u8> {
+        std::vector<u8> out(16);
+        const u64 lo = ReadReply<u64>(proc->GetVirtualMemory(),
+            static_cast<size_t>(ipc::IpcField::Payload) + 8);
+        const u64 hi = ReadReply<u64>(proc->GetVirtualMemory(),
+            static_cast<size_t>(ipc::IpcField::Payload) + 16);
+        std::memcpy(out.data(), &lo, 8);
+        std::memcpy(out.data() + 8, &hi, 8);
+        return out;
+    };
+
+    // ---- ComputeCmac against RFC 4493 vector 1 ----
+    {
+        const auto key    = hex2bytes("2b7e151628aed2a6abf7158809cf4f3c", 32);
+        const auto msg    = hex2bytes("6bc1bee22e409f96e93d7e117393172a", 32);
+        const auto expect = hex2bytes("070a16b46b4d4144f79bdd9dd04a287c", 32);
+
+        // Payload layout: [8 pad] [16 key @8] [16 msg @24]
+        std::vector<u8> payload(8 + 16 + 16, 0);
+        std::memcpy(payload.data() + 8, key.data(), 16);
+        std::memcpy(payload.data() + 24, msg.data(), 16);
+
+        WriteRequest(proc->GetVirtualMemory(),
+            static_cast<u32>(IpcCommandType::Request),
+            static_cast<u32>(SplService::Commands::ComputeCmac),
+            payload.data(), static_cast<u32>(payload.size()));
+
+        NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) ==
+                        static_cast<u32>(IpcResult::Success));
+        const u32 result = ReadReply<u32>(proc->GetVirtualMemory(),
+            static_cast<size_t>(ipc::IpcField::Payload));
+        NEMU_IPC_ASSERT(result == 0);
+
+        const auto tag = read_tag();
+        NEMU_IPC_ASSERT(tag == expect && "ComputeCmac must match RFC 4493 vector 1");
+        std::cout << "  ComputeCmac -> RFC4493 vector matches.\n";
+    }
+
+    // ---- GenerateKey determinism + input sensitivity ----
+    {
+        const auto ks = hex2bytes("00000000000000000000000000000000", 32);
+        const auto mk = hex2bytes("101112131415161718191a1b1c1d1e1f", 32);
+        std::vector<u8> payload(40, 0);
+        std::memcpy(payload.data() + 8, ks.data(), 16);
+        std::memcpy(payload.data() + 24, mk.data(), 16);
+
+        WriteRequest(proc->GetVirtualMemory(),
+            static_cast<u32>(IpcCommandType::Request),
+            static_cast<u32>(SplService::Commands::GenerateKey),
+            payload.data(), static_cast<u32>(payload.size()));
+        NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) ==
+                        static_cast<u32>(IpcResult::Success));
+        const auto d1 = read_tag();
+
+        // Same inputs -> identical derived key.
+        WriteRequest(proc->GetVirtualMemory(),
+            static_cast<u32>(IpcCommandType::Request),
+            static_cast<u32>(SplService::Commands::GenerateKey),
+            payload.data(), static_cast<u32>(payload.size()));
+        NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) ==
+                        static_cast<u32>(IpcResult::Success));
+        const auto d2 = read_tag();
+        NEMU_IPC_ASSERT(d1 == d2 && "key derivation must be deterministic");
+
+        // Flip one master-key byte -> different derived key.
+        const auto mk2 = hex2bytes("101112131415161718191a1b1c1d1e20", 32); // last byte +1
+        std::memcpy(payload.data() + 24, mk2.data(), 16);
+        WriteRequest(proc->GetVirtualMemory(),
+            static_cast<u32>(IpcCommandType::Request),
+            static_cast<u32>(SplService::Commands::GenerateKey),
+            payload.data(), static_cast<u32>(payload.size()));
+        NEMU_IPC_ASSERT(DispatchSyncRequest(*proc, thread, *session, reg) ==
+                        static_cast<u32>(IpcResult::Success));
+        const auto d3 = read_tag();
+        NEMU_IPC_ASSERT(d1 != d3 && "key derivation must be input-sensitive");
+
+        std::cout << "  GenerateKey -> deterministic + input-sensitive.\n";
+    }
+
+    std::cout << "  PASSED.\n";
+}
+
+// ---------------------------------------------------------------------------
 // Test 17: full default service bootstrap (matches the on-console boot path)
 // ---------------------------------------------------------------------------
 void TestServiceBootstrap() {
@@ -1689,6 +1805,7 @@ int main() {
     TestSetU();
     TestPlService();
     TestNifmService();
+    TestSplService();
     TestCapsAndBpcServices();
     TestAocApmPctlPrepoFriendServices();
     TestAppletStorageAndLibraryAppletAccessor();

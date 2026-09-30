@@ -8,6 +8,7 @@
 #include "core/config/config_manager.hpp"
 #include "core/network/ldn_network.hpp"
 #include "core/gpu/pipeline/graphics_optimizer.hpp"
+#include "core/debug/gdb_stub.hpp"
 #include "frontend/bitmap_font.hpp"
 #include <vector>
 #include <string>
@@ -644,6 +645,7 @@ private:
     bool settings_show_title_ids_{true};
     std::string settings_oled_dimmer_{"Enabled (5 Minutes)"};
     std::string settings_gdb_stub_{"Listening on TCP 24689"};
+    nemu::core::debug::GdbStub gdb_stub_server_;
     std::string settings_directstorage_{"Enabled (Async Win32 File IO)"};
     std::string settings_profile_nickname_{"Player 1"};
     std::string settings_mii_avatar_{"Default Switch Blue Mii"};
