@@ -93,39 +93,84 @@ bool XciArchive::UnpackGame(std::vector<XciPayload>& payloads) const {
         }
         if (largest) normal = part_table.OpenFile(largest->name);
     }
-    if (!normal) {
-        NEMU_LOG_WARN("XCI", "No 'normal' partition found in XCI; nothing to boot");
+
+    // The "normal" partition body itself is the game's NSP list; but on real
+    // carts "normal" is often an empty pointer stub and the actual content HFS0
+    // (holding the .nca/.tik/.cert payloads) lives inside the following "secure"
+    // region. Robust approach: try the normal body first, then fall back to
+    // scanning the cart for a content container whose entries are game files.
+    bool unwrapped = false;
+    if (normal && normal->size() >= 16) {
+        Pfs0Archive normal_fs;
+        if (normal_fs.Initialize(*normal)) {
+            for (const auto& f : normal_fs.GetFiles()) {
+                auto entry = normal_fs.OpenFile(f.name);
+                if (!entry) continue;
+                payloads.push_back(XciPayload{
+                    .name = f.name,
+                    .data = *entry,
+                    .offset = static_cast<size_t>((*entry).data() - raw_data_.data()),
+                    .is_copy = false,
+                });
+                NEMU_LOG_INFO("XCI", "  game payload: '{}' ({} bytes) @0x{:X}", f.name, f.size,
+                              payloads.back().offset);
+            }
+            unwrapped = !payloads.empty();
+        }
+    }
+
+    if (!unwrapped) {
+        // Scan for the game-content HFS0/PFS0 container in the cart body. We
+        // look for an HFS0/PFS0 whose file entries look like game content
+        // (.nca/.nsp/.tik/.cert). This handles carts where "normal" is a stub
+        // and the content lives in the secure region.
+        static constexpr size_t kScan = 0x18000000; // 384 MiB region scan budget
+        const size_t scan_max = std::min(raw_data_.size(), kScan);
+        // The game data always sits after the ~9 MiB header; start there.
+        for (size_t off = 0x800000; off + 16 <= scan_max; /* stepped below */) {
+            const u8* p = raw_data_.data() + off;
+            const bool is_hfs0 = (p[0]=='H'&&p[1]=='F'&&p[2]=='S'&&p[3]=='0');
+            const bool is_pfs0 = (p[0]=='P'&&p[1]=='F'&&p[2]=='S'&&p[3]=='0');
+            if (is_hfs0 || is_pfs0) {
+                Pfs0Archive probe;
+                if (probe.Initialize(std::span<const u8>(p, raw_data_.size() - off))) {
+                    bool looks_game = false;
+                    for (const auto& f : probe.GetFiles()) {
+                        if (f.name.ends_with(".nca") || f.name.ends_with(".nsp")
+                            || f.name.ends_with(".tik") || f.name.ends_with(".cert")) {
+                            looks_game = true; break;
+                        }
+                    }
+                    if (looks_game && !probe.GetFiles().empty()) {
+                        size_t added = 0;
+                        for (const auto& f : probe.GetFiles()) {
+                            auto entry = probe.OpenFile(f.name);
+                            if (!entry) continue;
+                            payloads.push_back(XciPayload{
+                                .name = f.name,
+                                .data = *entry,
+                                .offset = static_cast<size_t>((*entry).data() - raw_data_.data()),
+                                .is_copy = false,
+                            });
+                            ++added;
+                            NEMU_LOG_INFO("XCI", "  game payload (secure HFS0): '{}' ({} bytes) @0x{:X}",
+                                          f.name, f.size, payloads.back().offset);
+                        }
+                        unwrapped = (added > 0);
+                        break;
+                    }
+                }
+            }
+            // advance in 0x200-aligned steps (HFS0/PFS0 headers align to sectors)
+            off += 0x200;
+        }
+    }
+
+    if (!unwrapped) {
+        NEMU_LOG_WARN("XCI", "XCI parsed but no game content container found; nothing to boot");
         return false;
     }
-
-    // The "normal" partition is itself an HFS0 whose entries are the game's
-    // NSP files / NCAs. Walk it and expose every payload as a span.
-    Pfs0Archive normal_fs;
-    if (normal_fs.Initialize(*normal)) {
-        for (const auto& f : normal_fs.GetFiles()) {
-            auto entry = normal_fs.OpenFile(f.name);
-            if (!entry) continue;
-            payloads.push_back(XciPayload{
-                .name = f.name,
-                .data = *entry,
-                .offset = static_cast<size_t>((*entry).data() - raw_data_.data()),
-                .is_copy = false,
-            });
-            NEMU_LOG_INFO("XCI", "  game payload: '{}' ({} bytes) @0x{:X}", f.name, f.size,
-                          payloads.back().offset);
-        }
-    } else {
-        // Some carts store the PFS0/NSP directly as the normal partition body.
-        payloads.push_back(XciPayload{
-            .name = "normal",
-            .data = *normal,
-            .offset = static_cast<size_t>(normal->data() - raw_data_.data()),
-            .is_copy = false,
-        });
-        NEMU_LOG_INFO("XCI", "  game payload: 'normal' ({} bytes)", normal->size());
-    }
-
-    return !payloads.empty();
+    return true;
 }
 
 } // namespace nemu::core::loader

@@ -1,4 +1,5 @@
 #include "nca.hpp"
+#include "platform/logger.hpp"
 #include <cstring>
 #include <algorithm>
 
@@ -35,6 +36,10 @@ bool NcaReader::Initialize(std::span<const u8> data, const crypto::KeyStore* key
             );
 
             std::memcpy(&magic_, decrypted_header_.data() + 0x200, sizeof(u32));
+            // Diagnostics: report the decrypted magic so a wrong header_key or
+            // XTS-sector issue is visible rather than a silent "unrecognized".
+            NEMU_LOG_INFO("Crypto", "NCA header decrypt: raw_magic=0x{:08X} after_XTS=0x{:08X}",
+                          unenc_magic, magic_);
             if (magic_ == NCA3_MAGIC || magic_ == NCA2_MAGIC || magic_ == NCA0_MAGIC) {
                 is_encrypted_ = true;
             } else {

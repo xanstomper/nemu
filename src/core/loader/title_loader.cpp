@@ -159,7 +159,10 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
         }
     }
 
-    // 3. Check for direct NCA (NCA3/2/0 at offset 0x200 or 0x00)
+    // 3. Check for direct NCA (NCA3/2/0 at offset 0x200 or 0x00).
+    //    Retail carts carry ENCRYPTED NCAs whose magic is only readable after
+    //    header XTS decryption (NcaReader::Initialize). So also attempt NCA
+    //    parse when the hint says .nca even if the raw magic isn't NCA* yet.
     bool is_nca = false;
     if (data.size() >= 0x400) {
         u32 nca_mag = 0;
@@ -167,6 +170,11 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
         if (nca_mag == NcaReader::NCA3_MAGIC || nca_mag == NcaReader::NCA2_MAGIC || nca_mag == NcaReader::NCA0_MAGIC) {
             is_nca = true;
         }
+    }
+    if (!is_nca && (name_hint.ends_with(".nca") || name_hint.ends_with(".ncz"))) {
+        // Encrypted retail NCA — magic will validate inside NcaReader after
+        // header decryption. Attempt it (NcaReader handles the keyed path).
+        is_nca = true;
     }
 
     if (is_nca) {
