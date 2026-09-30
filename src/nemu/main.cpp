@@ -11,6 +11,9 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstdint>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -57,9 +60,25 @@ static void SignalHandler(int) {
 }
 
 static int MainInternal(int argc, char** argv) {
+    // Install the crash handler FIRST — before anything else can fail — so an
+    // early launch/init fault (which is exactly what you'd otherwise be blind
+    // to on the console) still writes a pinpointing report to LOCAL:/crash/.
+    debug::CrashHandler::Install(debug::CrashHandler::kDefaultCrashDir);
+
     platform::Logger::Instance().SetMinLevel(platform::LogLevel::Info);
     std::signal(SIGINT, SignalHandler);
     std::signal(SIGTERM, SignalHandler);
+
+    // Definitive "launch began" heartbeat: qa_xbox.sh greps for this to tell a
+    // successful process start from a crash-before-first-line.
+    {
+#ifdef _WIN32
+        const long long app_pid = static_cast<long long>(GetCurrentProcessId());
+#else
+        const long long app_pid = static_cast<long long>(::getpid());
+#endif
+        NEMU_LOG_INFO("Init", "APP STARTED (PID {})", app_pid);
+    }
 
     NEMU_LOG_INFO("Init", "=========================================================");
     NEMU_LOG_INFO("Init", "  NEMU: Nintendo Switch Emulator for Xbox Series S/X     ");
@@ -76,6 +95,8 @@ static int MainInternal(int argc, char** argv) {
     std::string run_boot_path;   // --run <path.nro> headless boot probe
     u64 run_max_frames = 3;
     u64 texture_budget_mib = 0; // --texture-budget=<MiB> resident texture cap
+    u16 gdb_port = 0;           // --gdb=<port> force auto-start the RSP stub
+    debug::GdbStub gdb_stub;    // bring-up RSP stub (auto-start when --gdb given)
     bool demo_mode = false;
     bool ui_test_mode = false;
     std::string initial_view;
@@ -118,6 +139,12 @@ static int MainInternal(int argc, char** argv) {
         } else if (arg.rfind("--texture-budget=", 0) == 0) {
             // MiB cap for resident texture memory (5 GiB budget tuning).
             texture_budget_mib = std::strtoull(arg.substr(17).c_str(), nullptr, 10);
+        } else if (arg.rfind("--gdb=", 0) == 0) {
+            // Force auto-start the GDB RSP stub at this port BEFORE the UI is
+            // up, so a launch failure is remotely attachable (breaks the
+            // chicken-and-egg of a debuggable app that won't launch its UI).
+            gdb_port = static_cast<u16>(
+                std::clamp<u64>(std::strtoull(arg.substr(6).c_str(), nullptr, 10), 1, 65535));
         } else if (!arg.starts_with("--")) {
             target_title = arg;
         }
@@ -144,12 +171,8 @@ static int MainInternal(int argc, char** argv) {
         return 1;
     }
 
-    // On-console crash visibility: install the diagnostic handler so a fault
-    // (SIGSEGV/ABRT/FPE/ILL or Windows SEH) writes a CrashReporter report to
-    // LOCAL:/crash/ before dying, instead of silently terminating. Reports
-    // carry the guest breadcrumb trail so a failure is pin-pointable on the
-    // Xbox via the Device Portal — no live debugger needed to see what crashed.
-    debug::CrashHandler::Install(debug::CrashHandler::kDefaultCrashDir);
+    // On-console crash visibility: the handler was installed at the very top
+    // of main; here we only attach the title provider (needs the emulator).
     debug::CrashHandler::SetTitleProvider([&emulator](unsigned long long& out_tid,
                                              std::string& out_name) {
         if (auto p = emulator.GetProcess()) {
@@ -157,6 +180,26 @@ static int MainInternal(int argc, char** argv) {
             out_name = p->GetName();
         }
     });
+
+    // Bring-up live debugging: when --gdb=<port> is passed, auto-start the RSP
+    // stub NOW (before any title load / UI) so a launch failure is remotely
+    // attachable without needing the UI to come up. Feeds it live memory + the
+    // main thread's CpuState. (The frontend's settings toggle starts its own
+    // instance later on the same port only if gdb_port == 0.)
+    if (gdb_port != 0) {
+        if (auto proc = emulator.GetProcess()) {
+            gdb_stub.SetMemory(&proc->GetVirtualMemory());
+        }
+        gdb_stub.SetCpuStateProvider([&emulator]() -> cpu::CpuState* {
+            auto th = emulator.GetMainThread();
+            return th ? &th->GetCpuState() : nullptr;
+        });
+        if (gdb_stub.Start(gdb_port)) {
+            NEMU_LOG_INFO("GDB", "Bring-up GDB RSP stub listening on TCP {}", gdb_port);
+        } else {
+            NEMU_LOG_WARN("GDB", "Failed to start bring-up GDB stub on TCP {}", gdb_port);
+        }
+    }
 
     // Headless boot probe (all platforms): --run <path.nro> loads a title and
     // runs a bounded number of frames, then reports a BOOT verdict. Scriptable

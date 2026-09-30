@@ -114,11 +114,16 @@ ROOT_CERT=""
 # In Dev Mode the trace endpoint is GET; run for up to 60s capturing output.
 BOOTED=0
 D3D12_FAIL=0
+APP_STARTED=0
 timeout 60 curl -skN --max-time 60 "${TRACE_URL}" 2>/dev/null | tee "${ROOT_DIR}/build-win/qa_trace.log" | \
 while IFS= read -r line; do
     if [[ "$line" == *"BOOTED"* ]]; then
         echo "  [+] BOOTED reached."
         BOOTED=1
+    fi
+    if [[ "$line" == *"APP STARTED"* ]]; then
+        echo "  [+] App process started (before any title load)."
+        APP_STARTED=1
     fi
     if [[ "$line" == *"D3D12"* && ( "$line" == *"error"* || "$line" == *"failed"* || "$line" == *"FAILED"* ) ]]; then
         echo "  [!] D3D12-init error seen: $line"
@@ -129,14 +134,17 @@ done
 # NOTE: `while` runs in a subshell; reassess the trace file for the markers.
 BOOTED=$(grep -c "BOOTED" "${ROOT_DIR}/build-win/qa_trace.log" 2>/dev/null || true)
 D3D12_FAIL=$(grep -cE "D3D12.*(error|failed|FAILED)" "${ROOT_DIR}/build-win/qa_trace.log" 2>/dev/null || true)
+APP_STARTED=$(grep -c "APP STARTED" "${ROOT_DIR}/build-win/qa_trace.log" 2>/dev/null || true)
 echo "----------------------------------------------------------------------"
 
 if [[ "${BOOTED}" -ge 1 ]]; then
     pass "Boot probe advanced frames -> BOOTED. D3D12 device + PSO pipeline OK on hardware."
 elif [[ "${D3D12_FAIL}" -ge 1 ]]; then
     fail "D3D12 init errors detected on hardware. See build-win/qa_trace.log (${D3D12_FAIL} errors)." 4
+elif [[ "${APP_STARTED}" -eq 0 ]]; then
+    fail "App process never started (no 'APP STARTED' heartbeat in trace). Crash may be before first line — retry with '--gdb=<port>' to attach remotely." 4
 else
-    fail "No [NEMU-BOOT] marker captured. See build-win/qa_trace.log." 4
+    fail "App started but no [NEMU-BOOT] marker captured. See build-win/qa_trace.log." 4
 fi
 
 echo
