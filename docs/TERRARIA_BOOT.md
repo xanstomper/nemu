@@ -501,3 +501,71 @@ python3 /tmp/terr/bound2.py    # DT_HASH nchain vs NEMU's scan length
 NEMU_BOOT_ENTRY=main ./build/bin/Nemu --run /tmp/terr/terraria_exefs.pfs0 --max-frames=200
 ```
 
+
+---
+
+## 7. (2026-10-01) THIRD root cause: LDP/STP base writeback was never implemented
+
+Sections 5 and 6 each blamed something that turned out not to be the cause.
+The real defect was in the CPU core, and it had been hiding behind the other two
+the whole time.
+
+### The bug
+
+`stp x29, x30, [sp, #-N]!` is the standard AArch64 function prologue;
+`ldp x29, x30, [sp], #N` is the matching epilogue. Both are load/store **pair**
+instructions, whose addressing mode is encoded in bits **[24:23]** (ARM ARM
+`LDST_PAIR_*`): `01` post-index, `11` pre-index, `00`/`10` plain offset.
+
+`Decoder::Decode` computed the `imm7` offset but never extracted that mode, so
+`inst.addr_mode` stayed `UnsignedOffset` and `Interpreter` performed **no base
+writeback**. SP therefore stayed parked on the **caller's** frame for the whole
+function body. The callee's locals aliased the caller's saved `X29`/`X30`, the
+first nested call overwrote them, and the function returned through a **zeroed
+link register**.
+
+Leaf-ish code worked by accident (nothing nested to clobber the frame), which is
+precisely why the NRO demo and all 44 unit suites passed while a real game's
+constructor chain died. Measured on the real cart:
+
+| module | LDP/STP total | pre/post-index (writeback silently dropped) |
+|---|---|---|
+| `main` | 671,175 | **29,599** |
+
+### The fix
+
+* `decoder.cpp` — extract bits `[24:23]` into `PreIndexed` / `PostIndexed`.
+* `interpreter.cpp` — `LDP`/`STP` write the base back before the access for
+  pre-index and after it for post-index, skipping the writeback when the base
+  aliases a destination register as the architecture requires.
+
+### Effect
+
+`RET X30=0` at `0x72762624` is **gone**. Terraria now runs its complete
+constructor chain and the next failure is deeper in `sdk`:
+
+```
+instructions=423 -> stalled at PC 0x0000000079E64958 (undefined 0x8B282A69)
+```
+
+Reproduced identically on Linux GCC 13 and the Windows PE32+/Xbox cross-build
+under Wine.
+
+### Diagnostic tooling added (kept permanently)
+
+* `GuestThreadPool` records a ring of recent guest PCs (opt-in) that the headless
+  probe dumps on failure. It is what recovered the real call chain —
+  `crt0 0x71010104 -> bl 0x7390A578 (sdk) -> 0x79EB8840 -> 0x79CDC030 ->
+  0x79EDBE20 -> 0x79EB945C -> blr x8 -> main ctor 0x71010150 -> 0x72762530` —
+  which is what pointed at the frame handling.
+* The low-branch diagnostic now prints `X30` and `SP`, so a bad return target is
+  attributable to a clobbered frame immediately.
+
+### Next
+
+`sdk` reaching an unallocated encoding means a bad indirect call target. The
+leading candidate is the SDK's dependence on symbols the host must supply:
+`__nnDetailNintendoSdkRuntimeObjectFile` plus the allocator/`nnMain` group, all
+of which `main` defines and `sdk` imports. Those resolve through the loader, so
+the next step is to confirm each `sdk` import actually lands in `main` at
+runtime rather than a stub.
