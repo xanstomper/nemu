@@ -187,7 +187,7 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
 
         // Mount RomFS (section 1) if present and not already mounted
         if (!vfs_.IsMounted("romfs:/") && nca.HasSection(1)) {
-            auto romfs_data = nca.ExtractSection(1, &key_store_);
+            auto romfs_data = nca.ExtractSectionPayload(1, &key_store_);
             if (romfs_data) {
                 RomfsReader romfs;
                 if (romfs.Initialize(*romfs_data)) {
@@ -204,7 +204,10 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
             }
         }
 
-        auto exefs_opt = nca.ExtractSection(0, &key_store_);
+        // ExeFS lives at the PFS0 superblock offset inside the section (after
+        // the IVFC hash layer), so extract the payload window, not the whole
+        // section stream.
+        auto exefs_opt = nca.ExtractSectionPayload(0, &key_store_);
         if (!exefs_opt) {
             NEMU_LOG_ERROR("Loader", "NCA does not contain valid ExeFS section 0");
             return std::nullopt;
@@ -343,7 +346,7 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
 
                 for (u32 s : {1u, 0u}) {
                     if (nca.HasSection(s)) {
-                        auto romfs_data = nca.ExtractSection(s, &key_store_);
+                        auto romfs_data = nca.ExtractSectionPayload(s, &key_store_);
                         if (romfs_data) {
                             RomfsReader romfs;
                             if (romfs.Initialize(*romfs_data)) {
@@ -583,12 +586,21 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
             .name = mod_name,
             .base_address = loaded->base_address,
             .entry_point = loaded->entry_point,
-            .size = loaded->total_size
+            .size = loaded->total_size,
+            .exported_symbols = loaded->exported_symbols,
+            .image = std::move(loaded->image)
         });
 
-        if (mod_name == "rtld") {
+        // Primary entry selection. rtld is the runtime relocation + module
+        // loader (the dynld engine). NEMU already fixed up every module's
+        // RELA relocations at load time (NsoLoader::ApplyRelocations), so the
+        // game's real startup code lives in `main`, not in rtld's _start.
+        // Running rtld's _start unprompted makes it re-relocate against a
+        // module map NEMU never installed, producing bogus bases (e.g. the
+        // 0x1891… write-fault loops). Prefer `main` when present.
+        if (mod_name == "main") {
             primary_entry = loaded->entry_point;
-        } else if (mod_name == "main" && primary_entry == 0) {
+        } else if (mod_name == "rtld" && primary_entry == 0) {
             primary_entry = loaded->entry_point;
         }
 
@@ -602,6 +614,27 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
 
     if (primary_entry == 0) {
         primary_entry = loaded_modules.front().entry_point;
+    }
+
+    // Cross-module symbol resolution: build a global name -> guest-address map
+    // from every module's exported symbols (base + module-relative value), then
+    // resolve each module's GLOB_DAT / JUMP_SLOT imports (strdup, longjmp,
+    // stdout, C++ vtables/strings, __rel_* markers, ...) against it. Without
+    // this, indirect `BR X17`-style calls through the GOT hit unmapped garbage.
+    {
+        std::unordered_map<std::string, u64> global_symbols;
+        for (const auto& m : loaded_modules) {
+            for (const auto& [name, val] : m.exported_symbols) {
+                global_symbols[name] = m.base_address + val;
+            }
+        }
+        if (!global_symbols.empty()) {
+            for (auto& m : loaded_modules) {
+                if (m.image.empty()) continue;
+                NsoLoader::ResolveSymbolImports(vm, m.base_address, m.image, global_symbols);
+            }
+            NEMU_LOG_INFO("Loader", "Linked {} symbols across {} modules", global_symbols.size(), loaded_modules.size());
+        }
     }
 
     size_t total_size = static_cast<size_t>(curr_base - base_address);

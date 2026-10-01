@@ -1022,7 +1022,8 @@ int main() {
         NEMU_TEST_ASSERT(loaded_title->modules.size() == 2, "Must have 2 loaded modules");
         NEMU_TEST_ASSERT(loaded_title->modules[0].name == "rtld", "Module 0 is rtld");
         NEMU_TEST_ASSERT(loaded_title->modules[1].name == "main", "Module 1 is main");
-        NEMU_TEST_ASSERT(loaded_title->entry_point == loaded_title->modules[0].entry_point, "Entry point is rtld");
+        NEMU_TEST_ASSERT(loaded_title->entry_point == loaded_title->modules[1].entry_point,
+                         "Entry point is main (NEMU applies relocations at load; main runs directly)");
 
         vaddr_t main_base = loaded_title->modules[1].base_address;
         u64 patched_val = vm.Read64(main_base + 0x2010);
@@ -1043,7 +1044,7 @@ int main() {
         ks.SetKey("title_key_" + rights_id_hex, title_key);
         NEMU_TEST_ASSERT(ks.GetTitleKey(rights_id_hex).has_value(), "Title key must be retrieved by rights ID");
 
-        std::vector<u8> nca(0x400 + 0x200, 0);
+        std::vector<u8> nca(0x400 + 0x200 + 0x400, 0); // header + fs header + section
         *reinterpret_cast<u32*>(nca.data() + 0x200) = loader::NcaReader::NCA3_MAGIC;
         nca[0x205] = static_cast<u8>(loader::NcaContentType::Program);
         *reinterpret_cast<u64*>(nca.data() + 0x210) = 0x0100000000010000ULL;
@@ -1052,18 +1053,34 @@ int main() {
         NEMU_TEST_ASSERT(rid_bytes.has_value() && rid_bytes->size() == 16, "HexToBytes rights id");
         std::memcpy(nca.data() + 0x230, rid_bytes->data(), 16);
 
-        *reinterpret_cast<u32*>(nca.data() + 0x240) = 2;
-        *reinterpret_cast<u32*>(nca.data() + 0x244) = 3;
+        *reinterpret_cast<u32*>(nca.data() + 0x240) = 6; // section starts after 0xC00 header
+        *reinterpret_cast<u32*>(nca.data() + 0x244) = 7;
+
+        // Proper plaintext FS header for section 0 (PFS0, CTR) so the
+        // production crypto path engages: fs_type=2 @+0x203, crypt=CTR(3) @+0x204,
+        // section_ctr @+0x140 (LE u64, here 1 -> IV hi 0000000100000000).
+        u8* fs0 = nca.data() + 0x400;
+        fs0[0x03] = 2; // fs_type PFS0
+        fs0[0x04] = 3; // crypt CTR
+        *reinterpret_cast<u64*>(fs0 + 0x140) = 1; // section_ctr
+        // pfs0 superblock: pfs0_offset=0 so the payload window is the section.
+        *reinterpret_cast<u64*>(fs0 + 0x08 + 0x38) = 0;
+        *reinterpret_cast<u64*>(fs0 + 0x08 + 0x40) = 0x200;
 
         std::vector<u8> plaintext(0x200, 0x5A);
         std::memcpy(plaintext.data(), "NEMU_ENCRYPTED_NCA_PAYLOAD_OK", 30);
 
         crypto::Aes128 cipher(std::span<const u8, 16>(title_key.data(), 16));
+        // Production IV rule: hi = byteswapped section_ctr, lo = BE64(section_offset >> 4).
         std::array<u8, 16> ctr{};
         for (size_t b = 0; b < 8; ++b) {
-            ctr[b] = static_cast<u8>((0x400ULL >> ((7 - b) * 8)) & 0xFF);
+            ctr[b] = static_cast<u8>((1ULL >> ((7 - b) * 8)) & 0xFF); // byteswap(LE 1)
         }
-        cipher.DecryptCtr(plaintext, std::span<u8>(nca.data() + 0x400, 0x200), ctr, 0);
+        const u64 lo = 0xC00ULL >> 4;
+        for (size_t b = 0; b < 8; ++b) {
+            ctr[8 + b] = static_cast<u8>((lo >> ((7 - b) * 8)) & 0xFF);
+        }
+        cipher.DecryptCtr(plaintext, std::span<u8>(nca.data() + 0xC00, 0x200), ctr, 0);
 
         loader::NcaReader nca_reader;
         NEMU_TEST_ASSERT(nca_reader.Initialize(nca, &ks), "NcaReader initialize");
