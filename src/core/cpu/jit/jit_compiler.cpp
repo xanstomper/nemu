@@ -538,6 +538,13 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
     vaddr_t curr_pc = guest_pc;
     bool block_ended = false;
     size_t insn_count = 0;
+    // Number of guest instructions actually translated into the block. The
+    // terminating condition is *not* the same as making progress: a block that
+    // translated some instructions and then met one it cannot handle must still
+    // run (leaving PC on that instruction for the interpreter), while a block
+    // whose very first instruction is untranslatable has made no progress at all
+    // and must be reported as a failure so the caller counts the fault.
+    size_t translated = 0;
 
     while (!block_ended && insn_count < MAX_BLOCK_INSTRUCTIONS) {
         if (!memory.IsValidAddress(curr_pc, 4)) {
@@ -1299,11 +1306,29 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
                 break;
 
             default:
-                // Unsupported opcode terminates block
+                // The JIT cannot translate this opcode. Terminate the block here
+                // and let the interpreter take over *this* instruction.
+                //
+                // If nothing at all was translated, the block would execute zero
+                // instructions and leave PC exactly where it started, so re-running
+                // it would spin forever. Reporting that as "no progress" (nullptr)
+                // is what lets the emulator's 64-strike fault watchdog see a guest
+                // that is stuck on an undecodable word -- Terraria's crash produced
+                // 3,000,000 bogus "instructions" and a fake BOOTED verdict before
+                // this. A block that DID translate instructions is still emitted
+                // and executed, because leaving PC on the untranslatable
+                // instruction is real forward progress.
+                if (translated == 0) {
+                    return nullptr;
+                }
                 emitter_.MovR64Imm(X64Reg::RAX, curr_pc);
                 emitter_.MovMemR64(X64Reg::R15, OFFSET_PC, X64Reg::RAX);
                 block_ended = true;
                 break;
+        }
+
+        if (!block_ended) {
+            ++translated;
         }
     }
 

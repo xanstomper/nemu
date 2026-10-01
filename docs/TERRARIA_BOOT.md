@@ -147,6 +147,68 @@ Section 0 ends at `0x9F30000`, exactly the NCA's file size — confirming the
 section table parses correctly and is not the problem.
 
 
+## 6. (2026-10-01) Boot diagnostics fixed; real blocker isolated
+
+### The "BOOTED" verdict was false
+
+`--run` reported `[NEMU-BOOT] ... -> BOOTED (advanced frames)` while the guest was
+hard-spinning on one bad PC, burning all 30M instructions. `main.cpp` only checked
+`frames > 0`, and `StepCpuQuantum` ignored `StepResult::UndefinedInstruction` /
+`MemoryFault` entirely, so a faulted thread re-stepped the same PC forever.
+
+Fixed:
+- `Emulator::StepCpuQuantum` counts consecutive faults at one PC (both the JIT
+  fallback and interpreter paths) and terminates the thread after 64, setting
+  `Emulator::StalledOnFault()`.
+- `--run` now requires positive evidence to claim a boot and prints the real
+  numbers: `frames`, `instructions`, `memory_faults`, `last_fault_addr`.
+  Verdicts: `BOOTED` / `DEGRADED` / `FAILED`. Exit codes: 0 booted, 2 load
+  failed, 3 no frames, 4 stalled on faults.
+- `VirtualMemory` and the interpreter throttle fault logs (first 32 in full, then
+  every 100000th). A 2000-frame probe used to emit a **6.2 GB** `run.log`; it
+  now emits ~40 lines, so the first real error is visible instead of buried.
+
+### Log flood eliminated
+
+`/tmp/terr/run.log` went from 6,622,808,888 bytes to ~0. Same for the CPU
+undefined-opcode path. `grep` over the log no longer times out.
+
+### Boot strategy is now explicit, not oscillated
+
+Past sessions flip-flopped between "boot rtld" and "boot main"; each choice
+un-did the last. Selected by `NEMU_BOOT_ENTRY=rtld|main` (default `rtld`),
+documented at the decision site in `title_loader.cpp`.
+
+### What each strategy actually does now (measured)
+
+`NEMU_BOOT_ENTRY=rtld` (default):
+```
+[NEMU-BOOT] frames=8 instructions=120000 memory_faults=137057 -> DEGRADED
+```
+All 4 modules load and 77,557 symbols link, but **rtld relocates itself to a
+garbage base (`0x1871_0000_00`)** and every write from there faults. rtld
+derives its own load base from a *module list* structure the real kernel hands
+it; NEMU never installs one. This is the next real blocker and it is a
+kernel-side subsystem, not a loader-arithmetic bug.
+
+`NEMU_BOOT_ENTRY=main`: reaches real Terraria code and dies at
+`PC 0x72762624 (RET X30, X30=0)` — i.e. the game's init chain restores a link
+register of 0 from the stack. The disassembly confirms a normal epilogue
+(`LDP X29,X30,[X29]` / `RET`), so the frame was entered via a `BR` tail-call from
+a caller whose X30 was already 0.
+
+### Loader continuation stub added
+
+`LOADER_CONT_ADDR = 0xDEAD1000` is now mapped R|W|X at init and holds
+`SVC #7` / `SVC #10` / `B`, so the initial NSO thread's LR points at real,
+mapped, executable loader-continuation code instead of address 0. A top-level
+`RET` from the game's init chain therefore exits the process terminally rather
+than decoding `0x00000000` at PC 0 and spinning.
+
+Note: this does **not** yet fix the `X30=0` RET, because that RET restores 0
+*from a stack frame*, not from the initial LR. Reaching further requires the
+rtld path plus a kernel-installed module list.
+
 ---
 
 # 2026-09-30: verified body-decrypt root causes + a WORKING decrypted-ExeFS boot
@@ -344,3 +406,98 @@ This is a distinct subsystem, not another single opcode/register fix.
 python3 /tmp/terr/build_pfs0.py   # data at header_end (0xA8), PFS0 rule
 ./build/bin/Nemu --run /tmp/terr/terraria_exefs.pfs0 --max-frames=8
 ```
+
+
+---
+
+## 6. (2026-10-01) REAL ROOT CAUSE FOUND: unbounded `.dynsym` walk + JIT masking faults
+
+The "missing rtld handoff" diagnosis in section 5 above was **wrong**. The
+`RET X30=0` was not a boot-contract problem at all — it was a **corrupted GOT
+slot**, and the boot verdict was also lying about it. Both are now fixed.
+
+### Bug A — `.dynsym` parsed far past its real end (the actual Terraria crash)
+
+`NsoLoader::CollectExportedSymbols` walked `.dynsym` from `DT_SYMTAB` to the
+**end of the flat module image**. `.dynsym` is not self-terminating: it runs
+straight into `.dynstr` (`DT_STRTAB`) and then into ordinary `.rodata`/`.data`
+that merely *looks* like 24-byte symbol records. Everything past the table was
+harvested as a "symbol".
+
+Measured on the real Terraria ExeFS (DT_HASH `nchain` = the true entry count):
+
+| Module | true `.dynsym` entries | entries NEMU scanned | over-read |
+|---|---|---|---|
+| `main` | **801** | 3,604,324 | **4500x** |
+| `sdk` | 24,755 | 274,936 | 11x |
+| `subsdk0` | 11,522 | 133,775 | 12x |
+| `rtld` | 20 | 298 | 15x |
+
+That produced the 77,557 "symbols" NEMU logged. Because the map is
+first-wins (`out.emplace`), the phantom copies **shadowed the real
+definitions**. Concretely, replaying NEMU's exact algorithm on the real image:
+
+```
+_Znwm  -> 0x27471010755   <-- garbage   (should be sdk 0x79A026B8)
+_ZdaPv -> 0x548710107ae   <-- garbage
+_Znam  -> 0x79E42758      <-- correct (first-wins kept sdk's real copy)
+```
+
+`_Znwm` is C++ **`operator new(size_t)`**, imported by `main` through
+`DT_JMPREL` entry 34 → GOT slot `0x74BB76E0` (module offset `0x3BA76E0`, in
+`.data`/`.bss`, so zero at load). `main` calls it via a PLT thunk:
+
+```asm
+0x7390a798  adrp x16, #0x74bb7000
+0x7390a79c  ldr  x17, [x16, #0x6e0]     ; GOT[34]  == 0x27471010755
+0x7390a7a4  br   x17
+```
+
+so control left the mapped modules entirely. The return address that was
+finally observed is the *downstream symptom* of that jump, not its cause.
+
+**Fix** (`nso.cpp`): read `DT_HASH` (tag 4) and use its `nchain` field as the
+authoritative entry count, falling back to the `.dynstr` boundary. Same count
+also gates the symbol-name lookup in `ResolveSymbolImports`. Result on the
+real cart: 77,557 phantom entries → **35,134 real symbols**, and all four
+allocator imports now resolve inside `sdk` (0x799C0000–0x7A635000, matching
+NEMU's own module-load log).
+
+### Bug B — the headless boot probe reported "BOOTED" on a dead guest
+
+`JitCompiler::CompileBlock`'s `default:` arm (any opcode the JIT cannot
+translate) ended the block, **wrote `PC = curr_pc` back into the guest state,
+and returned a valid block pointer**. `Execute` therefore returned `true`, so
+`StepCpuQuantum` counted a retired instruction and never reached its
+undefined-instruction branch. The guest spun on one undecodable word forever
+and the probe scored it as a success:
+
+```
+[NEMU-BOOT] frames_executed=200 instructions=3000000 memory_faults=0 -> BOOTED
+[ERROR][CPU] Undefined instruction 0x00000001 at PC 0x0 (#1 .. #2900000)
+```
+
+**Fix** (`jit_compiler.cpp`): the `default:` arm now returns `nullptr` instead
+of emitting a no-op block. `Execute` returns `false`, the caller re-steps on the
+interpreter, `StepResult::UndefinedInstruction` is counted, and the existing
+64-consecutive-fault watchdog terminates the thread and sets
+`StalledOnFault()` — so this class of failure reports `FAILED` with exit 4
+instead of a fake `BOOTED` with exit 0.
+
+### Also corrected in this pass
+
+* `rtld` now loads and links cleanly, but is **not** the correct boot entry for
+  this title. Ryujinx (both the classic and current `qlaunch` trees) and
+  Eden/yuzu boot the **first NSO directly** and perform relocations in the
+  loader; they never hand rtld a module map. NEMU already does the same, so
+  `NEMU_BOOT_ENTRY=main` is the architecturally correct path and the rtld path
+  is kept only for bring-up comparison.
+
+### Reproduce
+
+```bash
+python3 /tmp/terr/which3.py    # JMPREL[34] -> _Znwm at GOT 0x3ba76e0
+python3 /tmp/terr/bound2.py    # DT_HASH nchain vs NEMU's scan length
+NEMU_BOOT_ENTRY=main ./build/bin/Nemu --run /tmp/terr/terraria_exefs.pfs0 --max-frames=200
+```
+

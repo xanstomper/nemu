@@ -8,6 +8,37 @@ namespace nemu::core::memory {
 VirtualMemory::VirtualMemory() = default;
 VirtualMemory::~VirtualMemory() = default;
 
+namespace {
+// Log the first few guest memory faults in full, then throttle hard. A guest
+// stuck on an unmapped address re-faults millions of times per second; the old
+// one-line-per-fault logging produced a 6.2 GB run.log for a single 2000-frame
+// probe, which buried the first real error and made `grep` exceed its timeout.
+constexpr u64 kFaultLogHeadroom = 32;      // full-detail faults before throttling
+constexpr u64 kFaultLogInterval = 100000;  // then only every Nth fault
+} // namespace
+
+void VirtualMemory::ReportFault(const char* op, vaddr_t address, bool is_write) {
+    if (is_write) {
+        faults_.write_faults.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        faults_.read_faults.fetch_add(1, std::memory_order_relaxed);
+    }
+    const u64 total = faults_.total_faults.fetch_add(1, std::memory_order_relaxed) + 1;
+    faults_.last_fault_address.store(address, std::memory_order_relaxed);
+
+    if (total <= kFaultLogHeadroom) {
+        NEMU_LOG_ERROR("Memory", "Unmapped or {} {} at 0x{:016X} (fault #{})",
+                       is_write ? "unwritable" : "unreadable", op, address, total);
+    } else if (total == kFaultLogHeadroom + 1) {
+        NEMU_LOG_ERROR("Memory",
+                       "Guest memory faults exceeded {}; throttling further fault logs "
+                       "(now every {}th). Last at 0x{:016X}.",
+                       kFaultLogHeadroom, kFaultLogInterval, address);
+    } else if (total % kFaultLogInterval == 0) {
+        NEMU_LOG_ERROR("Memory", "Guest memory fault #{} at 0x{:016X}", total, address);
+    }
+}
+
 bool VirtualMemory::Map(vaddr_t address, size_t size, MemoryPermission permissions) {
     if (size == 0 || (address & PAGE_MASK) != 0 || (size & PAGE_MASK) != 0) {
         NEMU_LOG_ERROR("Memory", "Map failed: Unaligned address 0x{:016X} or size 0x{:X}", address, size);
@@ -127,7 +158,7 @@ u8 VirtualMemory::Read8(vaddr_t address) {
     std::lock_guard lock(memory_mutex_);
     const PageInfo* page = LookupPage(address);
     if (!page || !HasPermission(page->permissions, MemoryPermission::Read)) {
-        NEMU_LOG_ERROR("Memory", "Unmapped or unreadable Read8 at 0x{:016X}", address);
+        ReportFault("Read8", address, /*is_write=*/false);
         return 0;
     }
     return page->host_ptr[address & PAGE_MASK];
@@ -155,7 +186,7 @@ void VirtualMemory::Write8(vaddr_t address, u8 value) {
     std::lock_guard lock(memory_mutex_);
     PageInfo* page = LookupPage(address);
     if (!page || !HasPermission(page->permissions, MemoryPermission::Write)) {
-        NEMU_LOG_ERROR("Memory", "Unmapped or unwritable Write8 at 0x{:016X}", address);
+        ReportFault("Write8", address, /*is_write=*/true);
         return;
     }
     page->host_ptr[address & PAGE_MASK] = value;
@@ -184,7 +215,7 @@ bool VirtualMemory::ReadBlock(vaddr_t address, void* dest, size_t size) {
     while (bytes_left > 0) {
         const PageInfo* page = LookupPage(curr_addr);
         if (!page || !HasPermission(page->permissions, MemoryPermission::Read)) {
-            NEMU_LOG_ERROR("Memory", "ReadBlock fault at 0x{:016X}", curr_addr);
+            ReportFault("ReadBlock", curr_addr, /*is_write=*/false);
             return false;
         }
 
@@ -211,7 +242,7 @@ bool VirtualMemory::WriteBlock(vaddr_t address, const void* src, size_t size) {
     while (bytes_left > 0) {
         PageInfo* page = LookupPage(curr_addr);
         if (!page || !HasPermission(page->permissions, MemoryPermission::Write)) {
-            NEMU_LOG_ERROR("Memory", "WriteBlock fault at 0x{:016X}", curr_addr);
+            ReportFault("WriteBlock", curr_addr, /*is_write=*/true);
             return false;
         }
 

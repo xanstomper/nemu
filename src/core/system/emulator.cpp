@@ -25,7 +25,17 @@ namespace {
 constexpr vaddr_t STACK_TOP = kernel::KProcess::DEFAULT_STACK_TOP - 0x1000;
 constexpr vaddr_t TLS_ADDR  = kernel::KProcess::DEFAULT_TLS_BASE;
 constexpr vaddr_t EXIT_ADDR = 0x00000000DEAD0000ULL;
-}
+
+// Loader / applet continuation. A real title boot enters rtld's _start with
+// LR = 0, but rtld establishes the return chain itself: after the game's crt0
+// init chain finishes it returns *here* rather than to address 0. NEMU boots the
+// NSO modules directly, so without this page the top-level `RET` lands on PC 0,
+// decodes 0x00000000 as an undefined instruction, and spins (verified on
+// Terraria: "Low-branch: PC 0x72762624 -> next 0x0"). This page gives that RET
+// a real, mapped, executable target that exits the process cleanly, turning an
+// opaque PC=0 crash into an explicit, diagnosable "init returned to loader".
+constexpr vaddr_t LOADER_CONT_ADDR = 0x00000000DEAD1000ULL;
+} // namespace
 
 Emulator::Emulator(const EmulatorConfig& config)
     : config_(config) {
@@ -121,6 +131,31 @@ bool Emulator::Initialize() {
     process_->SetState(kernel::ProcessState::Running);
     process_->GetVirtualMemory().Map(EXIT_ADDR, memory::VirtualMemory::PAGE_SIZE, memory::MemoryPermission::All);
     process_->GetVirtualMemory().Write32(EXIT_ADDR, 0xD40000E1); // SVC #7 (svcExitProcess)
+
+    // Loader / applet continuation page (see LOADER_CONT_ADDR). Reached when a
+    // game's crt0 init chain returns instead of branching into its event loop.
+    // It must be a real, mapped, executable page: `svcExitProcess` first, then
+    // `svcExitThread`, so the thread unwinds terminally either way rather than
+    // re-entering the undefined-instruction path at PC 0.
+    // It must be a real, mapped page. Permissions are Read|Write|Execute, not
+    // just R|X: the JIT may want to write a trampoline there, and a write fault
+    // on this page is itself a boot-breaking error (observed with R|X only).
+    process_->GetVirtualMemory().Map(LOADER_CONT_ADDR, memory::VirtualMemory::PAGE_SIZE,
+                                     memory::MemoryPermission::All);
+    {
+        // Canonical encodings are 0xD4000001 | (imm16 << 5) (the decoder masks
+        // 0xFFE0001F == 0xD4000001, so bit 0 must be set):
+        //   SVC #7  = 0xD40000E1 -> svcExitProcess
+        //   SVC #10 = 0xD4000141 -> svcExitThread
+        const u32 loader_cont_code[] = {
+            0xD40000E1, // SVC #7   -> svcExitProcess
+            0xD4000141, // SVC #10  -> svcExitThread (reached if exit returns)
+            0x14000002, // B +8     -> spin only if both SVCs somehow return
+        };
+        process_->GetVirtualMemory().WriteBlock(LOADER_CONT_ADDR, loader_cont_code,
+                                                 sizeof(loader_cont_code));
+        NEMU_LOG_INFO("System", "Loader continuation stub mapped at 0x{:016X}", LOADER_CONT_ADDR);
+    }
     maxwell_->SetMemory(&process_->GetVirtualMemory());
 
     // 10. GPU Device Manager & Display Compositor
@@ -326,19 +361,14 @@ bool Emulator::LoadTitle(const std::string& path) {
         process_->SetName(loaded->title_name);
     }
 
-    // Run every module's .init_array with real SVC dispatch, exactly as the
-    // real rtld does before jumping to the primary entry. Without this the
-    // SDK allocator/service globals never register (operator new returns
-    // null; the guest collapses to a PC=0 spin on Terraria).
-    if (!loaded->is_nro && !loaded->modules.empty()) {
-        auto init_thread = std::make_shared<kernel::KThread>(
-            99, process_, 44, 0, 0, kernel::KProcess::DEFAULT_TLS_BASE);
-        title_loader_->RunModuleInitArrays(
-            process_->GetVirtualMemory(), loaded->modules,
-            [this, &init_thread](cpu::CpuState& s, u32 svc) {
-                kernel::SvcDispatcher::Dispatch(s, *process_, *init_thread, svc);
-            });
-    }
+    // NOTE: Do NOT run .init_array here anymore. The initial thread now boots
+    // through rtld (like the real OS / Eden), and rtld's _start itself runs
+    // every module's .init_array in dependency order *after* registering all
+    // modules and resolving nn::ro internals (verified in Terraria's nnrtld
+    // disassembly: init runner at rtld+0xfb0, called from the module walk).
+    // Running them from the loader before the SDK allocator/service globals
+    // exist was why 149/372 constructors faulted and the game died in its
+    // first sparsehash set_empty_key().
     if (loaded->title_id != 0) {
         process_->SetTitleId(loaded->title_id);
     }
@@ -397,19 +427,28 @@ bool Emulator::LoadTitle(const std::string& path) {
     // SVCs (and libnx, which reads the handle from TLS+0x110) can resolve it.
     const auto thread_handle = process_->GetHandleTable().CreateHandle(main_thread_);
 
-    // Match the real Switch / libnx entry convention (yuzu/Eden k_process.cpp):
-    //   NSO/kernel entry: x0 = 0, x1 = main_thread_handle, lr (x30) = 0.
-    // libnx switch_crt0.s tests `x0 == 0` to take the normal init path, then
-    // derives its thread handle from [TLS + 0x110]. NEMU previously left x1 = 0
-    // and omitted the TLS handle, so thread-control SVCs failed and TerTara's
-    // crt0 init bailed out with an early RET. Passing the real handle and
-    // writing it into the TLS lets the app's init proceed.
+    // Match the real Switch / Eden(yuzu) k_process.cpp NSO entry convention:
+    //   x0 = 0, x1 = main_thread_handle, lr (x30) = 0 (thread ctx zeroed).
+    // rtld's _start tests `x0 == 0` for the normal boot path, reads the thread
+    // handle from TLS+0x110, and builds its own return chain. Previously we
+    // pointed LR at a synthesized idle-loop stub, which only masked the real
+    // failure (game init never ran); with rtld booting properly the game's
+    // nnMain never returns (event loop), so no continuation is needed.
     cpu::CpuState& cpu = main_thread_->GetCpuState();
     cpu.SetX(0, 0);
     cpu.SetX(1, is_nro_ ? ~0ULL : static_cast<u64>(thread_handle));
-    // X30 (LR) = 0 for the true NSO entry, exactly as the real OS starts the
-    // initial thread; the game's _start establishes its own return chain.
-    cpu.SetX(30, is_nro_ ? EXIT_ADDR : 0);
+    // X30 (LR): the initial thread's return address.
+    //   * NRO homebrew: EXIT_ADDR, so a crt0 that returns exits the process.
+    //   * NSO titles:  the loader/applet continuation stub, NOT 0. A real title
+    //     boot reaches rtld, which builds the return chain so that when the
+    //     game's crt0 init chain finishes it returns to loader code rather than
+    //     to address 0. NEMU starts the NSO modules directly, so LR must point at
+    //     that same continuation explicitly -- pointing it at 0 makes the final
+    //     `RET X30` branch to PC 0, decode 0x00000000 as an undefined opcode, and
+    //     spin (Terraria: "Low-branch: PC 0x72762624 -> next 0x0"). Landing on the
+    //     mapped stub keeps the failure legible and terminal instead of a spin.
+    cpu.SetX(30, is_nro_ ? EXIT_ADDR : LOADER_CONT_ADDR);
+
     // Write the thread handle into the thread-local region (libnx reads it at
     // TLS + 0x110). This is what yuzu/Eden does to hand the handle to crt0.
     process_->GetVirtualMemory().Write32(TLS_ADDR + 0x110, thread_handle);
@@ -641,6 +680,13 @@ void Emulator::StepCpuQuantum(size_t instruction_budget) {
             cpu::CpuState& cpu = thread->GetCpuState();
             size_t executed_in_quantum = 0;
 
+            // Consecutive CPU faults at one PC. A fault leaves PC untouched, so
+            // re-stepping it spins; past this many in a row the thread is stuck
+            // (unresolved entry / missing opcode / unmapped page) and we stop it.
+            constexpr unsigned kMaxConsecutiveFaults = 64;
+            unsigned fault_streak = 0;
+            vaddr_t first_fault_pc = 0;
+
             if (jit_ && config_.jit_enabled) {
                 while (executed_in_quantum < instruction_budget &&
                        process_->GetState() == kernel::ProcessState::Running &&
@@ -656,7 +702,30 @@ void Emulator::StepCpuQuantum(size_t instruction_budget) {
                         interp.SetSvcHandler([this, thread](cpu::CpuState& s, u32 svc) {
                             kernel::SvcDispatcher::Dispatch(s, *process_, *thread, svc);
                         });
-                        interp.Step();
+                        const auto step_res = interp.Step();
+                        // The JIT bailing out on the same PC every time is the
+                        // same stall the interpreter path detects; without this
+                        // the JIT path spun silently (no fault accounting at all).
+                        if (step_res == cpu::StepResult::UndefinedInstruction ||
+                            step_res == cpu::StepResult::MemoryFault) {
+                            ++fault_streak;
+                            if (fault_streak == 1) {
+                                first_fault_pc = cpu.pc;
+                            }
+                            if (fault_streak >= kMaxConsecutiveFaults) {
+                                NEMU_LOG_ERROR("System",
+                                    "Thread {} stalled at PC 0x{:016X} (JIT path): {} consecutive "
+                                    "CPU faults. Terminating thread instead of spinning.",
+                                    thread->GetTid(), first_fault_pc, fault_streak);
+                                thread->SetState(kernel::ThreadState::Terminated);
+                                stalled_on_fault_ = true;
+                                break;
+                            }
+                        } else {
+                            fault_streak = 0;
+                        }
+                    } else {
+                        fault_streak = 0;
                     }
                     executed_in_quantum += 1;
                 }
@@ -676,6 +745,31 @@ void Emulator::StepCpuQuantum(size_t instruction_budget) {
                     if (step_res == cpu::StepResult::Halted) {
                         thread->SetState(kernel::ThreadState::Terminated);
                         break;
+                    }
+                    // A fault (undefined opcode / bad fetch) leaves PC unchanged,
+                    // so re-stepping the same PC spins until the quantum is spent.
+                    // Previously these were ignored entirely, which is why a guest
+                    // stuck at one bad PC burned all 30M instructions and *still*
+                    // reported "BOOTED". Count them so the boot probe can see the
+                    // stall, and stop the thread once it is clearly not progressing.
+                    if (step_res == cpu::StepResult::UndefinedInstruction ||
+                        step_res == cpu::StepResult::MemoryFault) {
+                        ++fault_streak;
+                        if (fault_streak == 1) {
+                            first_fault_pc = cpu.pc;
+                        }
+                        if (fault_streak >= kMaxConsecutiveFaults) {
+                            NEMU_LOG_ERROR("System",
+                                "Thread {} stalled at PC 0x{:016X}: {} consecutive CPU faults "
+                                "(unresolved entry point / missing opcode / unmapped page). "
+                                "Terminating thread instead of spinning.",
+                                thread->GetTid(), first_fault_pc, fault_streak);
+                            thread->SetState(kernel::ThreadState::Terminated);
+                            stalled_on_fault_ = true;
+                            break;
+                        }
+                    } else {
+                        fault_streak = 0;
                     }
                     executed_in_quantum += 1;
                 }

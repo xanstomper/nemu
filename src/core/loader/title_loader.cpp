@@ -12,6 +12,7 @@
 #include "platform/logger.hpp"
 #include <fstream>
 #include <cstring>
+#include <cstdlib>
 #include <algorithm>
 #include <filesystem>
 
@@ -687,16 +688,32 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
             .image = std::move(loaded->image)
         });
 
-        // Primary entry selection. rtld is the runtime relocation + module
-        // loader (the dynld engine). NEMU already fixed up every module's
-        // RELA relocations at load time (NsoLoader::ApplyRelocations), so the
-        // game's real startup code lives in `main`, not in rtld's _start.
-        // Running rtld's _start unprompted makes it re-relocate against a
-        // module map NEMU never installed, producing bogus bases (e.g. the
-        // 0x1891… write-fault loops). Prefer `main` when present.
-        if (mod_name == "main") {
+        // Primary entry selection.
+        //
+        // Overridable with NEMU_BOOT_ENTRY=main|rtld; the default is "main".
+        //
+        //   "main" (default) boots the game's own crt0 directly. This is what
+        //     every mature Switch emulator does: Ryujinx (both the classic tree
+        //     and the current `qlaunch` tree) sets the process entry point to the
+        //     first NSO in the ExeFS and performs all relocations in the loader
+        //     (`ProcessLoaderHelper.LoadNsos` -> `LoadIntoMemory`), and Eden
+        //     (yuzu) does the same via `AppLoader_NSO::Load`. None of them hand
+        //     rtld a kernel-installed ldr module map, and none of them boot rtld
+        //     directly. NEMU already applies every module's RELA relocations and
+        //     resolves cross-module imports at load time, so rtld's relocation
+        //     work is redundant here.
+        //
+        //   "rtld" is kept only for bring-up comparison. Booting rtld directly
+        //     stalls: rtld derives its own load base from a *module list*
+        //     structure the real kernel hands it, and NEMU never installs one,
+        //     so rtld relocates itself to a garbage base (observed:
+        //     0x1871_0000_00 on Terraria) and every write from there faults.
+        const char* entry_env = std::getenv("NEMU_BOOT_ENTRY");
+        const bool prefer_rtld = (entry_env != nullptr) && (std::string_view(entry_env) == "rtld");
+
+        if (mod_name == "rtld" && prefer_rtld) {
             primary_entry = loaded->entry_point;
-        } else if (mod_name == "rtld" && primary_entry == 0) {
+        } else if (mod_name == "main" && primary_entry == 0) {
             primary_entry = loaded->entry_point;
         }
 

@@ -272,7 +272,7 @@ size_t NsoLoader::CollectExportedSymbols(
     std::memcpy(&dyn_rel, module_image.data() + mod0_offset + 4, sizeof(s32));
     const size_t dyn_off = mod0_offset + static_cast<size_t>(dyn_rel);
 
-    u64 symtab = 0, strtab = 0, syment = 24;
+    u64 symtab = 0, strtab = 0, syment = 24, hash_tab = 0;
     size_t p = dyn_off;
     while (p + 16 <= module_image.size()) {
         s64 t = 0; u64 v = 0;
@@ -283,12 +283,51 @@ size_t NsoLoader::CollectExportedSymbols(
         else if (t == 6) symtab = v;       // DT_SYMTAB
         else if (t == 5) strtab = v;       // DT_STRTAB
         else if (t == 11) syment = v;      // DT_SYMENT
+        else if (t == 4) hash_tab = v;     // DT_HASH
     }
     if (symtab == 0 || strtab == 0 || syment < 24) return 0;
 
+    // Bound the .dynsym walk to the *real* table extent.
+    //
+    // .dynsym has no DT_SYMENT-counted terminator: it runs straight into
+    // .dynstr (DT_STRTAB), and everything past that is ordinary .rodata/.data
+    // that merely looks like symbol records. Walking to the end of the flat
+    // module image therefore invents tens of thousands of phantom symbols --
+    // for Terraria's `main` that was 3,604,324 candidate entries against a real
+    // table of 801, i.e. 4500x over-read. Because duplicate names are kept
+    // first-wins, the phantom copies *shadowed* the genuine definitions: the
+    // C++ allocator import `_Znwm` (operator new) resolved to the garbage
+    // address 0x27471010755 instead of sdk's real 0x79A026B8. The game then
+    // did `bl <thunk> -> ldr x17,[got]; br x17` into address 0, whose `RET`
+    // popped a zero X30 and branched to PC 0 -- the "Low-branch ... -> next
+    // 0x0" crash that stalled Terraria's init chain.
+    //
+    // DT_HASH is an ELF SysV hash table whose `nchain` field is, by definition,
+    // the number of .dynsym entries. Prefer it; otherwise fall back to the
+    // strtab, and only as a last resort to the image end.
+    size_t sym_count = 0;
+    if (hash_tab != 0 && hash_tab + 8 <= module_image.size()) {
+        u32 nbucket = 0, nchain = 0;
+        std::memcpy(&nbucket, module_image.data() + hash_tab, 4);
+        std::memcpy(&nchain, module_image.data() + hash_tab + 4, 4);
+        if (nchain > 0 && nbucket > 0) {
+            sym_count = nchain;
+        }
+    }
+    if (sym_count == 0 && strtab > symtab) {
+        sym_count = (strtab - symtab) / syment;
+    }
+    if (sym_count == 0) {
+        sym_count = (module_image.size() - symtab) / syment;
+    }
+    if (sym_count * syment > module_image.size() - std::min(symtab, module_image.size())) {
+        sym_count = (module_image.size() - symtab) / syment;
+    }
+
     size_t count = 0;
-    // Approximate the symbol count from the .dynsym extent; cap by image size.
-    for (size_t off = symtab; off + 24 <= module_image.size(); off += syment) {
+    for (size_t i = 0; i < sym_count; ++i) {
+        const size_t off = symtab + i * syment;
+        if (off + 24 > module_image.size()) break;
         u32 st_name = 0; u8 st_info = 0; u16 st_shndx = 0; u64 st_value = 0;
         std::memcpy(&st_name, module_image.data() + off, 4);
         st_info = module_image[off + 4];

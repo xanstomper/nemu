@@ -61,7 +61,21 @@ public:
     [[nodiscard]] u64 GetTotalInstructionsExecuted() const noexcept;
     [[nodiscard]] u64 GetCoreInstructionsExecuted(u32 core_id) const noexcept;
 
+    /// True once any guest thread was stopped for repeatedly faulting at one PC
+    /// (undecodable word, unmapped fetch, or a null return target). The headless
+    /// boot probe reads this so a dead guest reports FAILED instead of BOOTED.
+    [[nodiscard]] bool StalledOnFault() const noexcept {
+        return stalled_on_fault_.load(std::memory_order_relaxed);
+    }
+
 private:
+    /// Run up to `budget` instructions for `thread` on this core, counting
+    /// consecutive CPU faults. A fault (undefined opcode / bad fetch) leaves PC
+    /// untouched, so re-stepping the same PC spins forever; after
+    /// kMaxConsecutiveFaults the thread is terminated and stalled_on_fault_ is
+    /// set. Returns the number of instructions actually attempted.
+    size_t RunQuantum(kernel::KThread& thread, size_t budget, vaddr_t exit_addr);
+
     void WorkerLoop(u32 core_id);
     std::shared_ptr<kernel::KThread> SelectNextThread(u32 core_id);
 
@@ -72,6 +86,7 @@ private:
     std::atomic<bool> is_running_{false};
     std::atomic<bool> is_paused_{false};
     std::atomic<bool> stop_requested_{false};
+    std::atomic<bool> stalled_on_fault_{false};
 
     std::array<std::thread, NUM_GUEST_CORES> workers_;
     std::array<std::atomic<u64>, NUM_GUEST_CORES> core_instructions_{};

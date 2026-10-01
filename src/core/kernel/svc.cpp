@@ -160,8 +160,15 @@ void SvcDispatcher::SvcQueryMemory(cpu::CpuState& state, KProcess& process) {
     const vaddr_t query_addr = state.GetX(2);
 
     auto& vmem = process.GetVirtualMemory();
-    auto perm_opt = vmem.GetPagePermissions(query_addr);
 
+    // Horizon MemoryInfo layout (32 bytes) as consumed by libnx / nnSDK rtld:
+    //   u64 base_address; u64 size; u32 type; u32 attribute; u32 permission;
+    //   u32 ipc_ref_count; u32 device_ref_count; u32 padding;
+    // rtld walks the whole address space with repeated QueryMemory calls and
+    // depends on `size` covering the *entire contiguous region*, not one page:
+    // its module scan advances by mem_info.size and misparses modules when
+    // regions are fragmented into 4 KiB slabs (verified against Terraria's
+    // nnrtld _start: it stops after the first query unless size is real).
     struct MemoryInfo {
         u64 base_address;
         u64 size;
@@ -173,14 +180,40 @@ void SvcDispatcher::SvcQueryMemory(cpu::CpuState& state, KProcess& process) {
         u32 padding;
     } mem_info{};
 
+    constexpr u64 PAGE = memory::VirtualMemory::PAGE_SIZE;
+    constexpr u64 PAGE_M = memory::VirtualMemory::PAGE_MASK;
+
+    auto perm_opt = vmem.GetPagePermissions(query_addr);
     if (perm_opt.has_value()) {
-        mem_info.base_address = query_addr & ~memory::VirtualMemory::PAGE_MASK;
-        mem_info.size = memory::VirtualMemory::PAGE_SIZE;
-        mem_info.type = 3; // Normal memory
+        // Coalesce the contiguous run of identically-mapped pages around the
+        // query address (same permissions), like the real kernel reports one
+        // KMemoryBlock per allocation.
+        u64 base = query_addr & ~PAGE_M;
+        u64 lo = base;
+        while (lo >= PAGE) {
+            auto p = vmem.GetPagePermissions(lo - PAGE);
+            if (!p.has_value() || *p != *perm_opt) break;
+            lo -= PAGE;
+        }
+        u64 hi = base + PAGE;
+        while (hi != 0) {
+            auto p = vmem.GetPagePermissions(hi);
+            if (!p.has_value() || *p != *perm_opt) break;
+            hi += PAGE;
+        }
+        mem_info.base_address = lo;
+        mem_info.size = hi - lo;
+        mem_info.type = 3; // Normal memory (code/data regions we map)
         mem_info.permission = static_cast<u32>(*perm_opt);
     } else {
-        mem_info.base_address = query_addr & ~memory::VirtualMemory::PAGE_MASK;
-        mem_info.size = memory::VirtualMemory::PAGE_SIZE;
+        // Unmapped gap: extend to the next mapped page so the walk terminates.
+        u64 base = query_addr & ~PAGE_M;
+        u64 hi = base;
+        while (hi < 0x800000000000ULL && !vmem.GetPagePermissions(hi).has_value()) {
+            hi += PAGE;
+        }
+        mem_info.base_address = base;
+        mem_info.size = hi - base;
         mem_info.type = 0; // Unmapped
         mem_info.permission = 0;
     }
@@ -250,6 +283,11 @@ void SvcDispatcher::SvcSleepThread(cpu::CpuState& state) {
         std::this_thread::sleep_for(std::chrono::nanoseconds(nanoseconds));
     } else if (nanoseconds == 0) {
         std::this_thread::yield();
+    } else {
+        // Negative timeout = "sleep until signaled" (yield-and-wake). With no
+        // event model yet, sleep a small quantum so idle loops (e.g. the
+        // loader-continuation stub) don't hot-spin the CPU.
+        std::this_thread::sleep_for(std::chrono::microseconds(500));
     }
     state.SetX(0, static_cast<u64>(Result::Success));
 }

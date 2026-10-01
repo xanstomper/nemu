@@ -110,6 +110,77 @@ std::shared_ptr<kernel::KThread> GuestThreadPool::SelectNextThread(u32 core_id) 
     return best_thread;
 }
 
+size_t GuestThreadPool::RunQuantum(kernel::KThread& thread, size_t budget, vaddr_t exit_addr) {
+    // Consecutive CPU faults at one PC. A fault leaves PC untouched, so
+    // re-stepping it spins; past this many in a row the thread is genuinely
+    // stuck (undecodable word / unmapped fetch / null return target) and we stop
+    // it instead of burning the whole budget. This is the *only* place guest
+    // execution happens when the thread pool is active, so the accounting has to
+    // live here -- previously both loops below ignored StepResult entirely, which
+    // let a guest spinning on one bad PC score millions of "instructions" and be
+    // reported as BOOTED by the headless boot probe.
+    constexpr unsigned kMaxConsecutiveFaults = 64;
+
+    cpu::CpuState& cpu = thread.GetCpuState();
+    size_t executed = 0;
+    unsigned fault_streak = 0;
+    vaddr_t first_fault_pc = 0;
+
+    while (executed < budget &&
+           !stop_requested_.load(std::memory_order_relaxed) &&
+           !is_paused_.load(std::memory_order_relaxed) &&
+           process_->GetState() == kernel::ProcessState::Running &&
+           thread.GetState() == kernel::ThreadState::Running) {
+
+        if (cpu.pc == exit_addr || cpu.halted) {
+            thread.SetState(kernel::ThreadState::Terminated);
+            break;
+        }
+
+        bool ok = false;
+        if (jit_) {
+            ok = jit_->Execute(cpu, process_->GetVirtualMemory());
+        }
+
+        cpu::StepResult step_res = cpu::StepResult::Ok;
+        if (!ok) {
+            cpu::Interpreter interp(cpu, process_->GetVirtualMemory());
+            if (svc_handler_) {
+                interp.SetSvcHandler(svc_handler_);
+            }
+            step_res = interp.Step();
+        }
+
+        if (step_res == cpu::StepResult::Halted) {
+            thread.SetState(kernel::ThreadState::Terminated);
+            break;
+        }
+
+        if (step_res == cpu::StepResult::UndefinedInstruction ||
+            step_res == cpu::StepResult::MemoryFault) {
+            if (++fault_streak == 1) {
+                first_fault_pc = cpu.pc;
+            }
+            if (fault_streak >= kMaxConsecutiveFaults) {
+                NEMU_LOG_ERROR("CPU",
+                    "Thread {} stalled at PC 0x{:016X}: {} consecutive CPU faults "
+                    "(unresolved entry / missing opcode / unmapped page). "
+                    "Terminating thread instead of spinning.",
+                    thread.GetTid(), first_fault_pc, fault_streak);
+                thread.SetState(kernel::ThreadState::Terminated);
+                stalled_on_fault_.store(true, std::memory_order_relaxed);
+                break;
+            }
+        } else {
+            fault_streak = 0;
+        }
+
+        ++executed;
+    }
+
+    return executed;
+}
+
 void GuestThreadPool::WorkerLoop(u32 core_id) {
     // Pin host thread to target Xbox Developer Mode core
     platform::XboxThreadRole role = platform::XboxThreadRole::GuestCpuCore0;
@@ -151,35 +222,7 @@ void GuestThreadPool::WorkerLoop(u32 core_id) {
         }
 
         core_busy_[core_id].store(true, std::memory_order_relaxed);
-        cpu::CpuState& cpu = thread->GetCpuState();
-        size_t executed = 0;
-
-        while (executed < DEFAULT_QUANTUM_INSTRUCTIONS &&
-               !stop_requested_.load(std::memory_order_relaxed) &&
-               !is_paused_.load(std::memory_order_relaxed) &&
-               process_->GetState() == kernel::ProcessState::Running &&
-               thread->GetState() == kernel::ThreadState::Running) {
-
-            if (cpu.pc == EXIT_ADDR || cpu.halted) {
-                thread->SetState(kernel::ThreadState::Terminated);
-                break;
-            }
-
-            bool ok = false;
-            if (jit_) {
-                ok = jit_->Execute(cpu, process_->GetVirtualMemory());
-            }
-
-            if (!ok) {
-                cpu::Interpreter interp(cpu, process_->GetVirtualMemory());
-                if (svc_handler_) {
-                    interp.SetSvcHandler(svc_handler_);
-                }
-                interp.Step();
-            }
-
-            ++executed;
-        }
+        const size_t executed = RunQuantum(*thread, DEFAULT_QUANTUM_INSTRUCTIONS, EXIT_ADDR);
 
         core_instructions_[core_id].fetch_add(executed, std::memory_order_relaxed);
 
@@ -204,31 +247,7 @@ size_t GuestThreadPool::StepCoreSynchronous(u32 core_id, size_t instruction_budg
     if (!thread) return 0;
 
     thread->SetState(kernel::ThreadState::Running);
-    cpu::CpuState& cpu = thread->GetCpuState();
-    size_t executed = 0;
-
-    while (executed < instruction_budget &&
-           thread->GetState() == kernel::ThreadState::Running) {
-        if (cpu.pc == EXIT_ADDR || cpu.halted) {
-            thread->SetState(kernel::ThreadState::Terminated);
-            break;
-        }
-
-        bool ok = false;
-        if (jit_) {
-            ok = jit_->Execute(cpu, process_->GetVirtualMemory());
-        }
-
-        if (!ok) {
-            cpu::Interpreter interp(cpu, process_->GetVirtualMemory());
-            if (svc_handler_) {
-                interp.SetSvcHandler(svc_handler_);
-            }
-            interp.Step();
-        }
-
-        ++executed;
-    }
+    const size_t executed = RunQuantum(*thread, instruction_budget, EXIT_ADDR);
 
     core_instructions_[core_id].fetch_add(executed, std::memory_order_relaxed);
 

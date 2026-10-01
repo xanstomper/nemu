@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <functional>
+#include <atomic>
 
 namespace nemu::core::memory {
 
@@ -24,6 +25,15 @@ public:
         u8* host_ptr{nullptr};
         MemoryPermission permissions{MemoryPermission::None};
         bool is_owned{false};
+    };
+
+    /// Guest memory-fault counters. The headless boot probe reads these to tell
+    /// a genuinely running guest from one that is spinning on an unmapped page.
+    struct FaultStats {
+        std::atomic<u64> read_faults{0};
+        std::atomic<u64> write_faults{0};
+        std::atomic<u64> total_faults{0};
+        std::atomic<vaddr_t> last_fault_address{0};
     };
 
     VirtualMemory();
@@ -56,10 +66,30 @@ public:
     bool IsValidAddress(vaddr_t address, size_t size = 1) const override;
     std::optional<MemoryPermission> GetPagePermissions(vaddr_t address) const;
 
+    [[nodiscard]] const FaultStats& GetFaultStats() const noexcept { return faults_; }
+    [[nodiscard]] u64 GetTotalFaults() const noexcept {
+        return faults_.total_faults.load(std::memory_order_relaxed);
+    }
+    void ResetFaultStats() noexcept {
+        faults_.read_faults.store(0, std::memory_order_relaxed);
+        faults_.write_faults.store(0, std::memory_order_relaxed);
+        faults_.total_faults.store(0, std::memory_order_relaxed);
+        faults_.last_fault_address.store(0, std::memory_order_relaxed);
+    }
+
     WriteHook write_hook_;  // SMC invalidation hook (set by the JIT)
 private:
     const PageInfo* LookupPage(vaddr_t address) const;
     PageInfo* LookupPage(vaddr_t address);
+
+    /// Count + throttle a guest memory fault. Guest code that walks off a mapped
+    /// page (a half-resolved GOT slot, an unfinished relocation loop, a null
+    /// vtable) faults on *every* retry; logging each one produced a 6.2 GB
+    /// run.log that buried the first real error and made `grep` time out. The
+    /// counts also drive the headless boot probe so a guest that dies this way
+    /// reports FAILED instead of "BOOTED".
+    void ReportFault(const char* op, vaddr_t address, bool is_write);
+    FaultStats faults_{};
 
     // Page index -> PageInfo
     std::unordered_map<u64, PageInfo> page_table_;

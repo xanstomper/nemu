@@ -151,3 +151,33 @@ on the Terraria base-game NCA:
 
 Ground-truth extractions kept at /tmp/exefs_out2 (may be gone after reboot;
 regenerate with hactool --exefsdir).
+
+## 2026-10-01 (dove session): Terraria crash root-caused — unbounded .dynsym + JIT false-boot
+
+Two proven defects, both fixed, both in NEMU only (no code copied from Eden /
+yuzu / Ryujinx; DT_HASH / ELF SysV semantics used as the reference):
+
+1. **`CollectExportedSymbols` over-read `.dynsym` to the end of the flat module
+   image** (`src/core/loader/nso.cpp`). `.dynsym` is not self-terminating; it
+   abuts `.dynstr` and then ordinary data. Terraria's `main` scanned 3,604,324
+   entries against a real table of 801 (4500x). First-wins insertion let the
+   phantoms shadow real definitions, so the C++ `operator new` import `_Znwm`
+   resolved to 0x27471010755 instead of sdk's 0x79A026B8. `main` reached it via
+   `bl thunk -> ldr x17,[GOT]; br x17`, left the mapped modules, and the
+   resulting `RET X30=0` was the *symptom* — NOT a missing rtld handoff as
+   section 5 of TERRARIA_BOOT.md previously claimed. Fix: bound the walk with
+   `DT_HASH` `nchain` (fallback: `.dynstr` boundary). 77,557 -> 35,134 symbols.
+
+2. **The headless probe reported `BOOTED` on a completely dead guest**
+   (`src/core/cpu/jit/jit_compiler.cpp`). The `default:` arm for any
+   untranslatable opcode wrote `PC = curr_pc` and returned a valid block, so
+   `Execute` returned true, the watchdog never saw a fault, and a guest
+   spinning on one undecodable word scored 3,000,000 "instructions" and exit 0.
+   Fix: return `nullptr` so the interpreter fallback counts the fault and the
+   64-strike watchdog reports FAILED / exit 4.
+
+Corrected architectural note: Ryujinx (classic *and* current `qlaunch`) and
+Eden/yuzu boot the **first NSO directly** and relocate in the loader — they do
+not install an ldr module map. NEMU already matches this, so
+`NEMU_BOOT_ENTRY=main` is the correct path; the rtld entry stays for bring-up
+comparison only.

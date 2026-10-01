@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstdint>
+#include <cstdio>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -215,12 +216,61 @@ static int MainInternal(int argc, char** argv) {
                   << " frame(s) ..." << std::endl;
         emulator.Run(run_max_frames);
         const u64 frames = emulator.GetFrameCount();
-        const bool advanced = frames > 0;
+
+        // Verdict. Advancing a frame only proves the host loop ran, NOT that the
+        // guest booted -- a guest spinning on one bad PC advances every frame
+        // while making no progress, which is exactly how NEMU reported "BOOTED"
+        // over a 30M-instruction fault loop. Require positive evidence instead:
+        //   1. a thread that stalled on repeated faults at one PC = hard fail
+        //   2. a guest that faulted at all during boot = at best degraded
+        //   3. instructions must actually have retired
+        const u64 instrs = emulator.GetTotalInstructions();
+        const auto& mem_faults = emulator.GetProcess()->GetVirtualMemory().GetFaultStats();
+        const u64 mem_fault_count = mem_faults.total_faults.load(std::memory_order_relaxed);
+
+        const char* verdict = "BOOTED";
+        bool booted = true;
+        if (emulator.StalledOnFault()) {
+            verdict = "FAILED (guest stalled on repeated CPU faults)";
+            booted = false;
+        } else if (frames == 0) {
+            verdict = "NO-FRAMES (stalled)";
+            booted = false;
+        } else if (instrs == 0) {
+            verdict = "FAILED (no guest instructions retired)";
+            booted = false;
+        } else if (mem_fault_count > 0) {
+            verdict = "DEGRADED (booted, but guest memory faults occurred)";
+        }
+
         std::cout << "[NEMU-BOOT] frames_executed=" << frames
-                  << " -> " << (advanced ? "BOOTED (advanced frames)" : "NO-FRAMES (stalled)")
+                  << " instructions=" << instrs
+                  << " memory_faults=" << mem_fault_count
+                  << (mem_fault_count > 0
+                          ? " last_fault_addr=0x" + [&] {
+                                char buf[32];
+                                std::snprintf(buf, sizeof(buf), "%016llX",
+                                              static_cast<unsigned long long>(
+                                                  mem_faults.last_fault_address.load(std::memory_order_relaxed)));
+                                return std::string(buf);
+                            }()
+                          : std::string())
+                  << " -> " << verdict
                   << std::endl;
+
+        if (!booted) {
+            NEMU_LOG_ERROR("BootProbe",
+                           "Boot FAILED: {} (frames={}, instructions={}, memory_faults={}). "
+                           "See the first CPU/Memory ERROR above for the real blocker.",
+                           verdict, frames, instrs, mem_fault_count);
+        }
         NEMU_LOG_INFO("BootProbe", "Headless run complete: {} frame(s)", frames);
-        return advanced ? 0 : 3;
+        // Distinct exit codes so CI can gate on a real boot: 0 = booted,
+        // 2 = title failed to load, 3 = no frames, 4 = guest stalled on faults.
+        if (!booted) {
+            return emulator.StalledOnFault() || instrs == 0 ? 4 : 3;
+        }
+        return 0;
     }
 
     // If direct title or automated demo flag requested, execute immediately

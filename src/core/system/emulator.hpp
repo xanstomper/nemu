@@ -20,6 +20,7 @@
 #include "core/cpu/jit/jit_compiler.hpp"
 #include "core/network/ldn_network.hpp"
 #include "core/cpu/interpreter.hpp"
+#include "guest_thread_pool.hpp"
 #include "platform/xbox_memory_governor.hpp"
 #include <memory>
 #include <string>
@@ -99,6 +100,17 @@ public:
     [[nodiscard]] u64 GetFrameCount() const noexcept { return frame_count_; }
     [[nodiscard]] u64 GetTotalInstructions() const noexcept { return total_instructions_; }
 
+    /// True when a guest thread was stopped for repeatedly faulting at one PC
+    /// (unresolved entry point, missing opcode, or unmapped page). The headless
+    /// boot probe treats this as a FAILED boot rather than success.
+    /// Both execution paths are consulted: the inline interpreter/JIT fallback
+    /// loop in StepCpuQuantum, and the guest thread pool (which is the path that
+    /// actually runs during a normal boot, so it needs its own watchdog).
+    [[nodiscard]] bool StalledOnFault() const noexcept {
+        return stalled_on_fault_ ||
+               (thread_pool_ && thread_pool_->StalledOnFault());
+    }
+
     [[nodiscard]] const std::shared_ptr<filesystem::VirtualFileSystem>& GetVfs() const noexcept { return vfs_; }
     [[nodiscard]] const std::shared_ptr<config::ConfigManager>& GetConfigManager() const noexcept { return config_manager_; }
     [[nodiscard]] const std::shared_ptr<crypto::KeyStore>& GetKeyStore() const noexcept { return key_store_; }
@@ -161,6 +173,7 @@ private:
     std::shared_ptr<network::LdnUdpNetwork> ldn_net_;
     std::shared_ptr<platform::XboxMemoryGovernor> memory_governor_;
     bool is_nro_{true};
+    bool stalled_on_fault_{false};  // guest thread stopped for a repeated PC fault
 };
 
 } // namespace nemu::core::system

@@ -71,3 +71,6 @@ assets/ui/*.png
 *.nso
 *.tik
 *.nro
+
+# Local read-only reference checkouts (Ryujinx MIT / Eden GPL) used for porting
+third_party/_ref/

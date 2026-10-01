@@ -67,7 +67,24 @@ StepResult Interpreter::Step() {
     const DecodedInstruction inst = Decoder::Decode(raw_inst);
 
     if (inst.opcode == Opcode::UNDEFINED) {
-        NEMU_LOG_ERROR("CPU", "Undefined instruction 0x{:08X} at PC 0x{:016X}", raw_inst, state_.pc);
+        // Throttle identically to memory faults: a guest re-executing one
+        // undecodable word (a zeroed page, an unresolved jump target) produced
+        // millions of identical log lines per probe run.
+        constexpr u64 kUndefLogHeadroom = 8;
+        constexpr u64 kUndefLogInterval = 100000;
+        static std::atomic<u64> undef_count{0};
+        const u64 total = undef_count.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (total <= kUndefLogHeadroom) {
+            NEMU_LOG_ERROR("CPU", "Undefined instruction 0x{:08X} at PC 0x{:016X} (#{})",
+                           raw_inst, state_.pc, total);
+        } else if (total == kUndefLogHeadroom + 1) {
+            NEMU_LOG_ERROR("CPU",
+                           "Guest repeatedly executes undefined opcodes (throttling logs, now "
+                           "every {}th). Same instruction was 0x{:08X} at PC 0x{:016X}.",
+                           kUndefLogInterval, raw_inst, state_.pc);
+        } else if (total % kUndefLogInterval == 0) {
+            NEMU_LOG_ERROR("CPU", "Undefined instruction #{} at PC 0x{:016X}", total, state_.pc);
+        }
         return StepResult::UndefinedInstruction;
     }
 
