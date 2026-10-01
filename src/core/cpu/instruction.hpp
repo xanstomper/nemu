@@ -224,6 +224,11 @@ struct DecodedInstruction {
     double fp_imm{0.0}; // Floating-point immediate
     u8 shift_type{0}; // 0: LSL, 1: LSR, 2: ASR, 3: ROR
     u8 shift_amount{0};
+    // Extended-register operand (ADD/SUB/AND/ORR/EOR "extended register" form,
+    // ARM ARM `option` field bits [15:13]). 0xFF means the operand is a plain
+    // shifted register and `shift_type`/`shift_amount` apply instead.
+    // 0:UXTB 1:UXTH 2:UXTW 3:UXTX 4:SXTB 5:SXTH 6:SXTW 7:SXTX/LSL
+    u8 extend_op{0xFF};
 
     // Vector specifics
     u8 vec_size{0};  // 0: 8B, 1: 16B, 2: 4H, 3: 8H, 4: 2S, 5: 4S, 6: 2D

@@ -13,6 +13,25 @@ Interpreter::Interpreter(CpuState& state, memory::IMemory& memory)
 Interpreter::Interpreter(CpuState& state, memory::IMemory* memory)
     : state_(state), memory_(memory) {}
 
+u64 Interpreter::ApplyExtend(u64 value, u8 extend_op, u8 amount) {
+    // ARM ARM "extended register" operand: narrow/sign-extend the source
+    // register, then shift left by the 3-bit imm3. This is what powers the
+    // extremely common `add x, x, w, uxtw #N` / `uxtb` / `uxth` /
+    // `sxtw` / bare `lsl #N` idioms that compilers emit everywhere.
+    u64 ext = 0;
+    switch (extend_op & 0x7) {
+        case 0: ext = static_cast<u64>(static_cast<u8>(value));  break;  // UXTB
+        case 1: ext = static_cast<u64>(static_cast<u16>(value)); break;  // UXTH
+        case 2: ext = static_cast<u64>(static_cast<u32>(value)); break;  // UXTW
+        case 3: ext = value;                                        break;  // UXTX
+        case 4: ext = static_cast<u64>(static_cast<s64>(static_cast<s8>(value)));   break; // SXTB
+        case 5: ext = static_cast<u64>(static_cast<s64>(static_cast<s16>(value)));  break; // SXTH
+        case 6: ext = static_cast<u64>(static_cast<s64>(static_cast<s32>(value)));  break; // SXTW
+        default: ext = value;                                       break;  // SXTX
+    }
+    return amount >= 64 ? 0 : (ext << amount);
+}
+
 u64 Interpreter::ApplyShift(u64 value, u8 shift_type, u8 amount, bool is_64bit) {
     const u32 max_bits = is_64bit ? 64 : 32;
     if (amount == 0) return value;
@@ -166,8 +185,10 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         }
 
         case Opcode::ADD_reg: {
-            const u64 rm = ApplyShift(inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm),
-                                      inst.shift_type, inst.shift_amount, inst.is_64bit);
+            const u64 rm_raw = inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm);
+            const u64 rm = (inst.extend_op != 0xFF)
+                ? ApplyExtend(rm_raw, inst.extend_op, inst.shift_amount)
+                : ApplyShift(rm_raw, inst.shift_type, inst.shift_amount, inst.is_64bit);
             if (inst.is_64bit) {
                 const u64 rn = state_.GetRegOrSP(inst.rn);
                 state_.SetRegOrSP(inst.rd, rn + rm);
@@ -179,8 +200,10 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         }
 
         case Opcode::ADDS_reg: {
-            const u64 rm = ApplyShift(inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm),
-                                      inst.shift_type, inst.shift_amount, inst.is_64bit);
+            const u64 rm_raw = inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm);
+            const u64 rm = (inst.extend_op != 0xFF)
+                ? ApplyExtend(rm_raw, inst.extend_op, inst.shift_amount)
+                : ApplyShift(rm_raw, inst.shift_type, inst.shift_amount, inst.is_64bit);
             if (inst.is_64bit) {
                 const u64 rn = state_.GetRegOrSP(inst.rn);
                 const u64 res = rn + rm;
@@ -197,8 +220,10 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         }
 
         case Opcode::SUB_reg: {
-            const u64 rm = ApplyShift(inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm),
-                                      inst.shift_type, inst.shift_amount, inst.is_64bit);
+            const u64 rm_raw = inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm);
+            const u64 rm = (inst.extend_op != 0xFF)
+                ? ApplyExtend(rm_raw, inst.extend_op, inst.shift_amount)
+                : ApplyShift(rm_raw, inst.shift_type, inst.shift_amount, inst.is_64bit);
             if (inst.is_64bit) {
                 const u64 rn = state_.GetRegOrSP(inst.rn);
                 state_.SetRegOrSP(inst.rd, rn - rm);
@@ -210,8 +235,10 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         }
 
         case Opcode::SUBS_reg: {
-            const u64 rm = ApplyShift(inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm),
-                                      inst.shift_type, inst.shift_amount, inst.is_64bit);
+            const u64 rm_raw = inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm);
+            const u64 rm = (inst.extend_op != 0xFF)
+                ? ApplyExtend(rm_raw, inst.extend_op, inst.shift_amount)
+                : ApplyShift(rm_raw, inst.shift_type, inst.shift_amount, inst.is_64bit);
             if (inst.is_64bit) {
                 const u64 rn = state_.GetRegOrSP(inst.rn);
                 const u64 res = rn - rm;
@@ -261,8 +288,10 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         }
 
         case Opcode::AND_reg: {
-            const u64 rm = ApplyShift(inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm),
-                                      inst.shift_type, inst.shift_amount, inst.is_64bit);
+            const u64 rm_raw = inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm);
+            const u64 rm = (inst.extend_op != 0xFF)
+                ? ApplyExtend(rm_raw, inst.extend_op, inst.shift_amount)
+                : ApplyShift(rm_raw, inst.shift_type, inst.shift_amount, inst.is_64bit);
             if (inst.is_64bit) {
                 state_.SetX(inst.rd, state_.GetX(inst.rn) & rm);
             } else {
@@ -272,8 +301,10 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         }
 
         case Opcode::ANDS_reg: {
-            const u64 rm = ApplyShift(inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm),
-                                      inst.shift_type, inst.shift_amount, inst.is_64bit);
+            const u64 rm_raw = inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm);
+            const u64 rm = (inst.extend_op != 0xFF)
+                ? ApplyExtend(rm_raw, inst.extend_op, inst.shift_amount)
+                : ApplyShift(rm_raw, inst.shift_type, inst.shift_amount, inst.is_64bit);
             if (inst.is_64bit) {
                 const u64 res = state_.GetX(inst.rn) & rm;
                 state_.SetNZ_Logical64(res);
@@ -287,8 +318,10 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         }
 
         case Opcode::ORR_reg: {
-            const u64 rm = ApplyShift(inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm),
-                                      inst.shift_type, inst.shift_amount, inst.is_64bit);
+            const u64 rm_raw = inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm);
+            const u64 rm = (inst.extend_op != 0xFF)
+                ? ApplyExtend(rm_raw, inst.extend_op, inst.shift_amount)
+                : ApplyShift(rm_raw, inst.shift_type, inst.shift_amount, inst.is_64bit);
             if (inst.is_64bit) {
                 state_.SetX(inst.rd, state_.GetX(inst.rn) | rm);
             } else {
@@ -298,8 +331,10 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         }
 
         case Opcode::ORN_reg: {
-            const u64 rm = ApplyShift(inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm),
-                                      inst.shift_type, inst.shift_amount, inst.is_64bit);
+            const u64 rm_raw = inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm);
+            const u64 rm = (inst.extend_op != 0xFF)
+                ? ApplyExtend(rm_raw, inst.extend_op, inst.shift_amount)
+                : ApplyShift(rm_raw, inst.shift_type, inst.shift_amount, inst.is_64bit);
             if (inst.is_64bit) {
                 state_.SetX(inst.rd, state_.GetX(inst.rn) | ~rm);
             } else {
@@ -309,8 +344,10 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         }
 
         case Opcode::EOR_reg: {
-            const u64 rm = ApplyShift(inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm),
-                                      inst.shift_type, inst.shift_amount, inst.is_64bit);
+            const u64 rm_raw = inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm);
+            const u64 rm = (inst.extend_op != 0xFF)
+                ? ApplyExtend(rm_raw, inst.extend_op, inst.shift_amount)
+                : ApplyShift(rm_raw, inst.shift_type, inst.shift_amount, inst.is_64bit);
             if (inst.is_64bit) {
                 state_.SetX(inst.rd, state_.GetX(inst.rn) ^ rm);
             } else {
@@ -358,8 +395,10 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         }
 
         case Opcode::BIC_reg: {
-            const u64 rm = ApplyShift(inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm),
-                                      inst.shift_type, inst.shift_amount, inst.is_64bit);
+            const u64 rm_raw = inst.is_64bit ? state_.GetX(inst.rm) : state_.GetW(inst.rm);
+            const u64 rm = (inst.extend_op != 0xFF)
+                ? ApplyExtend(rm_raw, inst.extend_op, inst.shift_amount)
+                : ApplyShift(rm_raw, inst.shift_type, inst.shift_amount, inst.is_64bit);
             if (inst.is_64bit) {
                 state_.SetX(inst.rd, state_.GetX(inst.rn) & ~rm);
             } else {

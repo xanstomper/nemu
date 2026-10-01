@@ -480,6 +480,22 @@ DecodedInstruction Decoder::DecodeDataProcReg(u32 raw) noexcept {
     inst.rn = static_cast<u8>(ExtractBits(raw, 5, 5));
     inst.rm = static_cast<u8>(ExtractBits(raw, 16, 5));
 
+    // Logical (extended register): AND/BIC/ORR/ORN/EOR/EON/ANDS/BICS with a
+    // UXTB..SXTX-extended source. Same shape as add/sub extended, but opcode is
+    // bits[30:29] and there is no inverted-op bit (N is not encoded).
+    if ((raw & 0x1F200000) == 0x0A200000) {
+        const u32 opc = ExtractBits(raw, 29, 2);
+        inst.extend_op = static_cast<u8>(ExtractBits(raw, 13, 3));
+        inst.shift_amount = static_cast<u8>(ExtractBits(raw, 10, 3));
+
+        if (opc == 0b00) inst.opcode = Opcode::AND_reg;
+        else if (opc == 0b01) inst.opcode = Opcode::ORR_reg;
+        else if (opc == 0b10) inst.opcode = Opcode::EOR_reg;
+        else inst.opcode = Opcode::ANDS_reg;
+
+        return inst;
+    }
+
     // Logical (shifted register): AND, BIC, ORR, ORN, EOR, EON, ANDS, BICS
     // [sf:1] [opc:2] 01010 [shift:2] [N:1] [Rm:5] [imm6] [Rn:5] [Rd:5]
     if ((raw & 0x1F000000) == 0x0A000000) {
@@ -492,6 +508,27 @@ DecodedInstruction Decoder::DecodeDataProcReg(u32 raw) noexcept {
         else if (opc == 0b01) inst.opcode = n ? Opcode::ORN_reg : Opcode::ORR_reg;
         else if (opc == 0b10) inst.opcode = n ? Opcode::EON_reg : Opcode::EOR_reg;
         else if (opc == 0b11) inst.opcode = n ? Opcode::BICS_reg : Opcode::ANDS_reg;
+
+        return inst;
+    }
+
+    // Add/subtract (extended register): ADD, ADDS, SUB, SUBS with a
+    // UXTB/UXTH/UXTW/UXTX/SXTB/SXTH/SXTW/LSL-extended source operand.
+    // [sf:1] [op:1] [S:1] 01011 [00] [1] [Rm:5] [option:3] [imm3:3] [Rn:5] [Rd:5]
+    // This is a separate encoding from the shifted-register form above (it sets
+    // bit 21) and is one of the most common idioms in compiler output, e.g.
+    // `add x9, x19, w8, uxth #2` (raw 0x8B282A69). It used to fall through to an
+    // undefined encoding, which is how Terraria's sdk heap-bucket walk died.
+    if ((raw & 0x1F200000) == 0x0B200000) {
+        const bool op = ExtractBit(raw, 30);
+        const bool set_flags = ExtractBit(raw, 29);
+        inst.extend_op = static_cast<u8>(ExtractBits(raw, 13, 3));
+        inst.shift_amount = static_cast<u8>(ExtractBits(raw, 10, 3));
+
+        if (!op && !set_flags) inst.opcode = Opcode::ADD_reg;
+        else if (!op && set_flags) inst.opcode = Opcode::ADDS_reg;
+        else if (op && !set_flags) inst.opcode = Opcode::SUB_reg;
+        else inst.opcode = Opcode::SUBS_reg;
 
         return inst;
     }

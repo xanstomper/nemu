@@ -39,6 +39,10 @@ private:
 
     // Helpers
     static u64 ApplyShift(u64 value, u8 shift_type, u8 amount, bool is_64bit);
+    /// ARM ARM "extended register" operand (UXTB/UXTH/UXTW/UXTX/SXTB/SXTH/
+    /// SXTW/SXTX then LSL #imm3) used by the ADD/SUB/AND/ORR/EOR extended
+    /// register encodings.
+    static u64 ApplyExtend(u64 value, u8 extend_op, u8 amount);
 };
 
 } // namespace nemu::core::cpu
