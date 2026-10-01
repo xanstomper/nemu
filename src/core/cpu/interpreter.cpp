@@ -1160,7 +1160,12 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         }
 
         case Opcode::LDP_fp: {
-            const vaddr_t base = state_.GetRegOrSP(inst.rn) + inst.imm;
+            const u64 orig = state_.GetRegOrSP(inst.rn);
+            if (inst.addr_mode == AddressingMode::PreIndexed) {
+                state_.SetRegOrSP(inst.rn, orig + inst.imm);
+            }
+            const vaddr_t base = (inst.addr_mode == AddressingMode::PostIndexed)
+                ? orig : orig + inst.imm;
             if (inst.is_fp_double) {
                 state_.v[inst.rd].low = memory_->Read64(base);
                 state_.v[inst.rd].high = 0;
@@ -1172,17 +1177,28 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
                 state_.v[inst.rt2].low = memory_->Read32(base + 4);
                 state_.v[inst.rt2].high = 0;
             }
+            if (inst.addr_mode == AddressingMode::PostIndexed) {
+                state_.SetRegOrSP(inst.rn, orig + inst.imm);
+            }
             break;
         }
 
         case Opcode::STP_fp: {
-            const vaddr_t base = state_.GetRegOrSP(inst.rn) + inst.imm;
+            const u64 orig = state_.GetRegOrSP(inst.rn);
+            if (inst.addr_mode == AddressingMode::PreIndexed) {
+                state_.SetRegOrSP(inst.rn, orig + inst.imm);
+            }
+            const vaddr_t base = (inst.addr_mode == AddressingMode::PostIndexed)
+                ? orig : orig + inst.imm;
             if (inst.is_fp_double) {
                 memory_->Write64(base, state_.v[inst.rd].low);
                 memory_->Write64(base + 8, state_.v[inst.rt2].low);
             } else {
                 memory_->Write32(base, static_cast<u32>(state_.v[inst.rd].low));
                 memory_->Write32(base + 4, static_cast<u32>(state_.v[inst.rt2].low));
+            }
+            if (inst.addr_mode == AddressingMode::PostIndexed) {
+                state_.SetRegOrSP(inst.rn, orig + inst.imm);
             }
             break;
         }

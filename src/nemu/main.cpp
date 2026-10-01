@@ -261,15 +261,17 @@ static int MainInternal(int argc, char** argv) {
                   << " -> " << verdict
                   << std::endl;
 
-        if (!booted) {
+        if (!booted || mem_fault_count > 0) {
             NEMU_LOG_ERROR("BootProbe",
-                           "Boot FAILED: {} (frames={}, instructions={}, memory_faults={}). "
+                           "Boot %s: %s (frames={}, instructions={}, memory_faults={}). "
                            "See the first CPU/Memory ERROR above for the real blocker.",
+                           booted ? "DEGRADED" : "FAILED",
                            verdict, frames, instrs, mem_fault_count);
 
-            // Dump the recent PC history so the failure can be post-mortem'd
-            // without re-running under a debugger. Newest first, with adjacent
-            // duplicates collapsed so a spin reads as one entry.
+            // Dump the recent PC history so a failure (or a degraded boot whose
+            // guest is faulting in a loop) can be post-mortem'd without re-running
+            // under a debugger. Newest first, with adjacent duplicates collapsed
+            // so a spin reads as one entry.
             const auto trace = emulator.GetBootTrace();
             if (!trace.empty()) {
                 std::string line;

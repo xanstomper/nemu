@@ -723,6 +723,18 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
         const u32 imm7 = ExtractBits(raw, 15, 7);
         const s64 scale = inst.is_fp_double ? 8 : 4;
         inst.imm = static_cast<u64>(SignExtend(static_cast<s64>(imm7), 7) * scale);
+
+        // Same LDST_PAIR_* addressing mode as the integer pair form, bits
+        // [24:23]: 01 post-index, 11 pre-index. This is the SIMD&FP twin of the
+        // integer LDP/STP writeback fix; without it `stp q0, q0, [x12, #-0x40]`
+        // (the prologue of every vector stack-zero loop compilers emit) leaves
+        // the base register untouched and the frame never descends.
+        switch ((raw >> 23) & 0x3) {
+            case 0b01: inst.addr_mode = AddressingMode::PostIndexed; break;
+            case 0b11: inst.addr_mode = AddressingMode::PreIndexed;  break;
+            default:   inst.addr_mode = AddressingMode::UnsignedOffset; break;
+        }
+
         inst.opcode = is_load ? Opcode::LDP_fp : Opcode::STP_fp;
         return inst;
     }
