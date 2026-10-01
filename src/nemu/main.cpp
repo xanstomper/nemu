@@ -208,6 +208,9 @@ static int MainInternal(int argc, char** argv) {
     // console over Device Portal / SSH-style invocation).
     if (!run_boot_path.empty()) {
         NEMU_LOG_INFO("BootProbe", "Headless run probe: '{}'", run_boot_path);
+        if (emulator.GetGuestThreadPool()) {
+            emulator.GetGuestThreadPool()->SetTraceEnabled(true);
+        }
         if (!emulator.LoadTitle(run_boot_path)) {
             NEMU_LOG_ERROR("BootProbe", "FAILED: could not load title '{}'", run_boot_path);
             return 2;
@@ -263,6 +266,26 @@ static int MainInternal(int argc, char** argv) {
                            "Boot FAILED: {} (frames={}, instructions={}, memory_faults={}). "
                            "See the first CPU/Memory ERROR above for the real blocker.",
                            verdict, frames, instrs, mem_fault_count);
+
+            // Dump the recent PC history so the failure can be post-mortem'd
+            // without re-running under a debugger. Newest first, with adjacent
+            // duplicates collapsed so a spin reads as one entry.
+            const auto trace = emulator.GetBootTrace();
+            if (!trace.empty()) {
+                std::string line;
+                vaddr_t prev = ~0ULL;
+                for (vaddr_t pc : trace) {
+                    if (pc == prev) continue;
+                    prev = pc;
+                    char buf[32];
+                    std::snprintf(buf, sizeof(buf), "%016llX",
+                                  static_cast<unsigned long long>(pc));
+                    line += buf;
+                    line += ' ';
+                    if (line.size() > 8000) break;
+                }
+                NEMU_LOG_ERROR("BootProbe", "Recent guest PCs (newest first): {}", line);
+            }
         }
         NEMU_LOG_INFO("BootProbe", "Headless run complete: {} frame(s)", frames);
         // Distinct exit codes so CI can gate on a real boot: 0 = booted,

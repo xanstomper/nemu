@@ -705,6 +705,24 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
         const u32 imm7 = ExtractBits(raw, 15, 7);
         const s64 scale = inst.is_64bit ? 8 : 4;
         inst.imm = static_cast<u64>(SignExtend(static_cast<s64>(imm7), 7) * scale);
+
+        // Load/store-pair addressing mode lives in bits [24:23] (ARM ARM
+        // LDST_PAIR_*): 00 non-allocate, 01 post-index, 10 signed offset,
+        // 11 pre-index. Only 01 and 11 write the base register back.
+        //
+        // These are NOT optional: `stp x29, x30, [sp, #-N]!` is the standard
+        // AArch64 function prologue, and `ldp x29, x30, [sp], #N` the matching
+        // epilogue. Dropping the writeback leaves SP parked on the *caller's*
+        // frame, so the callee's locals alias the caller's saved X29/X30 and any
+        // nested call overwrites them -- the function then returns to garbage.
+        // Terraria's `main` alone contains 29,599 such pre-indexed pairs, which
+        // is why its constructor chain returned through a zeroed X30.
+        switch ((raw >> 23) & 0x3) {
+            case 0b01: inst.addr_mode = AddressingMode::PostIndexed; break;
+            case 0b11: inst.addr_mode = AddressingMode::PreIndexed;  break;
+            default:   inst.addr_mode = AddressingMode::UnsignedOffset; break;
+        }
+
         inst.opcode = is_load ? Opcode::LDP : Opcode::STP;
         return inst;
     }

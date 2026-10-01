@@ -68,7 +68,19 @@ public:
         return stalled_on_fault_.load(std::memory_order_relaxed);
     }
 
+    /// Enable recording of the last N guest PCs so a boot failure can be
+    /// post-mortem'd. Off by default: the ring write is a single store, but the
+    /// feature is opt-in so shipping builds pay nothing.
+    void SetTraceEnabled(bool enabled) noexcept {
+        trace_enabled_.store(enabled, std::memory_order_relaxed);
+    }
+
+    /// Most-recent-first snapshot of the PC ring (newest at index 0).
+    [[nodiscard]] std::vector<vaddr_t> GetTraceSnapshot() const;
+    void ClearTrace() noexcept;
+
 private:
+    void TracePush(vaddr_t pc) noexcept;
     /// Run up to `budget` instructions for `thread` on this core, counting
     /// consecutive CPU faults. A fault (undefined opcode / bad fetch) leaves PC
     /// untouched, so re-stepping the same PC spins forever; after
@@ -92,7 +104,16 @@ private:
     std::array<std::atomic<u64>, NUM_GUEST_CORES> core_instructions_{};
     std::array<std::atomic<bool>, NUM_GUEST_CORES> core_busy_{};
 
-    std::mutex queue_mutex_;
+    // Ring of recently executed guest PCs for post-mortem boot traces.
+    // Large enough to span a whole call chain even when the tail of the trace is
+    // dominated by a tight loop (Terraria's 8-instruction constructor-copy loop
+    // alone churns thousands of entries before the failing `RET`).
+    static constexpr size_t TRACE_CAPACITY = 16384;
+    std::array<std::atomic<vaddr_t>, TRACE_CAPACITY> trace_pcs_{};
+    std::atomic<size_t> trace_head_{0};
+    std::atomic<bool> trace_enabled_{false};
+
+    mutable std::mutex queue_mutex_;
     std::condition_variable cv_pause_;
 };
 

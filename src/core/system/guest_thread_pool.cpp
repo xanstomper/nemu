@@ -110,6 +110,31 @@ std::shared_ptr<kernel::KThread> GuestThreadPool::SelectNextThread(u32 core_id) 
     return best_thread;
 }
 
+void GuestThreadPool::TracePush(vaddr_t pc) noexcept {
+    if (!trace_enabled_.load(std::memory_order_relaxed)) {
+        return;
+    }
+    const size_t head = trace_head_.fetch_add(1, std::memory_order_relaxed);
+    trace_pcs_[head % TRACE_CAPACITY].store(pc, std::memory_order_relaxed);
+}
+
+std::vector<vaddr_t> GuestThreadPool::GetTraceSnapshot() const {
+    const size_t head = trace_head_.load(std::memory_order_relaxed);
+    const size_t n = std::min<size_t>(head, TRACE_CAPACITY);
+    std::vector<vaddr_t> out;
+    out.reserve(n);
+    // Newest first.
+    for (size_t i = 0; i < n; ++i) {
+        const size_t idx = (head - 1 - i);
+        out.push_back(trace_pcs_[idx % TRACE_CAPACITY].load(std::memory_order_relaxed));
+    }
+    return out;
+}
+
+void GuestThreadPool::ClearTrace() noexcept {
+    trace_head_.store(0, std::memory_order_relaxed);
+}
+
 size_t GuestThreadPool::RunQuantum(kernel::KThread& thread, size_t budget, vaddr_t exit_addr) {
     // Consecutive CPU faults at one PC. A fault leaves PC untouched, so
     // re-stepping it spins; past this many in a row the thread is genuinely
@@ -150,6 +175,10 @@ size_t GuestThreadPool::RunQuantum(kernel::KThread& thread, size_t budget, vaddr
             }
             step_res = interp.Step();
         }
+
+        // Record where the guest actually was, so a boot failure can be
+        // post-mortem'd without re-running under a debugger.
+        TracePush(cpu.pc);
 
         if (step_res == cpu::StepResult::Halted) {
             thread.SetState(kernel::ThreadState::Terminated);

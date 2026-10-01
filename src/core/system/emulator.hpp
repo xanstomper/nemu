@@ -126,6 +126,13 @@ public:
     [[nodiscard]] const cpu::jit::JitCompiler* GetJitCompiler() const noexcept { return jit_.get(); }
     [[nodiscard]] const std::shared_ptr<GuestThreadPool>& GetGuestThreadPool() const noexcept { return thread_pool_; }
 
+    /// Recent guest PCs, newest first. Populated only when
+    /// GuestThreadPool::SetTraceEnabled(true) was called; empty otherwise.
+    [[nodiscard]] std::vector<vaddr_t> GetBootTrace() const {
+        return thread_pool_ ? thread_pool_->GetTraceSnapshot()
+                            : std::vector<vaddr_t>{};
+    }
+
     /// Apply the persisted runtime config to live subsystems (HID layout,
     /// deadzones, vibration, audio). Called at boot and whenever the UI
     /// changes a setting so everything the Switch UI shows is what runs.

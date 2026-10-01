@@ -731,7 +731,16 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         }
 
         case Opcode::LDP: {
-            const vaddr_t base = state_.GetRegOrSP(inst.rn) + inst.imm;
+            // Pre-index: write back the base BEFORE the access, then access at the
+            // updated base. Post-index: access at the original base, then write
+            // back. Plain offset: no writeback.
+            const u64 orig = state_.GetRegOrSP(inst.rn);
+            if (inst.addr_mode == AddressingMode::PreIndexed &&
+                inst.rn != inst.rd && inst.rn != inst.rt2) {
+                state_.SetRegOrSP(inst.rn, orig + inst.imm);
+            }
+            const vaddr_t base = (inst.addr_mode == AddressingMode::PostIndexed)
+                ? orig : orig + inst.imm;
             if (inst.is_64bit) {
                 state_.SetX(inst.rd, memory_->Read64(base));
                 state_.SetX(inst.rt2, memory_->Read64(base + 8));
@@ -739,17 +748,28 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
                 state_.SetW(inst.rd, memory_->Read32(base));
                 state_.SetW(inst.rt2, memory_->Read32(base + 4));
             }
+            if (inst.addr_mode == AddressingMode::PostIndexed) {
+                state_.SetRegOrSP(inst.rn, orig + inst.imm);
+            }
             break;
         }
 
         case Opcode::STP: {
-            const vaddr_t base = state_.GetRegOrSP(inst.rn) + inst.imm;
+            const u64 orig = state_.GetRegOrSP(inst.rn);
+            if (inst.addr_mode == AddressingMode::PreIndexed) {
+                state_.SetRegOrSP(inst.rn, orig + inst.imm);
+            }
+            const vaddr_t base = (inst.addr_mode == AddressingMode::PostIndexed)
+                ? orig : orig + inst.imm;
             if (inst.is_64bit) {
                 memory_->Write64(base, state_.GetX(inst.rd));
                 memory_->Write64(base + 8, state_.GetX(inst.rt2));
             } else {
                 memory_->Write32(base, state_.GetW(inst.rd));
                 memory_->Write32(base + 4, state_.GetW(inst.rt2));
+            }
+            if (inst.addr_mode == AddressingMode::PostIndexed) {
+                state_.SetRegOrSP(inst.rn, orig + inst.imm);
             }
             break;
         }
@@ -1760,8 +1780,11 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         static bool s_logged_low_branch = false;
         if (!s_logged_low_branch) {
             s_logged_low_branch = true;
-            NEMU_LOG_ERROR("CPU", "Low-branch: PC 0x{:016X} -> next 0x{:016X} (inst {:08X} {}, rn={} imm={:#x})",
-                           curr_pc, next_pc, inst.raw, inst.OpcodeName(), inst.rn, inst.imm);
+            NEMU_LOG_ERROR("CPU",
+                           "Low-branch: PC 0x{:016X} -> next 0x{:016X} (inst {:08X} {}, rn={} imm={:#x}) "
+                           "X30(LR)=0x{:016X} SP=0x{:016X}",
+                           curr_pc, next_pc, inst.raw, inst.OpcodeName(), inst.rn, inst.imm,
+                           state_.GetX(30), state_.sp);
         }
     }
 
