@@ -813,6 +813,62 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             break;
         }
 
+        // Load/store with a register offset: [Xn + Xm (LSL shift)].
+        // Terraria's main uses the 64/32-bit forms ~66,000 times and the
+        // sign-extending 8/16-bit forms ~16,000 times; all of them used to fall
+        // through to "Unhandled opcode".
+        case Opcode::LDR_reg: {
+            const u64 addr = state_.GetRegOrSP(inst.rn) + state_.GetX(inst.rm);
+            if (inst.is_64bit) {
+                state_.SetX(inst.rd, memory_->Read64(addr));
+            } else {
+                state_.SetW(inst.rd, memory_->Read32(addr));
+            }
+            break;
+        }
+
+        case Opcode::STR_reg: {
+            const u64 addr = state_.GetRegOrSP(inst.rn) + state_.GetX(inst.rm);
+            if (inst.is_64bit) {
+                memory_->Write64(addr, state_.GetX(inst.rd));
+            } else {
+                memory_->Write32(addr, state_.GetW(inst.rd));
+            }
+            break;
+        }
+
+        case Opcode::LDRSB_imm: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
+            state_.SetW(inst.rd, static_cast<u32>(
+                static_cast<s64>(static_cast<s8>(memory_->Read8(addr)))));
+            break;
+        }
+
+        case Opcode::LDRSH_imm: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
+            state_.SetW(inst.rd, static_cast<u32>(
+                static_cast<s64>(static_cast<s16>(memory_->Read16(addr)))));
+            break;
+        }
+
+        case Opcode::LDRSW_imm: {
+            const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
+            state_.SetX(inst.rd, static_cast<u64>(
+                static_cast<s64>(static_cast<s32>(memory_->Read32(addr)))));
+            break;
+        }
+
+        case Opcode::RORV: {
+            const u64 amount = state_.GetX(inst.rm) & (inst.is_64bit ? 63 : 31);
+            if (inst.is_64bit) {
+                state_.SetX(inst.rd, std::rotr(state_.GetX(inst.rn), amount));
+            } else {
+                state_.SetW(inst.rd, std::rotr(state_.GetW(inst.rn),
+                                                static_cast<u32>(amount)));
+            }
+            break;
+        }
+
         case Opcode::CSEL: {
             if (state_.CheckCondition(inst.condition)) {
                 if (inst.is_64bit) {

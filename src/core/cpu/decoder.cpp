@@ -783,6 +783,32 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
         return inst;
     }
 
+    // Load / Store Register (unsigned immediate): LDR/STR with a second base
+    // register (the compiler's "register plus offset" memory form).
+    // [size:2] 111 0 00 [opc:2] 1 [imm12] [Rn:5] [Rt:5]  -> 0x38/0x39 with bit 21
+    // The signed-offset (LDUR/STUR) sibling is handled by the 0x38000000 path
+    // below, but that mask's `typ` field forces typ=00, so the unsigned form
+    // (typ=01, e.g. `ldr x0, [x1, x2, lsl #3]` at 0xF8600800) was never decoded.
+    // Terraria's `main` alone contains ~66,000 of these.
+    if ((raw & 0x3B200000) == 0x38200000) {
+        const bool is_load = ExtractBit(raw, 22);
+        const u32 opc = ExtractBits(raw, 30, 2);
+        const u32 imm12 = ExtractBits(raw, 10, 12);
+        inst.imm = imm12 * 8;
+        if (size == 0b11) { // 64-bit
+            inst.is_64bit = true;
+            inst.opcode = is_load ? Opcode::LDR_reg : Opcode::STR_reg;
+        } else if (size == 0b10) { // 32-bit
+            inst.is_64bit = false;
+            inst.opcode = is_load ? Opcode::LDR_reg : Opcode::STR_reg;
+        } else if (size == 0b01) { // 16-bit, loads sign-extend
+            inst.opcode = is_load ? Opcode::LDRSH_imm : Opcode::STRH_imm;
+        } else { // 8-bit
+            inst.opcode = is_load ? Opcode::LDRSB_imm : Opcode::STRB_imm;
+        }
+        return inst;
+    }
+
     // Load / Store Register offset (signed 9-bit imm): STURB/LDURB, STURH/LDURH,
     // STUR/LDUR (incl. unprivileged, and pre/post-index writeback).
     // Encoding: size(2) V(0) 111000 opc(2) 0 typ(2) imm9(9) Rn(5) Rt(5) -> 0x38/0x78
