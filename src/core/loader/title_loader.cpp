@@ -7,6 +7,8 @@
 #include "ncz.hpp"
 #include "romfs.hpp"
 #include "core/cpu/title_compat.hpp"
+#include "core/cpu/interpreter.hpp"
+#include "core/kernel/svc.hpp"
 #include "platform/logger.hpp"
 #include <fstream>
 #include <cstring>
@@ -137,7 +139,9 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
                     .name = std::string(name_hint),
                     .base_address = loaded->base_address,
                     .entry_point = loaded->entry_point,
-                    .size = loaded->total_size
+                    .size = loaded->total_size,
+                    .exported_symbols = {},
+                    .image = {}
                 }
             }
         };
@@ -489,6 +493,98 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadFromMemory(
     return std::nullopt;
 }
 
+namespace {
+
+// Extract (init_array, count) from a module image's .dynamic.
+bool FindInitArray(const std::vector<u8>& img, u64& init_array, u64& init_arraysz) {
+    if (img.size() < 0x20) return false;
+    size_t mod0 = std::string_view::npos;
+    for (size_t i = 0; i + 4 <= img.size(); i += 4) {
+        u32 magic = 0;
+        std::memcpy(&magic, img.data() + i, 4);
+        if (magic == 0x30444F4D) { mod0 = i; break; }
+    }
+    if (mod0 == std::string_view::npos) return false;
+    s32 dyn_rel = 0;
+    std::memcpy(&dyn_rel, img.data() + mod0 + 4, sizeof(s32));
+    size_t p = mod0 + static_cast<size_t>(dyn_rel);
+    while (p + 16 <= img.size()) {
+        s64 t = 0; u64 v = 0;
+        std::memcpy(&t, img.data() + p, 8);
+        std::memcpy(&v, img.data() + p + 8, 8);
+        p += 16;
+        if (t == 0) break;
+        if (t == 25) init_array = v;
+        else if (t == 27) init_arraysz = v;
+    }
+    return init_array != 0 && init_arraysz != 0;
+}
+
+} // namespace
+
+void TitleLoader::RunModuleInitArrays(
+    memory::VirtualMemory& vm,
+    const std::vector<LoadedModuleInfo>& modules,
+    const std::function<void(cpu::CpuState&, u32)>& svc_dispatch
+) {
+    constexpr vaddr_t kInitReturnSentinel = 0x000000001CE11000ULL;
+    constexpr vaddr_t kInitStackTop = 0x000000006FF00000ULL;
+    constexpr size_t kInitStackSize = 0x40000;
+    if (!vm.IsValidAddress(kInitStackTop - 0x1000, 0x1000)) {
+        vm.Map(kInitStackTop - kInitStackSize, kInitStackSize,
+               memory::MemoryPermission::ReadWrite);
+    }
+
+    constexpr u64 kPerFunctionBudget = 5'000'000;
+    size_t total_run = 0, total_failed = 0;
+
+    for (const auto& m : modules) {
+        if (m.image.empty()) continue;
+        u64 init_array = 0, init_arraysz = 0;
+        if (!FindInitArray(m.image, init_array, init_arraysz)) continue;
+        const size_t count = static_cast<size_t>(init_arraysz / 8);
+        NEMU_LOG_INFO("Loader", "Module '{}' init_array: {} entries at +{:#x}",
+                      m.name, count, init_array);
+
+        for (size_t i = 0; i < count; ++i) {
+            const size_t slot = static_cast<size_t>(init_array) + i * 8;
+            if (slot + 8 > m.image.size()) break;
+            u64 fn_rel = 0;
+            std::memcpy(&fn_rel, m.image.data() + slot, 8);
+            if (fn_rel == 0) continue;
+            vaddr_t fn = m.base_address + fn_rel;
+            const u64 in_guest = vm.IsValidAddress(m.base_address + slot, 8)
+                               ? vm.Read64(m.base_address + slot) : 0;
+            if (in_guest != 0 && in_guest != fn_rel) fn = in_guest;
+            if (!vm.IsValidAddress(fn, 4)) continue;
+
+            cpu::CpuState cpu;
+            cpu.pc = fn;
+            cpu.sp = kInitStackTop;
+            cpu.SetX(0, m.base_address);
+            cpu.SetX(30, kInitReturnSentinel);
+            cpu::Interpreter interp(cpu, vm);
+            if (svc_dispatch) {
+                interp.SetSvcHandler(svc_dispatch);
+            }
+            bool ok = true;
+            u64 fault_streak = 0;
+            for (u64 s = 0; s < kPerFunctionBudget; ++s) {
+                if (cpu.pc == kInitReturnSentinel || cpu.halted) break;
+                const auto res = interp.Step();
+                if (res == cpu::StepResult::MemoryFault ||
+                    res == cpu::StepResult::UndefinedInstruction) {
+                    if (++fault_streak > 64) { ok = false; break; } // runaway, abort
+                } else {
+                    fault_streak = 0;
+                }
+            }
+            if (ok) ++total_run; else ++total_failed;
+        }
+    }
+    NEMU_LOG_INFO("Loader", "Module init_array execution: {} ok, {} faulted", total_run, total_failed);
+}
+
 std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
     const Pfs0Archive& exefs,
     memory::VirtualMemory& vm,
@@ -636,6 +732,15 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
             NEMU_LOG_INFO("Loader", "Linked {} symbols across {} modules", global_symbols.size(), loaded_modules.size());
         }
     }
+
+    // Run each module's .init_array (DT_INIT_ARRAY / DT_INIT_ARRAYSZ) in load
+    // order, exactly like the real rtld does before transferring control to
+    // the primary entry. Commercial SDK modules register their allocators,
+    // service globals, and C++ static constructors here; skipping this leaves
+    // nn::os allocator callbacks null so every operator new returns null and
+    // the guest collapses to a PC=0 spin (verified on Terraria).
+    // NOTE: executed by the Emulator (RunModuleInitArrays) after this returns,
+    // where the process/thread/SVC dispatch exist.
 
     size_t total_size = static_cast<size_t>(curr_base - base_address);
 

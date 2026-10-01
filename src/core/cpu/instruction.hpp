@@ -55,6 +55,7 @@ enum class Opcode : u16 {
     B,
     B_cond,
     BL,
+    BR,
     BLR,
     RET,
     CBZ,
@@ -86,6 +87,9 @@ enum class Opcode : u16 {
 
     // Conditional Select
     CSEL,
+    CSINC,
+    CSINV,
+    CSNEG,
 
     // Scalar Floating-Point
     FADD_scalar,

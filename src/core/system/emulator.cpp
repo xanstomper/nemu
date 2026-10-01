@@ -325,6 +325,20 @@ bool Emulator::LoadTitle(const std::string& path) {
     if (!loaded->title_name.empty()) {
         process_->SetName(loaded->title_name);
     }
+
+    // Run every module's .init_array with real SVC dispatch, exactly as the
+    // real rtld does before jumping to the primary entry. Without this the
+    // SDK allocator/service globals never register (operator new returns
+    // null; the guest collapses to a PC=0 spin on Terraria).
+    if (!loaded->is_nro && !loaded->modules.empty()) {
+        auto init_thread = std::make_shared<kernel::KThread>(
+            99, process_, 44, 0, 0, kernel::KProcess::DEFAULT_TLS_BASE);
+        title_loader_->RunModuleInitArrays(
+            process_->GetVirtualMemory(), loaded->modules,
+            [this, &init_thread](cpu::CpuState& s, u32 svc) {
+                kernel::SvcDispatcher::Dispatch(s, *process_, *init_thread, svc);
+            });
+    }
     if (loaded->title_id != 0) {
         process_->SetTitleId(loaded->title_id);
     }
@@ -379,10 +393,26 @@ bool Emulator::LoadTitle(const std::string& path) {
     main_thread_->SetState(kernel::ThreadState::Ready);
     process_->AddThread(main_thread_);
 
+    // Register the main thread in the process handle table so thread-control
+    // SVCs (and libnx, which reads the handle from TLS+0x110) can resolve it.
+    const auto thread_handle = process_->GetHandleTable().CreateHandle(main_thread_);
+
+    // Match the real Switch / libnx entry convention (yuzu/Eden k_process.cpp):
+    //   NSO/kernel entry: x0 = 0, x1 = main_thread_handle, lr (x30) = 0.
+    // libnx switch_crt0.s tests `x0 == 0` to take the normal init path, then
+    // derives its thread handle from [TLS + 0x110]. NEMU previously left x1 = 0
+    // and omitted the TLS handle, so thread-control SVCs failed and TerTara's
+    // crt0 init bailed out with an early RET. Passing the real handle and
+    // writing it into the TLS lets the app's init proceed.
     cpu::CpuState& cpu = main_thread_->GetCpuState();
     cpu.SetX(0, 0);
-    cpu.SetX(1, is_nro_ ? ~0ULL : 0);
-    cpu.SetX(30, EXIT_ADDR);
+    cpu.SetX(1, is_nro_ ? ~0ULL : static_cast<u64>(thread_handle));
+    // X30 (LR) = 0 for the true NSO entry, exactly as the real OS starts the
+    // initial thread; the game's _start establishes its own return chain.
+    cpu.SetX(30, is_nro_ ? EXIT_ADDR : 0);
+    // Write the thread handle into the thread-local region (libnx reads it at
+    // TLS + 0x110). This is what yuzu/Eden does to hand the handle to crt0.
+    process_->GetVirtualMemory().Write32(TLS_ADDR + 0x110, thread_handle);
 
     // Render initial boot clear frame
     if (gpu_backend_) {

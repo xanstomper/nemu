@@ -65,7 +65,7 @@ static int MainInternal(int argc, char** argv) {
     // to on the console) still writes a pinpointing report to LOCAL:/crash/.
     debug::CrashHandler::Install(debug::CrashHandler::kDefaultCrashDir);
 
-    platform::Logger::Instance().SetMinLevel(platform::LogLevel::Info);
+    platform::Logger::Instance().SetMinLevel(platform::LogLevel::Trace);
     std::signal(SIGINT, SignalHandler);
     std::signal(SIGTERM, SignalHandler);
 

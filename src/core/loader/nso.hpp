@@ -8,6 +8,7 @@
 #include <vector>
 #include <optional>
 #include <array>
+#include <unordered_map>
 
 namespace nemu::core::filesystem {
 class VirtualFileSystem;
@@ -48,6 +49,15 @@ struct NsoLoadedImage {
     vaddr_t base_address{0};
     vaddr_t entry_point{0};
     size_t total_size{0};
+
+    /// Exported dynamic symbols (name -> module-relative value) for
+    /// cross-module import resolution. Populated during Load.
+    std::unordered_map<std::string, u64> exported_symbols;
+
+    /// The flat module image (text+rodata+data at memory_offsets). Retained so
+    /// the caller can resolve cross-module symbol imports after all modules are
+    /// placed.
+    std::vector<u8> image;
 };
 
 class NsoLoader {
@@ -75,12 +85,32 @@ public:
     /// Decompress standard LZ4 block
     static bool DecompressLZ4(std::span<const u8> src, std::span<u8> dst);
 
-    /// Parse ELF dynamic section (MOD0 / DT_RELA) and apply R_AARCH64_RELATIVE base relocations
+    /// Parse ELF dynamic section (MOD0 / DT_RELA) and apply module-relative
+    /// relocations (RELATIVE / ABS64 / GLOB_DAT / JUMP_SLOT) against the flat
+    /// module image (text+rodata+data at their memory_offsets).
     static size_t ApplyRelocations(
         memory::VirtualMemory& vm,
         vaddr_t base_address,
-        std::span<const u8> rodata_bytes,
-        std::span<const u8> data_bytes
+        std::span<const u8> module_image,
+        const struct NsoHeader* hdr
+    );
+
+    /// Collect every *defined* dynamic symbol (name -> module-relative value)
+    /// from a flat module image's .dynsym / .dynstr.
+    static size_t CollectExportedSymbols(
+        std::span<const u8> module_image,
+        std::unordered_map<std::string, u64>& out
+    );
+
+    /// Patch GLOB_DAT / JUMP_SLOT slots that reference imported symbols, using
+    /// a global name -> guest-address map (built from every loaded module's
+    /// exported_symbols). This resolves cross-module C++/libc imports (e.g.
+    /// `strdup`, `stdout`, `longjmp`, vtable/string symbol references).
+    static size_t ResolveSymbolImports(
+        memory::VirtualMemory& vm,
+        vaddr_t base_address,
+        std::span<const u8> module_image,
+        const std::unordered_map<std::string, u64>& global_symbols
     );
 };
 

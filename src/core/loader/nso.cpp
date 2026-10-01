@@ -217,11 +217,11 @@ std::optional<NsoLoadedImage> NsoLoader::Load(
                 std::memcpy(&w1, text_bytes.data() + i + 4, 4);
                 const bool w0_stack =
                     ((w0 & 0xFF80001F) == 0xD100001F && ((w0 >> 5) & 0x1F) == 0x1F) || // SUB/ADD SP,SP,#imm
-                    ((w0 & 0xFFC07FFF) == 0xA9007BFD) ||                               // STP X29,X30
+                    ((w0 & 0x7E000000) == 0x28000000) ||                               // STP/LDP family
                     ((w0 & 0xFC000000) == 0x14000000);                                 // B
                 const bool w1_stack =
                     ((w1 & 0xFF80001F) == 0xD100001F && ((w1 >> 5) & 0x1F) == 0x1F) ||
-                    ((w1 & 0xFFC0FFFF) == 0xA9000000) ||                               // STP pair
+                    ((w1 & 0x7E000000) == 0x28000000) ||                               // STP/LDP family
                     ((w1 & 0xFC000000) == 0x94000000);                                 // BL
                 if (w0_stack && w1_stack) {
                     entry_rel = i;
@@ -462,6 +462,7 @@ size_t NsoLoader::ResolveSymbolImports(
     const size_t dyn_off = mod0_offset + static_cast<size_t>(dyn_rel);
 
     u64 rela_offset = 0, rela_size = 0, rela_ent = 24;
+    u64 jmprel_offset = 0, pltrels_size = 0, pltrel = 24;
     u64 symtab = 0, strtab = 0, syment = 24;
     size_t p = dyn_off;
     while (p + 16 <= module_image.size()) {
@@ -473,49 +474,85 @@ size_t NsoLoader::ResolveSymbolImports(
         else if (t == 7) rela_offset = v;               // DT_RELA
         else if (t == 8) rela_size = v;                 // DT_RELASZ
         else if (t == 9) rela_ent = (v > 0) ? v : 24;   // DT_RELAENT
+        else if (t == 23) jmprel_offset = v;            // DT_JMPREL (PLT jump-slots)
+        else if (t == 2) pltrels_size = v;              // DT_PLTRELSZ
+        else if (t == 20) pltrel = (v == 7) ? 24 : 16;  // DT_PLTREL: 7=RELA,17=REL
         else if (t == 6) symtab = v;                    // DT_SYMTAB
         else if (t == 5) strtab = v;                    // DT_STRTAB
         else if (t == 11) syment = v;                   // DT_SYMENT
     }
-    if (rela_offset == 0 || rela_size == 0 || symtab == 0 || strtab == 0) return 0;
+    if (symtab == 0 || strtab == 0) return 0;
+    pltrel = (pltrel == 24) ? 24 : 16;
 
-    size_t resolved = 0;
-    const size_t num = rela_size / rela_ent;
-    for (size_t i = 0; i < num; ++i) {
-        const size_t e = rela_offset + i * rela_ent;
-        if (e + rela_ent > module_image.size()) break;
-        u64 r_offset = 0, r_info = 0;
-        std::memcpy(&r_offset, module_image.data() + e, 8);
-        std::memcpy(&r_info, module_image.data() + e + 8, 8);
-
-        const u32 type = static_cast<u32>(r_info & 0xFFFFFFFF);
-        const u64 sym_idx = r_info >> 32;
-        if (type != 1025 && type != 1026) continue; // GLOB_DAT / JUMP_SLOT only
-        if (sym_idx == 0) continue;
-
-        const size_t so = symtab + sym_idx * syment;
-        if (so + 24 > module_image.size()) continue;
+    // Resolve a single ELF reloc (RELA or REL entry) whose slot is r_offset and
+    // whose symbol index is sym_idx. Look it up in the global symbol map and
+    // write the resolved guest address into the module's GOT slot.
+    auto apply_slot = [&](u64 r_offset_u, u64 sym_idx_u) -> bool {
+        if (sym_idx_u == 0) return false;
+        const size_t so = symtab + sym_idx_u * syment;
+        if (so + 24 > module_image.size()) return false;
         u32 st_name = 0;
         std::memcpy(&st_name, module_image.data() + so, 4);
-        if (st_name == 0 || strtab + st_name >= module_image.size()) continue;
+        if (st_name == 0 || strtab + st_name >= module_image.size()) return false;
         const u8* sp = module_image.data() + strtab + st_name;
         const u8* se = static_cast<const u8*>(std::memchr(sp, 0, module_image.size() - (strtab + st_name)));
-        if (!se) continue;
+        if (!se) return false;
         std::string name(reinterpret_cast<const char*>(sp), se - sp);
 
-        auto it = global_symbols.find(name);
-        if (it == global_symbols.end()) continue;
-
-        // Resolved guest address = defining_module_base + symbol_value. All
-        // exports were recorded as module-relative values; the global map holds
-        // full guest addresses already (built by the caller with base added).
-        const u64 guest_addr = it->second;
-        vaddr_t slot = base_address + r_offset;
+        u64 guest_addr = 0;
+        // The __rel_dyn_* / __rel_plt_* markers are linker-provided and must
+        // point at this module's own relocation tables (not a defined symbol).
+        if (name == "__rel_dyn_start") guest_addr = base_address + rela_offset;
+        else if (name == "__rel_dyn_end") guest_addr = base_address + rela_offset + rela_size;
+        else if (name == "__rel_plt_start") guest_addr = base_address + jmprel_offset;
+        else if (name == "__rel_plt_end") guest_addr = base_address + jmprel_offset + pltrels_size;
+        else {
+            auto it = global_symbols.find(name);
+            if (it == global_symbols.end()) return false;
+            guest_addr = it->second;
+        }
+        vaddr_t slot = base_address + r_offset_u;
         if (vm.IsValidAddress(slot, 8)) {
             vm.Write64(slot, guest_addr);
-            ++resolved;
+            return true;
+        }
+        return false;
+    };
+
+    size_t resolved = 0;
+
+    // Pass 1: DT_RELA GLOB_DAT / JUMP_SLOT relocations.
+    if (rela_offset != 0 && rela_size != 0) {
+        const size_t num = rela_size / rela_ent;
+        for (size_t i = 0; i < num; ++i) {
+            const size_t e = rela_offset + i * rela_ent;
+            if (e + rela_ent > module_image.size()) break;
+            u64 r_offset = 0, r_info = 0;
+            std::memcpy(&r_offset, module_image.data() + e, 8);
+            std::memcpy(&r_info, module_image.data() + e + 8, 8);
+            const u32 type = static_cast<u32>(r_info & 0xFFFFFFFF);
+            if (type != 1025 && type != 1026) continue; // GLOB_DAT / JUMP_SLOT
+            if (apply_slot(r_offset, r_info >> 32)) ++resolved;
         }
     }
+
+    // Pass 2: DT_JMPREL lazy-binding JUMP_SLOT table (108 entries in main).
+    // These carry the actual imported function pointers (strdup, longjmp,
+    // printf, ...) that `BR X17` calls through.
+    if (jmprel_offset != 0 && pltrels_size != 0) {
+        const size_t num = pltrels_size / pltrel;
+        for (size_t i = 0; i < num; ++i) {
+            const size_t e = jmprel_offset + i * pltrel;
+            if (e + pltrel > module_image.size()) break;
+            u64 r_offset = 0, r_info = 0;
+            std::memcpy(&r_offset, module_image.data() + e, 8);
+            std::memcpy(&r_info, module_image.data() + e + 8, 8);
+            const u32 type = static_cast<u32>(r_info & 0xFFFFFFFF);
+            if (type != 1026) continue; // JUMP_SLOT
+            if (apply_slot(r_offset, r_info >> 32)) ++resolved;
+        }
+    }
+
     if (resolved > 0) {
         NEMU_LOG_INFO("Loader", "Resolved {} symbol imports for module at 0x{:016X}", resolved, base_address);
     }

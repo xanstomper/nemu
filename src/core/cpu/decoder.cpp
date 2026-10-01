@@ -86,6 +86,7 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::B_cond: return "B.cond";
         case Opcode::BL: return "BL";
         case Opcode::BLR: return "BLR";
+        case Opcode::BR: return "BR";
         case Opcode::RET: return "RET";
         case Opcode::CBZ: return "CBZ";
         case Opcode::CBNZ: return "CBNZ";
@@ -108,6 +109,9 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::MRS: return "MRS";
         case Opcode::MSR: return "MSR";
         case Opcode::CSEL: return "CSEL";
+        case Opcode::CSINC: return "CSINC";
+        case Opcode::CSINV: return "CSINV";
+        case Opcode::CSNEG: return "CSNEG";
 
         // Scalar Floating-Point
         case Opcode::FADD_scalar: return "FADD (scalar)";
@@ -305,9 +309,15 @@ DecodedInstruction Decoder::DecodeBranches(u32 raw) noexcept {
         return inst;
     }
 
-    // Unconditional branch (register): BLR, RET
+    // Unconditional branch (register): BR, BLR, RET
+    // 1101011 0000 11111 000000 [Rn:5] 00000 -> BR   (indirect branch to Xn)
     // 1101011 0001 11111 000000 [Rn:5] 00000 -> BLR
     // 1101011 0010 11111 000000 [Rn:5] 00000 -> RET
+    if ((raw & 0xFFFFFC1F) == 0xD61F0000) {
+        inst.opcode = Opcode::BR;
+        inst.rn = static_cast<u8>(ExtractBits(raw, 5, 5));
+        return inst;
+    }
     if ((raw & 0xFFFFFC1F) == 0xD63F0000) {
         inst.opcode = Opcode::BLR;
         inst.rn = static_cast<u8>(ExtractBits(raw, 5, 5));
@@ -552,13 +562,21 @@ DecodedInstruction Decoder::DecodeDataProcReg(u32 raw) noexcept {
         return inst;
     }
 
-    // Conditional select: CSEL
-    // [sf:1] 00 11010100 0 [Rm:5] [cond:4] 0 0 [Rn:5] [Rd:5]
-    // Bits 30..21 = 00 11010100, bit 11 = 0, bit 10 = 0; sf is bit 31 (variable).
-    if ((raw & 0x7FE00C00) == 0x1A800000) {
-        inst.opcode = Opcode::CSEL;
-        inst.rm = static_cast<u8>(ExtractBits(raw, 16, 5));
+    // Conditional select: CSEL / CSINC / CSINV / CSNEG
+    // [sf:1] [op:1] 00 11010100 [Rm:5] [cond:4] [op2:2] [Rn:5] [Rd:5]
+    // Mask requires bit 21..24=1101, op=bits30/29=00, op2 is bits11:10.
+    //   op=0(op30), op2=00 -> CSEL ; op2=01 -> CSINC ; op2=10 -> CSINV ; op2=11 -> CSNEG
+    //   (op30=1 forms are CSINV/CSNEG alternates; fall back to CSEL semantics.)
+    if ((raw & 0x7FE00000) == 0x1A800000) {
+        // rd is bits4..0; rn bits9..5; rm bits20..16 are set above.
+        const u32 op = ExtractBit(raw, 30);
+        const u32 op2 = ExtractBits(raw, 10, 2);
         inst.condition = static_cast<Condition>(ExtractBits(raw, 12, 4));
+        if (!op && op2 == 0b00) inst.opcode = Opcode::CSEL;
+        else if (!op && op2 == 0b01) inst.opcode = Opcode::CSINC;
+        else if (!op && op2 == 0b10) inst.opcode = Opcode::CSINV;
+        else if (!op && op2 == 0b11) inst.opcode = Opcode::CSNEG;
+        else inst.opcode = Opcode::CSEL; // op=1 variants map to CSEL semantics
         return inst;
     }
 
@@ -674,7 +692,13 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
 
     // Load / Store Pair (LDP / STP)
     // [opc:2] 101 0 [type:3] [L:1] [imm7] [Rn:5] [Rt:5] [Rt2:5]
-    if ((raw & 0x3E400000) == 0x28000000) {
+    // The original mask (0x3E400000 == 0x28000000) matched many 32-bit forms but
+    // dropped 64-bit loads (size bit 31 set, e.g. "0xA9" LDP X29,X30,[SP,#imm],
+    // which Terraria's sdk executes). Use a union that covers both 32-bit and
+    // 64-bit LDP/STP.
+    if ((raw & 0x3A400000) == 0x28000000 ||
+        (raw & 0x7E400000) == 0x29400000 ||
+        (raw & 0x7E400000) == 0x28400000) {
         const bool is_load = ExtractBit(raw, 22);
         inst.is_64bit = ExtractBit(raw, 31);
         inst.rt2 = static_cast<u8>(ExtractBits(raw, 10, 5));
@@ -705,13 +729,21 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
     }
 
     // Load / Store Register offset (signed 9-bit imm): STURB/LDURB, STURH/LDURH,
-    // STUR/LDUR (incl. unprivileged; pre/post-index write back is handled below).
-    // Encoding: size(2) V(0) 111000 opc(2) 0 0 imm9(9) Rn(5) Rt(5) -> 0x38/0x78
-    if ((raw & 0x3B200C00) == 0x38000000) {
+    // STUR/LDUR (incl. unprivileged, and pre/post-index writeback).
+    // Encoding: size(2) V(0) 111000 opc(2) 0 typ(2) imm9(9) Rn(5) Rt(5) -> 0x38/0x78
+    // typ: 00 unscaled, 01 post-index (writeback), 11 pre-index (writeback),
+    //      10 register-offset. The previous mask (0x3B200C00) forced typ=00 and
+    //      dropped post/pre-index (e.g. default `LDR X8,[X19],#8` at 0xF8408668).
+    if ((raw & 0x3B200000) == 0x38000000) {
         const bool is_load = ExtractBit(raw, 22);
         const u32 imm9 = ExtractBits(raw, 12, 9);
         const u64 signed_imm = static_cast<u64>(static_cast<s64>(static_cast<s32>(
             (imm9 & 0x100) ? (static_cast<s32>(imm9) | ~0x1FF) : static_cast<s32>(imm9))));
+        const u32 typ = (raw >> 10) & 0x3;
+        if (typ == 0b01) inst.addr_mode = AddressingMode::PostIndexed;
+        else if (typ == 0b11) inst.addr_mode = AddressingMode::PreIndexed;
+        else if (typ == 0b00) inst.addr_mode = AddressingMode::UnscaledImmediate;
+        else inst.addr_mode = AddressingMode::RegisterOffset;
         if (size == 0b00) { inst.opcode = is_load ? Opcode::LDRB_imm : Opcode::STRB_imm; }
         else if (size == 0b01) { inst.opcode = is_load ? Opcode::LDRH_imm : Opcode::STRH_imm; }
         else { inst.is_64bit = (size == 0b11); inst.opcode = is_load ? Opcode::LDR_imm : Opcode::STR_imm; }

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstring>
 #include <atomic>
+#include <cstdlib>
 
 namespace nemu::core::cpu {
 
@@ -40,6 +41,21 @@ u64 Interpreter::ApplyShift(u64 value, u8 shift_type, u8 amount, bool is_64bit) 
 StepResult Interpreter::Step() {
     if (state_.halted) {
         return StepResult::Halted;
+    }
+
+    // Optional first-instructions trace for boot debugging:
+    //   NEMU_TRACE_N=200000 ./build/bin/Nemu --run game.xci
+    // logs "TRACE pc=... raw=..." for the first N steps of every thread
+    // (cheap atomic counter, disabled when unset).
+    static const long long trace_limit = [] {
+        const char* e = std::getenv("NEMU_TRACE_N");
+        return e ? std::atoll(e) : 0LL;
+    }();
+    static std::atomic<long long> trace_count{0};
+    if (trace_limit > 0 && trace_count.fetch_add(1, std::memory_order_relaxed) < trace_limit) {
+        const u32 raw = memory_ ? memory_->Read32(state_.pc) : 0;
+        NEMU_LOG_INFO("TRACE", "pc=0x{:016X} raw=0x{:08X} sp=0x{:016X} x0=0x{:016X} x8=0x{:016X} x16=0x{:016X} x30=0x{:016X}",
+                      state_.pc, raw, state_.sp, state_.GetX(0), state_.GetX(8), state_.GetX(16), state_.GetX(30));
     }
 
     if (!memory_ || !memory_->IsValidAddress(state_.pc, 4)) {
@@ -510,6 +526,12 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             break;
         }
 
+        case Opcode::BR: {
+            const vaddr_t target = state_.GetX(inst.rn);
+            next_pc = target;
+            break;
+        }
+
         case Opcode::BLR: {
             const vaddr_t target = state_.GetX(inst.rn);
             state_.SetX(30, curr_pc + 4);
@@ -555,21 +577,35 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         }
 
         case Opcode::LDR_imm: {
-            const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
+            const u64 base = state_.GetRegOrSP(inst.rn);
+            // PostIndexed reads from base, then writes back base+imm.
+            const vaddr_t addr = (inst.addr_mode == AddressingMode::PostIndexed)
+                ? base : base + inst.imm;
             if (inst.is_64bit) {
                 state_.SetX(inst.rd, memory_->Read64(addr));
             } else {
                 state_.SetW(inst.rd, memory_->Read32(addr));
             }
+            // Pre/post-index write back the base register (unless it aliases Rd).
+            if (inst.addr_mode == AddressingMode::PreIndexed ||
+                inst.addr_mode == AddressingMode::PostIndexed) {
+                if (inst.rn != inst.rd) state_.SetRegOrSP(inst.rn, base + inst.imm);
+            }
             break;
         }
 
         case Opcode::STR_imm: {
-            const vaddr_t addr = state_.GetRegOrSP(inst.rn) + inst.imm;
+            const u64 base = state_.GetRegOrSP(inst.rn);
+            const vaddr_t addr = (inst.addr_mode == AddressingMode::PostIndexed)
+                ? base : base + inst.imm;
             if (inst.is_64bit) {
                 memory_->Write64(addr, state_.GetX(inst.rd));
             } else {
                 memory_->Write32(addr, state_.GetW(inst.rd));
+            }
+            if (inst.addr_mode == AddressingMode::PreIndexed ||
+                inst.addr_mode == AddressingMode::PostIndexed) {
+                state_.SetRegOrSP(inst.rn, base + inst.imm);
             }
             break;
         }
@@ -714,6 +750,32 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
                 } else {
                     state_.SetW(inst.rd, state_.GetW(inst.rm));
                 }
+            }
+            break;
+        }
+
+        // Conditional select increment/invert/negate.
+        // CSINC: Rd = cond ? Rn : Rm+1 ; CSINV: Rd = cond ? Rn : ~Rm ;
+        // CSNEG: Rd = cond ? Rn : -Rm
+        case Opcode::CSINC:
+        case Opcode::CSINV:
+        case Opcode::CSNEG: {
+            u64 sel = 0;
+            if (inst.is_64bit) {
+                sel = state_.GetX(inst.rm);
+            } else {
+                sel = static_cast<u32>(state_.GetW(inst.rm));
+            }
+            if (inst.opcode == Opcode::CSINC) ++sel;
+            else if (inst.opcode == Opcode::CSINV) sel = ~sel;
+            else if (inst.opcode == Opcode::CSNEG) sel = ~sel + 1;
+
+            if (state_.CheckCondition(inst.condition)) {
+                if (inst.is_64bit) state_.SetX(inst.rd, state_.GetX(inst.rn));
+                else state_.SetW(inst.rd, state_.GetW(inst.rn));
+            } else {
+                if (inst.is_64bit) state_.SetX(inst.rd, sel);
+                else state_.SetW(inst.rd, static_cast<u32>(sel));
             }
             break;
         }
@@ -1674,6 +1736,16 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         default:
             NEMU_LOG_ERROR("CPU", "Unhandled opcode {} at 0x{:016X}", inst.OpcodeName(), curr_pc);
             return StepResult::UndefinedInstruction;
+    }
+
+    // DIAGNOSTIC: detect a branch to a low/unmapped address (the PC-0 crash).
+    if (next_pc < 0x2000ULL) {
+        static bool s_logged_low_branch = false;
+        if (!s_logged_low_branch) {
+            s_logged_low_branch = true;
+            NEMU_LOG_ERROR("CPU", "Low-branch: PC 0x{:016X} -> next 0x{:016X} (inst {:08X} {}, rn={} imm={:#x})",
+                           curr_pc, next_pc, inst.raw, inst.OpcodeName(), inst.rn, inst.imm);
+        }
     }
 
     state_.pc = next_pc;

@@ -14,6 +14,14 @@ KProcess::KProcess(u64 pid, std::string name)
     // Map default TLS base
     memory_.Map(DEFAULT_TLS_BASE, memory::VirtualMemory::PAGE_SIZE, memory::MemoryPermission::ReadWrite);
 
+    // Map the low process/thread-context region. libnx crt0 reads and writes a
+    // handful of descriptors just above address 0 (e.g. boot/thread context at
+    // 0x2E0..0x340) during app init. Without it those accesses fault and the
+    // game branches to a null handler. Real Switch reserves this window.
+    constexpr vaddr_t kLowRegionBase = 0x0;
+    constexpr size_t kLowRegionSize = 0x4000; // 16 KiB
+    memory_.Map(kLowRegionBase, kLowRegionSize, memory::MemoryPermission::ReadWrite);
+
     NEMU_LOG_DEBUG("Kernel", "Initialized KProcess '{}' (PID {})", name_, pid_);
 }
 

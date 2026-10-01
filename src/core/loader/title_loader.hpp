@@ -8,6 +8,10 @@
 #include <vector>
 #include <optional>
 #include <span>
+#include <unordered_map>
+#include <functional>
+
+namespace nemu::core::cpu { struct CpuState; }
 
 namespace nemu::core::loader {
 
@@ -16,6 +20,11 @@ struct LoadedModuleInfo {
     vaddr_t base_address{0};
     vaddr_t entry_point{0};
     size_t size{0};
+
+    /// Exported dynamic symbols (name -> module-relative value).
+    std::unordered_map<std::string, u64> exported_symbols;
+    /// Flat module image retained for cross-module import resolution.
+    std::vector<u8> image;
 };
 
 struct LoadedTitleInfo {
@@ -45,6 +54,15 @@ public:
         memory::VirtualMemory& vm,
         std::string_view name_hint = "",
         vaddr_t base_address = 0x0071000000ULL
+    );
+
+    /// Run each loaded module's .init_array (DT_INIT_ARRAY) in load order.
+    /// Requires the emulator's SVC dispatch for init functions that call the
+    /// kernel (sm:/fs:/mem etc.).
+    void RunModuleInitArrays(
+        memory::VirtualMemory& vm,
+        const std::vector<LoadedModuleInfo>& modules,
+        const std::function<void(cpu::CpuState&, u32)>& svc_dispatch = {}
     );
 
     /// Load modular ExeFS containing rtld, main, subsdk*, sdk

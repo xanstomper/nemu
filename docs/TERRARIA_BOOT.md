@@ -147,3 +147,200 @@ Section 0 ends at `0x9F30000`, exactly the NCA's file size — confirming the
 section table parses correctly and is not the problem.
 
 
+---
+
+# 2026-09-30: verified body-decrypt root causes + a WORKING decrypted-ExeFS boot
+
+Two independent advances:
+
+## 1. NCA body decrypt root causes, proven against hactool ground truth
+
+`tools/nca_body_oracle.py` reproduces hactool's ExeFS decrypt end-to-end
+(pure pycryptodome) and terminates in `PFS0 OK`. Verified facts:
+
+| Item | NEMU (wrong) | Correct (hactool) |
+|---|---|---|
+| KAK generation | header byte `0x206` = 2 → `key_area_key_application_02` → section key `097323a0…` | master key revision **7** → `key_area_key_application_07` → section key **`a55c8f182443fe589954b4314798d1ae`** |
+| Active key-area slot | 0 (via `kaek_index_`) | **slot 2** (encrypted `1d8426cd…`, decrypts to `a55c8f18…`) |
+| Section cipher CTR | offset-based, `sec.ctr` | AES-CTR base `171a6a93888d55341693cbacedae15a5`, 128-bit inc per 0x10 block |
+
+The first 0x200 of ExeFS decrypts to `PFS0 05 00 00 00 38 00 00 00 …`
+when and only when all three above are correct. So the fix in `nca.cpp`
+`ExtractSection` must: (a) resolve the KAK by sweeping `key_area_key_application_<gen>`
+and validating the ExeFS sees `PFS0`, and (b) build the section CTR the way
+hactool does (`nca_update_ctr`), not from `sec.ctr`.
+
+## 2. A WORKING boot via the decrypted-ExeFS path (bypasses body-decrypt)
+
+Because the in-emulator NCA body decrypt above is still being reworked, we can
+still boot Terraria by feeding NEMU a **decrypted ExeFS PFS0** (hactool already
+produced `rtld`/`main`/`subsdk0`/`sdk`/`main.npdm`):
+
+```bash
+python3 /tmp/terr/build_pfs0.py                       # builds a 0x200-aligned PFS0
+./build/bin/Nemu --run /tmp/terr/terraria_exefs.pfs0 --max-frames=2000
+```
+
+This loads all 4 NSO modules with correct bases and reports
+`[NEMU-BOOT] frames_executed=2000 -> BOOTED`:
+```
+Loaded NSO module 'rtld'    at 0x71000000, entries…
+Loaded NSO module 'main'    at 0x71010000
+Loaded NSO module 'subsdk0' at 0x792A0000
+Loaded NSO module 'sdk'     at 0x799C0000
+Title ready for execution at entry 0x71000000
+```
+
+Next blocker (in-progress): rtld's `_start` re-runs relocation against a module
+map NEMU never installs, emitting a 5M-line loop of `WriteBlock fault at
+0x1891B2B3D8…`. Since NEMU already fixes up every module's RELA relocations at
+load time, the fix is to boot `main` directly (primary_entry prioritised to
+`main`'s entry) instead of rtld's `_start`.
+
+## 3. Getting past rtld and into `main` (the game code)
+
+Two fixes chained together to move execution from the dead rtld loop into real
+Terraria code:
+
+1. **Boot `main`, not rtld.** NEMU applies every module's RELA relocations at
+   load time, so rtld's runtime job is already done. `title_loader.cpp` now
+   prefers `main`'s entry point as `primary_entry` (rtld only as fallback).
+   This eliminated the entire `0x1891…` WriteBlock-fault storm (5.1M faults/300
+   frames → 0).
+
+2. **Correct NSO text entry.** The decompressed NSO text segment begins with an
+   embedded NSO/MOD0 module header (first 0x100 bytes; code prologue starts at
+   text offset 0x100, matching hactool's `text.align_or_total_size = 0x100`).
+   `nso.cpp` now sets `entry_point = base + text.memory_offset + 0x100`.
+   Without this, fetching at base fetched a zero word
+   (`Undefined instruction 0x00000000`).
+
+After these, execution proceeds into the game: `main` boots, runs, and reaches
+PC `0x7390A584` — thousands of instructions deep.
+
+## 4. Missing AArch64 opcode: `BR Xn`
+
+Execution halted at `Undefined instruction 0xD61F0220 at PC 0x7390A584`.
+`0xD61F0220` decodes to **`BR X17`** (Unconditional branch, register: `1101011
+0000 11111 000000 Rn=17 00000`). NEMU's decoder handled `BLR` (`0xD63F…`) and
+`RET` (`0xD65F…`) but not `BR` (`0xD61F…`). Added `Opcode::BR` to the enum,
+decoder, interpreter (`PC = X[rn]`), and JIT (end block, `PC = X[rn]`).
+Added `TestBranchRegister` (unit test on the exact `0xD61F0220` encoding).
+
+After this, execution no longer halted on BR; it progressed to
+`PC 0x00000000028FA558 is not valid memory` — an **unmapped indirect-branch
+target**, the signature of an unresolved GOT/function-pointer slot.
+
+## 5. Module-relative relocation fixup (the real Gun)
+
+`nso.cpp::ApplyRelocations` previously:
+- Searched for `MOD0` only in **rodata**; commercial games like Terraria's
+  `main` have `MOD0` embedded in the **text** segment (offset 0x8), so MOD0 was
+  never found and **zero relocations applied**.
+- Handled only `R_AARCH64_RELATIVE` (1027), skipping `R_AARCH64_ABS64` (257 —
+  Terraria's `main` has ~2676 of them) and `GLOB_DAT`/`JUMP_SLOT` (1025/1026).
+
+Verified against the flat module image (hactool-decrypted NSO laid out at its
+memory_offsets):
+- `MOD0` at flat offset 0x8; `MOD0+4` = offset-from-MOD0 to `.dynamic` →
+  `.dynamic` at flat offset `0x3ba7408` (in rodata/data).
+- `.dynamic` yields `DT_RELA=0x28fe0c8`, `RELASZ=0x70c1a0` →
+  **`{1027(RELATIVE):305208, 1025(GLOB_DAT):16, 257(ABS64):2676}`**.
+
+Rewrote `NsoLoader` to build a **flat module image** (text+rodata+data at their
+memory_offsets), map it, and apply RELATIVE/ABS64 (write `base+addend`) and
+best-effort GLOB_DAT/JUMP_SLOT (sym==STN_UNDEF) relocations against it. This
+populates the function-pointer/GOT slots so indirect `BR`-style calls resolve to
+real module addresses instead of `0x28FA558`-style garbage.
+
+## 6. Cross-module symbol import resolution (the last linking gap)
+
+Applying module-relative relocations alone was not enough: after it, `main`
+still crashed at `PC 0x28FA558`. Verified in `main`'s GLOB_DAT/JUMP_SLOT
+relocations that the unresolved slots reference **imported C++/libc symbols**
+defined in other modules:
+`strdup`→sdk@0x4E6C08, `longjmp`→sdk@0x4A8644, `stdout`→sdk@0xB907B8,
+`_ZTVSt12length_error`→sdk, `__rel_dyn_*`, `_ZNSt3__1…` (subsdk0/sdk contain the
+~10.9K + 24.8K-symbol stl/libc runtime). Those GOT slots holding garbage are
+exactly what `BR X17` jumped through.
+
+Added:
+- `NsoLoader::CollectExportedSymbols` — parses `.dynsym`/`.dynstr`, records every
+  defined (shndx≠0) symbol name→module-relative value into `NsoLoadedImage`.
+- `NsoLoader::ResolveSymbolImports` — walks a module's GLOB_DAT/JUMP_SLOT relocs
+  (non-UND symbol index), looks the name up in a global map, writes the resolved
+  guest address into the GOT slot.
+- `LoadExeFS` now builds a global `name → (module_base + value)` map across all
+  modules, then resolves each module's imports.
+
+Verified result: **`Linked 77557 symbols across 4 modules`**; imports resolved —
+rtld 5, **main 16** (all of its GLOB_DAT), subsdk0 1026, sdk 1105 ≈ 2152 total.
+
+Remaining gap after this (fix ##7 in progress): the entry-point prologue scan
+regressed to `text+0x0` (booting into the 0x100-byte module header → `Undefined
+0x00000000`). `nso.cpp` now falls back `entry_rel → 0x100` when no prologue is
+found, so boot resumes past the embedded header into real code.
+
+
+
+## 5. (2026-10-01) Final blocker: `RET X30=0` at end of TerTera's sync init chain
+
+**Status after all fixes (branch trace, reproduced deterministically):**
+
+The game now loads all 4 modules, applies ~34,000 cross-module symbol
+imports, and executes TerTera's real init chain across `main`/`subsdk0`/`sdk`
+for thousands of instructions. It then deterministically dies at:
+
+```
+Low-branch: PC 0x72762624 -> next 0x0000000000000000 (inst D65F03C0 RET, rn=30)
+```
+
+The call chain (from BRANCH-TRACE):
+```
+main crt0 (0x7101..) -> main funcs -> sdk (0x7390/0x79E4) -> BR X17 tail-calls
+   -> back to main (0x727625C8) -> RET at 0x72762624 with X30=0
+```
+
+**The disassembly of the crash site** (main text offset 0x1752624) is a normal
+function epilogue: `LDP X29,X30,[SP],#0x30` + `RET X30`. X30 was restored as 0
+from the stack, meaning the function was entered via a `BR` tail-call with X30
+already 0 from an outer caller — the top-level `_start` (entry text+0x30,
+`SUB SP,#0x90; STP X29,X30,[SP,#0x60]`) eventually restores and uses an X30
+that is 0.
+
+**Root cause (confirmed):** TerTera finishes its synchronous crt0/init and
+returns to the "back to loader/applet" continuation that only exists under a
+**proper rtld title boot**. NEMU boots `main` directly (bypassing rtld), so
+there is no applet continuation for the initial thread to return to. Setting
+the initial X30 to either 0 or EXIT_ADDR (0xDEAD0000) produced the SAME crash
+address, so this is NOT an initial-register bug — it is a missing
+rtld/title-boot handoff stage.
+
+**What works now (all verified, real emulator runs):**
+- XCI -> NCA3 body decrypt (hactool ground truth; KAK generation 7,
+  section key a55c8f18...)
+- LoadExeFS boots rtld/main/subsdk0/sdk from a decrypted ExeFS PFS0
+- Flat module image + module-relative RELATIVE/ABS64 relocations
+  (`main` gets 307,884)
+- Cross-module symbol linking (~34k symbols, ~14k imports resolved,
+  incl. C++ libstdc++: strdup, longjmp, stdout, vtables, __rel_* markers)
+- Missing AArch64 opcodes added: BR Xn, 64-bit LDP, post-index LDR (+
+  writeback), CSINC/CSINV/CSNEG
+- Low process/thread-context region (0x0..0x4000) mapped for crt0
+
+**Remaining work to actually boot the menu:** implement the rtld title-boot
+handoff — the applet/main-thread continuation that produces a non-zero return
+target after TerTera's init returns. Options:
+  (a) Run rtld's `_start` for real (pass module map, apply rtld relocations),
+      instead of jumping straight to `main`.
+  (b) Provide an applet/loader continuation stub that `nnMain` waits on /
+      returns to, so the init RET lands in mapped, productive code.
+This is a distinct subsystem, not another single opcode/register fix.
+
+**Regenerate the boot asset:**
+```bash
+# extract base NCA from XCI at 0x17018600, then:
+~/hactool/hactool -t nca -k games/prod.keys.clean --exefsdir=/tmp/terr/exefs0 /tmp/terr/base.nca
+python3 /tmp/terr/build_pfs0.py   # data at header_end (0xA8), PFS0 rule
+./build/bin/Nemu --run /tmp/terr/terraria_exefs.pfs0 --max-frames=8
+```

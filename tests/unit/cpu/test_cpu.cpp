@@ -174,6 +174,47 @@ void TestBranchAndLink() {
     std::cout << "  PASSED.\n";
 }
 
+void TestBranchRegister() {
+    std::cout << "[TEST] Running TestBranchRegister...\n";
+    memory::VirtualMemory mem;
+    NEMU_TEST_ASSERT(mem.Map(0x20000, 0x1000, memory::MemoryPermission::All));
+
+    // 0x20000: BR X17   (0xD61F0220) -> PC = X17 (0x20030), no X30 write
+    // 0x20004..0x2002C: NOPs
+    // 0x20030: RET       (0xD65F03C0) -> PC = X30
+    const u32 code[] = {
+        0xD61F0220, // BR X17  (Terraria halted on exactly this encoding)
+        0xD503201F, // NOP
+        0xD503201F, // NOP
+        0xD503201F, // NOP
+        0xD503201F, // NOP
+        0xD503201F, // NOP
+        0xD503201F, // NOP
+        0xD503201F, // NOP
+        0xD503201F, // NOP
+        0xD503201F, // NOP
+        0xD503201F, // NOP
+        0xD503201F, // NOP
+        0xD503201F, // NOP (0x20030 target not needed; X17 -> 0x20030 exactly)
+    };
+    NEMU_TEST_ASSERT(mem.WriteBlock(0x20000, code, sizeof(code)));
+
+    cpu::CpuState state;
+    state.Reset();
+    state.pc = 0x20000;
+    state.SetX(17, 0x20030);
+    state.SetX(30, 0xDEAD0000);
+
+    cpu::Interpreter interp(state, mem);
+
+    // BR X17: PC = X17 (0x20030), X30 untouched.
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    NEMU_TEST_ASSERT(state.pc == 0x20030);
+    NEMU_TEST_ASSERT(state.GetX(30) == 0xDEAD0000);
+
+    std::cout << "  PASSED.\n";
+}
+
 void TestLoadStore() {
     std::cout << "[TEST] Running TestLoadStore...\n";
     memory::VirtualMemory mem;
@@ -479,6 +520,7 @@ int main() {
     TestSubImmediateAndCmp();
     TestMovesAndLogic();
     TestBranchAndLink();
+    TestBranchRegister();
     TestLoadStore();
     TestFpScalarArithmetic();
     TestFpLoadStore();

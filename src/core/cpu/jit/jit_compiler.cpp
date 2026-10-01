@@ -697,6 +697,14 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
                 break;
             }
 
+            case Opcode::BR: {
+                // PC = X[rn]; indirect jump, no X30 update. End the block.
+                emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, static_cast<s32>(inst.rn * 8));
+                emitter_.MovMemR64(X64Reg::R15, OFFSET_PC, X64Reg::RAX);
+                block_ended = true;
+                break;
+            }
+
             case Opcode::RET: {
                 emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, static_cast<s32>(inst.rn * 8));
                 emitter_.MovMemR64(X64Reg::R15, OFFSET_PC, X64Reg::RAX);
