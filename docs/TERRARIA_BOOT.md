@@ -640,3 +640,59 @@ and the guest is now deep enough into `sdk` init to be using them.
 Tests: 43/44 Linux (the failure is the pre-existing environment-dependent
 `test_frontend`); Windows PE32+ `test_cpu`/`test_jit`/`test_loader` 3/3 under
 Wine, and the Xbox cross-build is clean with no unhandled opcodes.
+
+---
+
+## 9. (2026-10-01) ROOT CAUSE of the corrupt pointer: logical-immediate decode dropped `N`
+
+The unmapped write at `0x187A62E250` whose low 32 bits (`0x7A62E250`) were a
+perfectly valid address inside `sdk`'s own `.bss` was **not** an allocator or
+heap problem. It was a CPU decoder bug.
+
+`DecodeLogicalImmediateMask` computed the element size from `~imms` and never
+read the encoding's **`N` bit (bit 22)**. The ARM ARM defines the field as
+`HighestSetBit(N:NOT(imms))` over **seven** bits, so without `N` every 64-bit
+logical immediate got a 32-bit element and a truncated mask.
+
+Measured against the real encodings in Terraria's `sdk`:
+
+```asm
+927EF5AC  and  x12, x13, #0xfffffffffffffffc
+          NEMU: 0x1FFFFFFFFFFFFFFC     correct: 0xFFFFFFFFFFFFFFFC
+B27D054E  orr  x14, x10, #0x18
+          NEMU: 0x1FF00000000000001FF  correct: 0x0000000000000018
+9240050B  and  x11, x8, #3
+          NEMU: 0x7FFF...FF7FFF...FF   correct: 0x0000000000000003
+```
+
+The first is the whole bug in one instruction. Terraria's `memset`
+(`sdk 0x79EA6880`) walks its frame pointer through
+`and x12, x13, #0xfffffffffffffffc`; with the high half of the mask wrong, the
+pointer kept garbage bits and the stack-zeroing loop wrote to `0x187A62E290`
+instead of `0x7A62E290`.
+
+This also explains why every *earlier* diagnosis looked like an allocator
+problem: a garbage high half in a `.bss`-resident pointer looks exactly like a
+bad return value from `malloc`.
+
+## Result
+
+```
+frames_executed=600 instructions=9,000,000 memory_faults=0 -> BOOTED
+0 ERROR lines · 0 unhandled opcodes · 0 unhandled SVCs
+```
+
+Previously the identical run produced **10,285,162 memory faults** and
+`DEGRADED`. Reproduced identically on Linux GCC 13 and the Windows PE32+ /
+Xbox cross-build (`Nemu.exe`, 0 faults, 0 errors under Wine).
+
+## Also fixed alongside
+
+* **JIT/interpreter divergence.** `JitCompiler`'s `ADD_reg`/`SUB_reg`/`AND_reg`/
+  `ORR_reg`/`EOR_reg` ignored `shift_type`, `shift_amount`, `extend_op` and
+  `is_64bit`, always emitting a plain 64-bit operation. Running the guest with
+  `cpu_backend=Interpreter` produced **byte-identical** results, which exonerated
+  the JIT for this bug; the guard is kept so the two engines agree.
+* **`svcSetHeapBase` (SVC 0x00) was missing entirely** -- a genuine ABI gap. Now
+  implemented (`KProcess::SetHeapBase` + dispatch). Terraria does not reach it
+  yet, but titles that do will no longer get an unpublished heap base.
