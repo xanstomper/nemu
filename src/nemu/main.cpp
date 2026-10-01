@@ -227,9 +227,30 @@ static int MainInternal(int argc, char** argv) {
         //   1. a thread that stalled on repeated faults at one PC = hard fail
         //   2. a guest that faulted at all during boot = at best degraded
         //   3. instructions must actually have retired
+        //   4. the guest must actually be IDLING, not burning its whole budget.
+        //
+        // (4) matters as much as the others and was learned the hard way: a
+        // guest stuck in an infinite loop with no faults retires the *entire*
+        // per-frame quantum forever and scored a perfect "BOOTED" with zero
+        // errors, while never reaching its event loop or drawing a frame. A
+        // title sitting at a menu blocks in svcWaitSynchronization and retires
+        // orders of magnitude less per frame. Consuming >=90% of the budget every
+        // frame means "still busy-spinning", not "booted".
         const u64 instrs = emulator.GetTotalInstructions();
         const auto& mem_faults = emulator.GetProcess()->GetVirtualMemory().GetFaultStats();
         const u64 mem_fault_count = mem_faults.total_faults.load(std::memory_order_relaxed);
+
+        // Per-frame CPU quantum, mirrors Emulator::StepCpuQuantum(). The quantum
+        // is split across the guest cores and only threads that are Ready
+        // actually consume it, so a genuinely idle title lands well below the
+        // nominal value; 70% sustained across the whole run means the guest is
+        // looping rather than idling.
+        constexpr u64 kFrameQuantum = 20000;
+        constexpr double kBusySpinFraction = 0.70;
+        const double ins_per_frame =
+            frames > 0 ? static_cast<double>(instrs) / static_cast<double>(frames) : 0.0;
+        const bool busy_spinning =
+            frames > 0 && ins_per_frame >= kBusySpinFraction * static_cast<double>(kFrameQuantum);
 
         const char* verdict = "BOOTED";
         bool booted = true;
@@ -241,6 +262,12 @@ static int MainInternal(int argc, char** argv) {
             booted = false;
         } else if (instrs == 0) {
             verdict = "FAILED (no guest instructions retired)";
+            booted = false;
+        } else if (busy_spinning) {
+            // Fault-free but not progressing: the guest is looping, so it has
+            // not reached its event loop / menu even though nothing crashed.
+            verdict = "BUSY-SPIN (guest retires the full per-frame quantum: "
+                      "looping, not idling at a menu)";
             booted = false;
         } else if (mem_fault_count > 0) {
             verdict = "DEGRADED (booted, but guest memory faults occurred)";
@@ -260,6 +287,31 @@ static int MainInternal(int argc, char** argv) {
                           : std::string())
                   << " -> " << verdict
                   << std::endl;
+
+        // Tail trace: dump the recent-PC ring on demand even when the boot looks
+        // clean. A guest can burn its entire per-frame instruction budget
+        // without faulting -- the frame counter and instruction counter both
+        // look healthy while the guest is spinning and never reaches its
+        // event loop -- so "BOOTED" alone cannot distinguish a real menu from a
+        // spin. `NEMU_TRACE_TAIL=1` prints where the guest actually is.
+        if (std::getenv("NEMU_TRACE_TAIL") != nullptr) {
+            const auto tail = emulator.GetBootTrace();
+            if (!tail.empty()) {
+                std::string line;
+                vaddr_t prev = ~0ULL;
+                for (vaddr_t pc : tail) {
+                    if (pc == prev) continue;
+                    prev = pc;
+                    char buf[32];
+                    std::snprintf(buf, sizeof(buf), "%016llX",
+                                  static_cast<unsigned long long>(pc));
+                    line += buf;
+                    line += ' ';
+                    if (line.size() > 4000) break;
+                }
+                NEMU_LOG_INFO("BootProbe", "TAIL guest PCs (newest first): {}", line);
+            }
+        }
 
         if (!booted || mem_fault_count > 0) {
             NEMU_LOG_ERROR("BootProbe",
