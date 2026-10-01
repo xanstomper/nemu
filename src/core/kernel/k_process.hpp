@@ -54,8 +54,13 @@ public:
 
     [[nodiscard]] KAddressArbiter& GetAddressArbiter() noexcept { return address_arbiter_; }
 
-    // Dynamic heap management (svcSetHeapSize)
+    // Dynamic heap management (svcSetHeapSize / svcSetHeapBase)
     vaddr_t SetHeapSize(size_t size);
+    /// svcSetHeapBase(heap_base, heap_size, out): the game's allocator calls
+    /// this before any allocation to establish where the process heap lives.
+    /// A NULL base asks the kernel to choose one; a non-NULL base means the
+    /// kernel already reserved a region and only needs it mapped.
+    vaddr_t SetHeapBase(vaddr_t base, size_t size);
     [[nodiscard]] vaddr_t GetHeapBase() const noexcept { return heap_base_; }
     [[nodiscard]] size_t GetHeapSize() const noexcept { return current_heap_size_; }
 

@@ -3,43 +3,65 @@
 
 namespace nemu::core::cpu {
 
-// Decode an AArch64 logical-immediate (<immr,imms>) into a concrete mask.
-// ARM ARM "DecodeBitMasks". Verified against real encodings:
-//   mov w12,#0x1010101 (imms=48) -> 0x01010101; and w10,w1,#0xff (imms=7) -> 0xFF.
-static u64 DecodeLogicalImmediateMask(u32 immr, u32 imms, bool sf) {
+// Decode an AArch64 logical-immediate (<N,imms,immr>) into a concrete mask.
+// ARM ARM A64 "DecodeBitMasks".
+//
+// The element size comes from HighestSetBit(N:NOT(imms)) -- a SEVEN bit field
+// with N as its top bit. The previous implementation computed the field from
+// imms alone, so the N bit was silently dropped and every 64-bit logical
+// immediate got a 32-bit-wide element size and a truncated mask. That is not a
+// cosmetic error: `and x12, x13, #0xfffffffffffffffc` decoded to
+// 0x1FFFFFFFFFFFFFFC instead of 0xFFFFFFFFFFFFFFFC, so the high half of every
+// pointer masked against it was corrupted -- which is exactly how Terraria's
+// memset loop ended up writing to 0x187A62E290 instead of 0x7A62E290.
+static u64 DecodeLogicalImmediateMask(u32 N, u32 immr, u32 imms, bool sf) {
     const u32 W = sf ? 64u : 32u;
-    // Element size esize = 2^D, where D = highest set bit of (~imms) in the
-    // 6-bit field (the leading-one count of imms selects the element width).
-    const u32 neg = (~imms) & 0x3F;
-    u32 esize;
-    if (neg == 0) {
-        esize = W; // all-ones single element
-    } else {
-        esize = 1u << (31 - __builtin_clz(neg));
-        if (esize > W) esize = W;
+
+    // len = HighestSetBit(N:NOT(imms)) over the 7-bit (N:imms) complement field.
+    const u32 combined = (N << 6) | ((~imms) & 0x3F);
+    if (combined == 0) {
+        return 0; // reserved
     }
-    const u32 s = ((imms % esize) + 1);      // number of set bits in the element
-    const u32 r = immr % esize;              // element rotation
-    const u32 maxs = (esize >= 32) ? (esize == 64 ? 64u : 32u) : esize;
-    const u32 sc = (s > maxs) ? maxs : s;
-    const u64 pattern = (sc >= 64) ? ~0ULL : ((static_cast<u64>(1) << sc) - 1);
-    const u64 elem_mask = ((pattern >> r) | (pattern << (esize - r))) &
-                          ((esize >= 64) ? ~0ULL : ((static_cast<u64>(1) << esize) - 1));
-    // Replicate the element across the full register.
+    const u32 len = 31u - static_cast<u32>(__builtin_clz(combined));
+    if (len < 1) {
+        return 0;
+    }
+    const u32 esize = 1u << len;
+    if (!sf && esize > 32u) {
+        return 0; // reserved for the 32-bit form
+    }
+    if (esize > 64u) {
+        return 0;
+    }
+
+    const u32 levels = esize - 1u;
+    const u32 s = imms & levels;        // 0-based index of the highest set bit
+    const u32 r = immr & levels;        // element rotation
+
+    // The per-element pattern, rotated right by R within ESize bits.
+    const u64 emask = (esize >= 64u) ? ~0ULL : ((1ULL << esize) - 1ULL);
+    const u64 ones = (s + 1u >= 64u) ? ~0ULL : ((1ULL << (s + 1u)) - 1ULL);
+    const u64 element = (r == 0u) ? (ones & emask)
+                                  : (((ones >> r) | (ones << (esize - r))) & emask);
+
+    // Replicate the element across the destination register width.
     u64 mask = 0;
     for (u32 sh = 0; sh < W; sh += esize) {
-        if (sh + esize > W) { mask |= (elem_mask & ((static_cast<u64>(1) << (W - sh)) - 1)) << sh; break; }
-        mask |= elem_mask << sh;
+        if (sh + esize > W) {
+            mask |= (element & ((1ULL << (W - sh)) - 1ULL)) << sh;
+            break;
+        }
+        mask |= element << sh;
     }
-    return mask & ((sf) ? ~0ULL : 0xFFFFFFFFu);
+    return sf ? mask : (mask & 0xFFFFFFFFULL);
 }
 
-static u64 DecodeLogicalImmediate32(u32 immr, u32 imms) {
-    return DecodeLogicalImmediateMask(immr, imms, false);
+static u64 DecodeLogicalImmediate32(u32 N, u32 immr, u32 imms) {
+    return DecodeLogicalImmediateMask(N, immr, imms, false);
 }
 
-static u64 DecodeLogicalImmediate64(u32 immr, u32 imms) {
-    return DecodeLogicalImmediateMask(immr, imms, true);
+static u64 DecodeLogicalImmediate64(u32 N, u32 immr, u32 imms) {
+    return DecodeLogicalImmediateMask(N, immr, imms, true);
 }
 
 std::string_view DecodedInstruction::OpcodeName() const noexcept {
@@ -444,13 +466,13 @@ DecodedInstruction Decoder::DecodeDataProcImm(u32 raw) noexcept {
             inst.opcode = (opc == 0b00) ? Opcode::AND_imm
                         : (opc == 0b01) ? Opcode::ORR_imm
                         : (opc == 0b10) ? Opcode::EOR_imm : Opcode::ANDS_imm;
-            inst.imm = DecodeLogicalImmediate32(immr, imms);
+            inst.imm = DecodeLogicalImmediate32(n ? 1u : 0u, immr, imms);
         } else {
             inst.is_64bit = true;
             inst.opcode = (opc == 0b00) ? Opcode::AND_imm
                         : (opc == 0b01) ? Opcode::ORR_imm
                         : (opc == 0b10) ? Opcode::EOR_imm : Opcode::ANDS_imm;
-            inst.imm = DecodeLogicalImmediate64(immr, imms);
+            inst.imm = DecodeLogicalImmediate64(n ? 1u : 0u, immr, imms);
         }
         return inst;
     }

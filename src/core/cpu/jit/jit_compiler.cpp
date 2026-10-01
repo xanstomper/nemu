@@ -602,6 +602,23 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
             }
 
             case Opcode::ADD_reg: {
+                // The x64 emitters below only model the plain 64-bit form. A
+                // shifted or extended Rm, or the 32-bit form (which must
+                // zero-extend its result), would silently compute a DIFFERENT
+                // value than the interpreter -- the JIT and the reference would
+                // disagree, producing corrupt guest pointers under the JIT that
+                // vanish without it. End the block so the interpreter runs this
+                // instruction; the block resumes on the next entry.
+                if (!inst.is_64bit || inst.shift_amount != 0 ||
+                    inst.extend_op != 0xFF || inst.shift_type != 0) {
+                    if (translated == 0) {
+                        return nullptr;
+                    }
+                    emitter_.MovR64Imm(X64Reg::RAX, curr_pc);
+                    emitter_.MovMemR64(X64Reg::R15, OFFSET_PC, X64Reg::RAX);
+                    block_ended = true;
+                    break;
+                }
                 emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, static_cast<s32>(inst.rn * 8));
                 emitter_.MovR64Mem(X64Reg::RDX, X64Reg::R15, static_cast<s32>(inst.rm * 8));
                 emitter_.AddR64R64(X64Reg::RAX, X64Reg::RDX);
@@ -613,6 +630,23 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
             }
 
             case Opcode::SUB_reg: {
+                // The x64 emitters below only model the plain 64-bit form. A
+                // shifted or extended Rm, or the 32-bit form (which must
+                // zero-extend its result), would silently compute a DIFFERENT
+                // value than the interpreter -- the JIT and the reference would
+                // disagree, producing corrupt guest pointers under the JIT that
+                // vanish without it. End the block so the interpreter runs this
+                // instruction; the block resumes on the next entry.
+                if (!inst.is_64bit || inst.shift_amount != 0 ||
+                    inst.extend_op != 0xFF || inst.shift_type != 0) {
+                    if (translated == 0) {
+                        return nullptr;
+                    }
+                    emitter_.MovR64Imm(X64Reg::RAX, curr_pc);
+                    emitter_.MovMemR64(X64Reg::R15, OFFSET_PC, X64Reg::RAX);
+                    block_ended = true;
+                    break;
+                }
                 emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, static_cast<s32>(inst.rn * 8));
                 emitter_.MovR64Mem(X64Reg::RDX, X64Reg::R15, static_cast<s32>(inst.rm * 8));
                 emitter_.SubR64R64(X64Reg::RAX, X64Reg::RDX);
@@ -624,6 +658,23 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
             }
 
             case Opcode::AND_reg: {
+                // The x64 emitters below only model the plain 64-bit form. A
+                // shifted or extended Rm, or the 32-bit form (which must
+                // zero-extend its result), would silently compute a DIFFERENT
+                // value than the interpreter -- the JIT and the reference would
+                // disagree, producing corrupt guest pointers under the JIT that
+                // vanish without it. End the block so the interpreter runs this
+                // instruction; the block resumes on the next entry.
+                if (!inst.is_64bit || inst.shift_amount != 0 ||
+                    inst.extend_op != 0xFF || inst.shift_type != 0) {
+                    if (translated == 0) {
+                        return nullptr;
+                    }
+                    emitter_.MovR64Imm(X64Reg::RAX, curr_pc);
+                    emitter_.MovMemR64(X64Reg::R15, OFFSET_PC, X64Reg::RAX);
+                    block_ended = true;
+                    break;
+                }
                 emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, static_cast<s32>(inst.rn * 8));
                 emitter_.MovR64Mem(X64Reg::RDX, X64Reg::R15, static_cast<s32>(inst.rm * 8));
                 emitter_.AndR64R64(X64Reg::RAX, X64Reg::RDX);
@@ -635,6 +686,23 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
             }
 
             case Opcode::ORR_reg: {
+                // The x64 emitters below only model the plain 64-bit form. A
+                // shifted or extended Rm, or the 32-bit form (which must
+                // zero-extend its result), would silently compute a DIFFERENT
+                // value than the interpreter -- the JIT and the reference would
+                // disagree, producing corrupt guest pointers under the JIT that
+                // vanish without it. End the block so the interpreter runs this
+                // instruction; the block resumes on the next entry.
+                if (!inst.is_64bit || inst.shift_amount != 0 ||
+                    inst.extend_op != 0xFF || inst.shift_type != 0) {
+                    if (translated == 0) {
+                        return nullptr;
+                    }
+                    emitter_.MovR64Imm(X64Reg::RAX, curr_pc);
+                    emitter_.MovMemR64(X64Reg::R15, OFFSET_PC, X64Reg::RAX);
+                    block_ended = true;
+                    break;
+                }
                 emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, static_cast<s32>(inst.rn * 8));
                 emitter_.MovR64Mem(X64Reg::RDX, X64Reg::R15, static_cast<s32>(inst.rm * 8));
                 emitter_.OrR64R64(X64Reg::RAX, X64Reg::RDX);
@@ -646,6 +714,23 @@ JitBlockFn JitCompiler::CompileBlock(vaddr_t guest_pc, memory::VirtualMemory& me
             }
 
             case Opcode::EOR_reg: {
+                // The x64 emitters below only model the plain 64-bit form. A
+                // shifted or extended Rm, or the 32-bit form (which must
+                // zero-extend its result), would silently compute a DIFFERENT
+                // value than the interpreter -- the JIT and the reference would
+                // disagree, producing corrupt guest pointers under the JIT that
+                // vanish without it. End the block so the interpreter runs this
+                // instruction; the block resumes on the next entry.
+                if (!inst.is_64bit || inst.shift_amount != 0 ||
+                    inst.extend_op != 0xFF || inst.shift_type != 0) {
+                    if (translated == 0) {
+                        return nullptr;
+                    }
+                    emitter_.MovR64Imm(X64Reg::RAX, curr_pc);
+                    emitter_.MovMemR64(X64Reg::R15, OFFSET_PC, X64Reg::RAX);
+                    block_ended = true;
+                    break;
+                }
                 emitter_.MovR64Mem(X64Reg::RAX, X64Reg::R15, static_cast<s32>(inst.rn * 8));
                 emitter_.MovR64Mem(X64Reg::RDX, X64Reg::R15, static_cast<s32>(inst.rm * 8));
                 emitter_.XorR64R64(X64Reg::RAX, X64Reg::RDX);

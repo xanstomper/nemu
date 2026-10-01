@@ -25,6 +25,7 @@ void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& t
     NEMU_LOG_DEBUG("SVC", "Dispatching SVC 0x{:02X} for TID {}", svc_id, thread.GetTid());
 
     switch (svc_id) {
+        case 0x00: SvcSetHeapBase(state, process); break;                // svcSetHeapBase
         case 0x01: SvcSetHeapSize(state, process); break;
         case 0x02: SvcSetMemoryPermission(state, process); break;
         case 0x03: SvcSetMemoryAttribute(state); break;
@@ -124,6 +125,33 @@ void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& t
             state.SetX(0, static_cast<u64>(Result::Unimplemented));
             break;
     }
+}
+
+void SvcDispatcher::SvcSetHeapBase(cpu::CpuState& state, KProcess& process) {
+    // svcSetHeapBase(u64 heap_base, u64 heap_size, u32 *out_result)
+    // The game's allocator calls this before its first allocation. A NULL
+    // base asks the kernel to pick a region; the chosen base is returned.
+    // Without it the heap base register is never published, so malloc-family
+    // calls hand the guest an unusable pointer -- which is what produced the
+    // corrupt frame pointer 0x187A62E290 in Terraria's sdk init.
+    const vaddr_t base = state.GetX(0);
+    const size_t size = static_cast<size_t>(state.GetX(1));
+    const vaddr_t out_ptr = state.GetX(2);
+
+    const vaddr_t heap_addr = process.SetHeapBase(base, size);
+    const Result rc = (heap_addr == 0 && size > 0)
+        ? Result::OutOfMemory
+        : Result::Success;
+
+    // This SVC reports through an out-parameter, not the return register.
+    if (out_ptr != 0) {
+        process.GetVirtualMemory().Write32(out_ptr, static_cast<u32>(rc));
+    }
+    // Be a good citizen and also mirror the result in X0 for callers that read
+    // the return register instead of the out-pointer.
+    state.SetX(0, static_cast<u64>(rc));
+    NEMU_LOG_INFO("SVC", "svcSetHeapBase(base=0x{:016X}, size=0x{:X}) -> 0x{:016X} rc={}",
+                  base, size, heap_addr, static_cast<u32>(rc));
 }
 
 void SvcDispatcher::SvcSetHeapSize(cpu::CpuState& state, KProcess& process) {

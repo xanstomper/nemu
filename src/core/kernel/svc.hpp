@@ -36,6 +36,7 @@ public:
 
 private:
     // Memory Management
+    static void SvcSetHeapBase(cpu::CpuState& state, KProcess& process);
     static void SvcSetHeapSize(cpu::CpuState& state, KProcess& process);
     static void SvcSetMemoryPermission(cpu::CpuState& state, KProcess& process);
     static void SvcQueryMemory(cpu::CpuState& state, KProcess& process);
