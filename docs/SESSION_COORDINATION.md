@@ -129,3 +129,25 @@ To complete P2-3 (backend already committed in `1fe89a8`):
 | 2026-09-27 20:25 | Antigravity | **Tier-A1 & Tier-C3 Milestones Complete:** Full SASS opcode table (279 encodings / 162 families), extended SASS HLSL emission (67 families) + `IdentifyMaxwell` bridge shipped (`332c37e`). Xbox Dev Mode 5 GiB RAM budget governor + live diagnostics shipped (`02120be`). All 29/29 tests pass on Linux host (2.34s) and Windows cross-target under Wine; clean builds on both GCC 13 and MinGW-w64. Complete gap analysis and retail roadmap compiled in `nemu_architecture_and_roadmap_audit.md`. |
 | 2026-09-28 17:30 | Antigravity & Hermes | **Commercial-Game Boot & NVDEC Hardware Video Engine Complete:** Implemented Atmosphere IPS/IPS32 patch manager with RLE support and bounds checking (`patch_manager.hpp/.cpp`, Suite #5). Ported NVDEC video decoder, nvhost-nvdec device, Annex-B H.264 composer, and FFmpeg host decoding engine (`test_nvdec`, Suite #35). Integrated 685-title Ryujinx-seeded compatibility registry into `TitleLoader` and `Emulator` (`test_title_compat`, Suite #37). Fixed bit-packing bug in H264BitWriter. Re-wired live Eden desktop shortcuts in `xbox_frontend.cpp` / `main.cpp`. Full parity verified: 37/37 unit test suites pass (100%) on Linux GCC 13 and Windows MinGW-w64 under Wine. Signed Xbox Developer Mode AppX container (`Nemulator_1.0.0.0_x64.appx`, 6.4 MB) generated cleanly. Interactive Eden UI verified live on `DISPLAY=:0`. |
 
+
+---
+
+## 2026-10-01 (dove session): NCA section crypto SOLVED
+
+Commit 57b5f70. The NCA layer now decrypts real carts correctly, verified
+byte-for-byte against hactool (`~/hactool/hactool -k games/prod.keys.clean`)
+on the Terraria base-game NCA:
+
+- Full 0xC00 header decrypt (fs headers at 0x400).
+- Effective keygen = max(0x206, 0x220) - 1 -> key_area_key_application_07.
+- CTR sections use key-area slot 2.
+- IV = byteswap(fs_hdr[0x140]) || BE64(section_offset>>4).
+- ExeFS payload at section + pfs0_offset (superblock+0x38); RomFS at section +
+  IVFC level-6 offset. Use NcaReader::ExtractSectionPayload().
+- NSO entry: MOD0 header aware scan (Terraria main _start = text+0x30; rtld
+  starts at +0). Unconditional +0x100 skip removed.
+- tools/nca_body_oracle.py IV (171a6a93...) was a FALSE POSITIVE first-block
+  match; do not use it. hactool extraction is the ground truth oracle.
+
+Ground-truth extractions kept at /tmp/exefs_out2 (may be gone after reboot;
+regenerate with hactool --exefsdir).
