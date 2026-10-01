@@ -696,3 +696,57 @@ Xbox cross-build (`Nemu.exe`, 0 faults, 0 errors under Wine).
 * **`svcSetHeapBase` (SVC 0x00) was missing entirely** -- a genuine ABI gap. Now
   implemented (`KProcess::SetHeapBase` + dispatch). Terraria does not reach it
   yet, but titles that do will no longer get an unpublished heap base.
+
+---
+
+## 10. (2026-10-01) The spin loop is a circular-list walk with an unclosed ring
+
+`NEMU_TRACE_TAIL=1` on the fault-free run shows the guest executing five
+instructions at 600 frames (9M instructions) and at 3000 frames (45M
+instructions), byte-identical both times:
+
+```asm
+0x79CDD888  add   x8, x21, #0x1d0      ; head / sentinel
+0x79CDD894  sxtw  x10, w20
+0x79CDD898  add   x11, x9, x10, lsl #3
+0x79CDD89C  str   xzr, [x11, #0x88]
+0x79CDD8A0  ldr   x9, [x9, #8]         ; node->next
+0x79CDD8A4  cmp   x8, x9
+0x79CDD8A8  b.ne  0x79CDD898           ; exits ONLY when cur == sentinel
+```
+
+A circular intrusive list. The only exit is the cursor returning to the
+sentinel at `x21+0x1d0`; it never does, so the walk is unbounded. The function
+has no direct `BL` callers, so it is reached through a function pointer, and
+the `bl #0x79ED2570` at `0x79CDD880` (list setup) is not in the tail trace --
+it ran once and returned.
+
+Both `0x79ED2570` and `0x79ED25A0` are PLT thunks of the form
+`adrp x16; ldr x17,[x16,#off]; br x17`, and their GOT slots
+(`sdk+0xBAA710`, `sdk+0xBAA728`) hold the **raw value `0x4fe7e0` with no
+relocation against them at all** -- not a `R_AARCH64_RELATIVE`, not a
+`GLOB_DAT`/`JUMP_SLOT` import. On hardware that slot is filled at load time.
+
+### What this implies
+
+NEMU's loader resolves each module's *own* imported GOT slots against the
+global export map, and it does that for all four modules (769 / 4804 / 8638
+imports resolved). What it does **not** do is what `rtld` does on a real
+title: build the module list and patch the *other* modules' PLT/GOT entries.
+Booting `main` directly (which is what Ryujinx, Eden and yuzu all do) is fine
+for relocations but leaves any lazily-bound or loader-populated cross-module
+structure uninitialised. The list this loop walks is very likely exactly that
+structure, which is why the ring is never closed.
+
+### Next concrete step
+
+Trace who populates `x21+0x1d0` / `x21+0x1d8` (the sentinel and the head
+pointer) and link the ring. Two ways, in order of cost:
+
+1. One-shot diagnostic in the spin path: log `x21`, `[x21+0x1d0]`,
+   `[x21+0x1d8]` and the first few `next` pointers when the BUSY-SPIN
+   watchdog trips. That shows immediately whether the sentinel points at
+   itself (uninitialised) or whether the ring closes somewhere unexpected.
+2. If it is the SDK's module list, the fix is in the loader: after mapping all
+   NSOs, build the list rtld would hand over and write each module's PLT
+   entries, rather than only resolving imports the module itself references.
