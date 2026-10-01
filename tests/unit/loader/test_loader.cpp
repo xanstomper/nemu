@@ -556,11 +556,10 @@ int main() {
         const std::string content_b = "Binary content in file B 1234567890";
 
         const u32 string_table_size = static_cast<u32>(name_a.size() + 1 + name_b.size() + 1);
-        const u32 raw_header_end = 16 + 2 * 24 + string_table_size; // Header(16) + 2 entries(48) + strtab
-        // HFS0/PFS0 pad the header up to a 0x200 boundary; the u32 stored right
-        // after the string table is that header size, and all file data begins
-        // there. Verified against real carts (data bases 0x200 / 0x600 / 0x5800).
-        const u32 header_size = (raw_header_end + 0x1FF) & ~0x1FFu;
+        // PFS0: file data begins EXACTLY after the string table (hactool
+        // pfs0_get_header_size; verified byte-exact against Terraria ExeFS).
+        // Only HFS0 (XCI partitions) aligns to 0x200 and stores a size field.
+        const u32 header_size = 16 + 2 * 24 + string_table_size; // Header(16) + 2 entries(48) + strtab
 
         std::vector<u8> pfs0_buf(header_size + content_a.size() + content_b.size(), 0);
 
@@ -785,8 +784,8 @@ int main() {
             // Package into PFS0
             const std::string name = "main";
             const u32 string_table_size = static_cast<u32>(name.size() + 1);
-            // 0x200-aligned header, matching the real container layout.
-            const u32 header_size = ((16 + 24 + string_table_size) + 0x1FF) & ~0x1FFu;
+            // PFS0 data begins exactly after the string table (hactool rule).
+            const u32 header_size = 16 + 24 + string_table_size;
             std::vector<u8> pfs0(header_size + nso_buf.size(), 0);
 
             *reinterpret_cast<u32*>(pfs0.data() + 0) = Pfs0Archive::PFS0_MAGIC;
@@ -834,8 +833,8 @@ int main() {
             // (2) Package the NSO into an ExeFS PFS0 archive (single 'main' file).
             const std::string main_name = "main";
             const u32 exefs_str_size = static_cast<u32>(main_name.size() + 1);
-            // 0x200-aligned ExeFS header, matching the real container layout.
-            const u32 exefs_hdr_size = ((16 + 24 + exefs_str_size) + 0x1FF) & ~0x1FFu;
+            // PFS0 data begins exactly after the string table (hactool rule).
+            const u32 exefs_hdr_size = 16 + 24 + exefs_str_size;
             std::vector<u8> exefs(exefs_hdr_size + main_nso.size(), 0);
             *reinterpret_cast<u32*>(exefs.data() + 0) = Pfs0Archive::PFS0_MAGIC;
             *reinterpret_cast<u32*>(exefs.data() + 4) = 1;                    // file count
@@ -986,8 +985,8 @@ int main() {
         *reinterpret_cast<s64*>(rodata_ptr + 0x110) = 0x4242; // r_addend
 
         // Pack into ExeFS PFS0 archive containing 'rtld' and 'main'
-        // 0x200-aligned ExeFS header, matching the real container layout.
-        const size_t exefs_data_base = ((16 + 2 * 24 + 10) + 0x1FF) & ~static_cast<size_t>(0x1FF);
+        // PFS0 data begins exactly after the string table (hactool rule).
+        const size_t exefs_data_base = 16 + 2 * 24 + 10;
         std::vector<u8> exefs_pfs0(exefs_data_base + rtld_nso.size() + main_nso.size(), 0);
         *reinterpret_cast<u32*>(exefs_pfs0.data() + 0) = loader::Pfs0Archive::PFS0_MAGIC;
         *reinterpret_cast<u32*>(exefs_pfs0.data() + 4) = 2; // 2 files
@@ -1044,7 +1043,7 @@ int main() {
         ks.SetKey("title_key_" + rights_id_hex, title_key);
         NEMU_TEST_ASSERT(ks.GetTitleKey(rights_id_hex).has_value(), "Title key must be retrieved by rights ID");
 
-        std::vector<u8> nca(0x400 + 0x200 + 0x400, 0); // header + fs header + section
+        std::vector<u8> nca(0xC00 + 0x200, 0); // full 0xC00 header + one section block
         *reinterpret_cast<u32*>(nca.data() + 0x200) = loader::NcaReader::NCA3_MAGIC;
         nca[0x205] = static_cast<u8>(loader::NcaContentType::Program);
         *reinterpret_cast<u64*>(nca.data() + 0x210) = 0x0100000000010000ULL;

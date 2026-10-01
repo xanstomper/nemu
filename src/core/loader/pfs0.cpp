@@ -61,7 +61,13 @@ bool Pfs0Archive::TryParseEntries(std::span<const u8> data, u32 stride,
     }
 
     const u8* str_table = data.data() + string_table_start;
-    const u64 data_base = ResolveHeaderSize(data.data(), data.size(), header_end);
+    // PFS0 (inner ExeFS/NSP containers): file data begins EXACTLY after the
+    // string table (hactool pfs0_get_header_size). No alignment, no stored
+    // size field. HFS0 (XCI partitions): u32 header_size follows, garbage on
+    // retail carts -> fall back to the 0x200-aligned end.
+    const u64 data_base = is_hfs0_
+        ? ResolveHeaderSize(data.data(), data.size(), header_end)
+        : header_end;
     if (data_base > data.size()) {
         return false;
     }
@@ -155,7 +161,11 @@ bool Pfs0Archive::Initialize(std::span<const u8> data) {
     const u64 string_table_start = sizeof(Pfs0Header) +
                                    static_cast<u64>(hdr.file_count) * entry_stride_;
     const u64 header_end = string_table_start + hdr.string_table_size;
-    header_size_ = ResolveHeaderSize(data.data(), data.size(), header_end);
+    // PFS0: data starts exactly at header end (hactool rule). HFS0: honor the
+    // stored u32 header_size when plausible, else the aligned end.
+    header_size_ = is_hfs0_
+        ? ResolveHeaderSize(data.data(), data.size(), header_end)
+        : header_end;
 
     // File data begins at the container's header size.
     data_offset_base_ = header_size_;
