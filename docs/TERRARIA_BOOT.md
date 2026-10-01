@@ -569,3 +569,74 @@ leading candidate is the SDK's dependence on symbols the host must supply:
 of which `main` defines and `sdk` imports. Those resolve through the loader, so
 the next step is to confirm each `sdk` import actually lands in `main` at
 runtime rather than a stub.
+
+---
+
+## 8. (2026-10-01) FOURTH + FIFTH root causes: more missing instruction encodings
+
+Section 7 was not the last of them. Two more decoder gaps, found the same way —
+by disassembling the exact instruction the guest was executing when it died.
+
+### 8a. ADD/SUB/AND/ORR/EOR "extended register" forms
+
+The instruction that killed the sdk init walk:
+
+```asm
+0x79E64958  add x9, x19, w8, uxth #2     ; raw 0x8B282A69
+```
+
+`ADD (extended register)` is a *different encoding* from `ADD (shifted
+register)`: it sets bit 21, and carries the extension in `option` bits [15:13]
+plus a 3-bit `imm3`. The decoder's add/sub path used mask `0x1F200000 ==
+0x0B000000`, which **requires bit 21 == 0**, so every extended form fell through
+to an undecodable encoding. The logical group had the mirror-image bug: its mask
+did not exclude bit 21, so extended forms were mis-decoded as shifted-register
+forms using `option`+`imm3` as `imm6`.
+
+`uxtw`/`uxtb`/`uxth`/`sxtw`/`lsl #N` appear in nearly every array index and
+narrow-field access a compiler emits.
+
+**Fix:** new `extend_op` field (0xFF = use shift), decoder paths for
+`0x0B200000` and `0x0A200000`, and `Interpreter::ApplyExtend()`.
+
+**Effect:** Terraria went from stalling after **423 instructions** to running
+the full 400-frame / 6,000,000-instruction probe.
+
+### 8b. Register-offset LDR/STR and sign-extending loads
+
+A mechanical audit — every opcode in the `Opcode` enum cross-checked against the
+interpreter's `case` labels — found **12 opcodes the decoder could produce that
+the interpreter never handled**. Each logged `Unhandled opcode` and returned
+`UndefinedInstruction`, killing the thread.
+
+Six are heavily used and are now implemented:
+
+| opcode | form | count in Terraria `main` |
+|---|---|---|
+| `LDR_reg` / `STR_reg` | `[Xn + Xm]` unsigned-offset | **~66,000** |
+| `LDRSB` / `LDRSH` / `LDRSW` | sign-extending 8/16/32-bit | **~16,400** |
+| `RORV` | variable rotate | — |
+
+`LDR/STR (register)` was missed because the LDUR/STUR path's mask forces
+`typ=00`, excluding the unsigned form (`typ=01`).
+
+The remaining six (`BICS_reg`, `EON_reg`, and the SIMD element ops
+`DUP_elem`, `INS_elem`, `NOT_vec`, `XTN_vec`) are unused by this title and are
+deliberately left alone rather than implemented speculatively.
+
+### Where it stands
+
+```
+frames_executed=600 instructions=9,000,000 memory_faults=10,285,162 -> DEGRADED (exit 0)
+Unhandled opcodes: 0
+```
+
+The remaining fault is an unmapped **write** at `0x187A62E250`. `sdk`'s real
+data page is `0x7A62E000`, so the low 32 bits match and only bit 32+ is bogus --
+i.e. a corrupt heap/allocator pointer, not a decoder problem. That points at
+the allocator path: `main` defines `malloc`/`free`/`_Znwm`, `sdk` imports them,
+and the guest is now deep enough into `sdk` init to be using them.
+
+Tests: 43/44 Linux (the failure is the pre-existing environment-dependent
+`test_frontend`); Windows PE32+ `test_cpu`/`test_jit`/`test_loader` 3/3 under
+Wine, and the Xbox cross-build is clean with no unhandled opcodes.
