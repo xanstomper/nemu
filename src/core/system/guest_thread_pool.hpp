@@ -55,6 +55,12 @@ public:
     /// Execute a single quantum on a specific core synchronously (for single-step / headless test mode).
     size_t StepCoreSynchronous(u32 core_id, size_t instruction_budget = DEFAULT_QUANTUM_INSTRUCTIONS);
 
+    /// Env-gated diagnostic: while a quantum is running, periodically print the
+    /// live guest PC of `watch_pc`'s thread. Used to reveal silent post-walk
+    /// spins (no SVC/fault log) that the frame-accounting probe never reaches.
+    /// Starts a short-lived sampler that stops itself after ~30s.
+    void ArmQuantumWatchdog(vaddr_t watch_pc);
+
     /// Query execution metrics
     [[nodiscard]] bool IsRunning() const noexcept { return is_running_.load(std::memory_order_relaxed); }
     [[nodiscard]] bool IsPaused() const noexcept { return is_paused_.load(std::memory_order_relaxed); }

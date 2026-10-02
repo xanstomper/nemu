@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <string>
+#include <thread>
 
 namespace nemu::core::system {
 
@@ -154,6 +155,16 @@ size_t GuestThreadPool::RunQuantum(kernel::KThread& thread, size_t budget, vaddr
     unsigned fault_streak = 0;
     vaddr_t first_fault_pc = 0;
 
+    // TIGHT-LOOP detector: if the guest retires the same PC for this many
+    // consecutive steps without a fault or SVC, it is stuck in a self-loop we
+    // never break. Dump the ring once and keep going (the frame budget still
+    // caps the quantum) so the boot probe reaches its verdict instead of
+    // appearing to hang. Env-gated by NEMU_QUANTUM_WATCHDOG.
+    vaddr_t last_pc = ~vaddr_t{0};
+    size_t same_pc_repeats = 0;
+    constexpr size_t kTightLoopThreshold = 20000;
+    bool tight_loop_logged = false;
+
     while (executed < budget &&
            !stop_requested_.load(std::memory_order_relaxed) &&
            !is_paused_.load(std::memory_order_relaxed) &&
@@ -182,6 +193,35 @@ size_t GuestThreadPool::RunQuantum(kernel::KThread& thread, size_t budget, vaddr
         // Record where the guest actually was, so a boot failure can be
         // post-mortem'd without re-running under a debugger.
         TracePush(cpu.pc);
+
+        // TIGHT-LOOP detection (env-gated): a PC that never changes means the
+        // block returned to its own address (e.g. a corrupted LR) or a
+        // non-advancing step. Dump once, with the ring, then let the budget run
+        // out so the probe still reports a verdict.
+        if (std::getenv("NEMU_QUANTUM_WATCHDOG")) {
+            if (cpu.pc == last_pc) {
+                if (++same_pc_repeats == kTightLoopThreshold && !tight_loop_logged) {
+                    tight_loop_logged = true;
+                    std::string ring;
+                    const auto hist = GetTraceSnapshot();
+                    for (const auto& p : hist) {
+                        char b[24];
+                        std::snprintf(b, sizeof(b), "%s%016llX", ring.empty() ? "" : " ",
+                                      static_cast<unsigned long long>(p));
+                        ring += b;
+                        if (ring.size() > 900) break;
+                    }
+                    NEMU_LOG_ERROR("CPU",
+                        "TIGHT-LOOP: thread {} stuck at PC 0x{:016X} for {} steps "
+                        "(LR=0x{:016X} x30=0x{:016X}); ring: {}",
+                        thread.GetTid(), cpu.pc, same_pc_repeats,
+                        cpu.GetX(30), cpu.GetX(30), ring);
+                }
+            } else {
+                last_pc = cpu.pc;
+                same_pc_repeats = 0;
+            }
+        }
 
         // BOOT-WALL WATCHPOINT (diagnostic): when the guest first enters the
         // SDK's nn::os::detail::ThreadManager::SetZeroToAllThreadsTlsSafe spin
@@ -361,6 +401,44 @@ u64 GuestThreadPool::GetTotalInstructionsExecuted() const noexcept {
 u64 GuestThreadPool::GetCoreInstructionsExecuted(u32 core_id) const noexcept {
     if (core_id >= NUM_GUEST_CORES) return 0;
     return core_instructions_[core_id].load(std::memory_order_relaxed);
+}
+
+void GuestThreadPool::ArmQuantumWatchdog(vaddr_t watch_pc) {
+    // One-shot last-wins sampler: print the live guest PC every few seconds for
+    // up to ~30s. A stale concurrent sample is fine (best-effort diagnostic).
+    static std::thread s_watchdog;
+    if (s_watchdog.joinable()) {
+        s_watchdog.join();
+    }
+    s_watchdog = std::thread([this, watch_pc] {
+        const auto start = std::chrono::steady_clock::now();
+        while (std::chrono::steady_clock::now() - start < std::chrono::seconds(30)) {
+            std::this_thread::sleep_for(std::chrono::seconds(4));
+            // Best-effort concurrent sample (diagnostic only; a race here just
+            // yields a stale/zero PC).
+            vaddr_t pc = 0;
+            const auto threads = process_->GetThreads();
+            if (!threads.empty()) {
+                pc = threads.front()->GetCpuState().pc;
+            }
+            // Also dump the recent PC history: if the guest is stuck inside one
+            // JIT block that never returns, all samples show the same PC and
+            // only the trace ring reveals the loop body.
+            const auto hist = GetTraceSnapshot();
+            std::string ring;
+            for (const auto& p : hist) {   // newest first
+                char b[24];
+                std::snprintf(b, sizeof(b), "%s%016llX", ring.empty() ? "" : " ",
+                              static_cast<unsigned long long>(p));
+                ring += b;
+                if (ring.size() > 900) break;
+            }
+            NEMU_LOG_ERROR("Watchdog",
+                "guest still running: first thread PC=0x{:016X}; recent PCs (newest first): {}",
+                pc, ring);
+        }
+    });
+    s_watchdog.detach();
 }
 
 } // namespace nemu::core::system

@@ -720,6 +720,16 @@ void Emulator::PollInput() {
 }
 
 void Emulator::StepCpuQuantum(size_t instruction_budget) {
+    // Host wall-clock watchdog (env-gated): the boot probe never reaches its
+    // verdict when the guest spins past the frame budget with no SVC/fault to
+    // log, and the process can ignore SIGTERM. Sample the live guest PC every
+    // few seconds so the silent post-walk spin location is visible.
+    if (std::getenv("NEMU_QUANTUM_WATCHDOG") && thread_pool_) {
+        const auto threads0 = process_->GetThreads();
+        thread_pool_->ArmQuantumWatchdog(
+            threads0.empty() ? 0 : threads0.front()->GetCpuState().pc);
+    }
+
     if (!process_ || process_->GetState() != kernel::ProcessState::Running) {
         state_ = EmulatorState::Terminated;
         return;

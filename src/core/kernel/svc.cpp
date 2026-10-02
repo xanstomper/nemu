@@ -1,5 +1,6 @@
 #include "svc.hpp"
 #include "core/debug/breadcrumbs.hpp"
+#include <atomic>
 #include "k_event.hpp"
 #include "k_shared_memory.hpp"
 #include "k_mutex.hpp"
@@ -192,6 +193,16 @@ void SvcDispatcher::SvcSetMemoryPermission(cpu::CpuState& state, KProcess& proce
 }
 
 void SvcDispatcher::SvcQueryMemory(cpu::CpuState& state, KProcess& process) {
+    // Progress counter (diagnostic): distinguishes "guest loops re-querying
+    // forever" (counter climbs) from "guest stopped issuing SVCs / blocked"
+    // (counter frozen at 21). Logged sparsely to avoid flooding.
+    static std::atomic<u64> s_qm_calls{0};
+    const u64 call_no = ++s_qm_calls;
+    if ((call_no % 1000) == 1 || call_no < 25) {
+        NEMU_LOG_ERROR("SVC", "QueryMemory #{} query=0x{:016X}",
+                       call_no, state.GetX(2));
+    }
+
     const vaddr_t out_mem_info_ptr = state.GetX(0);
     const vaddr_t query_addr = state.GetX(2);
 

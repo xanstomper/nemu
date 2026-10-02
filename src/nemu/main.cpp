@@ -267,6 +267,14 @@ static int MainInternal(int argc, char** argv) {
                 std::cout << " @" << std::hex << a << "=" << w << std::dec;
             }
             std::cout << std::endl;
+            // Live watchdog spin PC (rtld 0x710016EC): constant across samples.
+            std::cout << "[RTLD-SPIN2]";
+            for (u64 a = 0x710016D0; a <= 0x71001700; a += 4) {
+                const u32 w = gvm.IsValidAddress(a, 4)
+                            ? static_cast<u32>(gvm.Read64(a) & 0xFFFFFFFFULL) : 0;
+                std::cout << " @" << std::hex << a << "=" << w << std::dec;
+            }
+            std::cout << std::endl;
         }
         emulator.Run(run_max_frames);
         const u64 frames = emulator.GetFrameCount();
