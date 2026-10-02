@@ -511,6 +511,47 @@ void TestSystemRegisters() {
     std::cout << "  PASSED.\n";
 }
 
+void TestRegisterOffsetScaledLoads() {
+    std::cout << "  Testing register-offset scaled loads (rtld tag dispatch)...\n";
+    using namespace nemu::core;
+    memory::VirtualMemory vm;
+    vm.Map(0x7100270000ULL, 0x1000, memory::MemoryPermission::ReadWrite);
+    cpu::CpuState state;
+    cpu::Interpreter interp(state, vm);
+
+    // rtld's tag dispatcher: ldrsw x18, [x17, x18, lsl #2] = 0xB8B27A32
+    // (rd=x18, rn=x17, rm=x18, option=UXTW, S=1 -> scale by 4).
+    vm.Write64(0x7100270000ULL, 0);                  // zero the page
+    vm.Write32(0x7100270038ULL, 0xFFFFDC04u);        // table entry[14]... use +0x38
+    state.SetX(17, 0x7100270000ULL);                 // table base
+    state.SetX(18, 14);                              // tag/index (self-indexed)
+    state.pc = 0x7100260000ULL;
+    // Can't execute at arbitrary PC without mapped code; test the DECODER only.
+    const auto d = cpu::Decoder::Decode(0xB8B27A32u);
+    if (d.opcode != cpu::Opcode::LDRSW_reg) {
+        std::cout << "    [dbg] opcode=" << d.OpcodeName()
+                  << " raw=" << std::hex << d.raw << std::dec << "\n";
+    }
+    NEMU_TEST_ASSERT(d.opcode == cpu::Opcode::LDRSW_reg);
+    NEMU_TEST_ASSERT(d.rm == 18);
+    NEMU_TEST_ASSERT(d.rn == 17);
+    NEMU_TEST_ASSERT(d.rd == 18);
+    NEMU_TEST_ASSERT(d.shift_amount == 2);           // lsl #2 captured!
+    // And the interpreter executes it with the scale:
+    // map a code page with the instruction and step it for real.
+    vm.Map(0x7100260000ULL, 0x1000, memory::MemoryPermission::ReadWrite);
+    vm.Write32(0x7100260000ULL, 0xB8B27A32u);        // the ldrsw
+    vm.Write32(0x7100260004ULL, 0xD65F03C0u);        // ret
+    state.SetX(30, 0x7100260010ULL);                 // LR sentinel
+    state.pc = 0x7100260000ULL;
+    state.SetX(17, 0x7100270000ULL);                 // table base
+    state.SetX(18, 14);                              // index
+    NEMU_TEST_ASSERT(interp.Step() == cpu::StepResult::Ok);
+    // x18 = sign_extend32(word at table + 14*4 = 0x7100270038) = 0xFFFFFFFFFFFFDC04
+    NEMU_TEST_ASSERT(state.GetX(18) == 0xFFFFFFFFFFFFDC04ULL);
+    std::cout << "  PASSED.\n";
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "    NEMU CPU INSTRUCTION UNIT TESTS     \n";
@@ -527,6 +568,7 @@ int main() {
     TestNeonVectorOps();
     TestAtomics();
     TestSystemRegisters();
+    TestRegisterOffsetScaledLoads();
 
     std::cout << "ALL CPU UNIT TESTS PASSED SUCCESSFULLY!\n";
     return 0;

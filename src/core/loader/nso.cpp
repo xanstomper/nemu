@@ -183,18 +183,27 @@ std::optional<NsoLoadedImage> NsoLoader::Load(
     // raw value lies within the module image.
     PrimeUnrelocatedGotSlots(vm, base_address, mapped_image);
 
-    // Apply permissions
-    vm.Reprotect(base_address + hdr->text.memory_offset,
-                 (hdr->text.decompressed_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1),
-                 memory::MemoryPermission::ReadExecute);
+    // Apply permissions. When booting through rtld, leave EVERYTHING writable:
+// rtld applies relocation writes across text/rodata GOT-adjacent regions
+// (.data.rel.ro jump tables are written by rtld at boot, then made RO by the
+// real kernel) and re-protects the modules itself. Reprotecting here made
+// rtld's own tag-dispatch jump-table write fault (verified: store to
+// 0x71002758, a jump-table entry address).
+    if (leave_relocations) {
+        NEMU_LOG_INFO("Loader", "Leaving module at 0x{:016X} fully writable (rtld re-protects after relocating)", base_address);
+    } else {
+        vm.Reprotect(base_address + hdr->text.memory_offset,
+                     (hdr->text.decompressed_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1),
+                     memory::MemoryPermission::ReadExecute);
 
-    vm.Reprotect(base_address + hdr->rodata.memory_offset,
-                 (hdr->rodata.decompressed_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1),
-                 memory::MemoryPermission::Read);
+        vm.Reprotect(base_address + hdr->rodata.memory_offset,
+                     (hdr->rodata.decompressed_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1),
+                     memory::MemoryPermission::Read);
 
-    vm.Reprotect(base_address + hdr->data.memory_offset,
-                 ((hdr->data.decompressed_size + hdr->bss_size) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1),
-                 memory::MemoryPermission::ReadWrite);
+        vm.Reprotect(base_address + hdr->data.memory_offset,
+                     ((hdr->data.decompressed_size + hdr->bss_size) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1),
+                     memory::MemoryPermission::ReadWrite);
+    }
 
     NEMU_LOG_INFO("Loader", "NSO loaded successfully at 0x{:016X}, total size: 0x{:X}",
                   base_address, aligned_size);

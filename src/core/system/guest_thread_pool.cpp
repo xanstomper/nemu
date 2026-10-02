@@ -235,6 +235,22 @@ size_t GuestThreadPool::RunQuantum(kernel::KThread& thread, size_t budget, vaddr
                                   static_cast<unsigned long long>(cpu.GetX(30)));
                     NEMU_LOG_ERROR("CPU", "FIRST-FAULT thread {} {}: {}",
                                    thread.GetTid(), regs, b);
+                    // Instruction words executed leading to the fault (PC-16..PC)
+                    // so the real (XCI-build) instruction stream can be decoded
+                    // offline instead of assuming the PFS0 build's layout.
+                    auto& fvm = process_->GetVirtualMemory();
+                    std::string words;
+                    for (int back = 4; back >= 0; --back) {
+                        const u64 a = cpu.pc - back * 4;
+                        const u32 w = fvm.IsValidAddress(a, 4)
+                                    ? static_cast<u32>(fvm.Read64(a) & 0xFFFFFFFFULL) : 0;
+                        char wb[24];
+                        std::snprintf(wb, sizeof(wb), "%s@%016llX=%08X",
+                                      words.empty() ? "" : " ",
+                                      static_cast<unsigned long long>(a), w);
+                        words += wb;
+                    }
+                    NEMU_LOG_ERROR("CPU", "FAULT-STREAM {}", words);
                 }
             }
             if (fault_streak >= kMaxConsecutiveFaults) {

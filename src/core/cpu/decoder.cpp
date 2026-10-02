@@ -675,7 +675,12 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
 
     // Atomic memory operations (ARMv8.1-A LSE)
     // [size:2] 111 0 00 [A:1] [R:1] 1 [Rs:5] 000 [opc:3] [Rn:5] [Rt:5]
-    if ((raw & 0x3B200C00) == 0x38200000) {
+    // NOTE the 0x00C00000 mask term: bits [15:13] MUST be 000 for atomics.
+    // Without it this block also swallowed Load/Store register-offset forms
+    // (ldrsw x18,[x17,x18,lsl #2] = 0xB8B27A32: option=001/S=1 in [15:12],
+    // bits[11:10]=10) -- those fell through the opc chain as UNDEFINED and
+    // rtld's .dynamic tag dispatch executed garbage (the Terraria boot wall).
+    if ((raw & 0x3FE00C00) == 0x38200000) {
         const u32 opc = ExtractBits(raw, 12, 3);
         inst.is_64bit = (size == 0b11);
         inst.rs = static_cast<u8>(ExtractBits(raw, 16, 5));
@@ -839,12 +844,17 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
     // Terraria's `main` alone contains ~66,000 of these.
     if ((raw & 0x3B200000) == 0x38200000) {
         const bool is_load = ExtractBit(raw, 22);
-        const u32 opc = ExtractBits(raw, 30, 2);
+        const u32 opc = ExtractBits(raw, 22, 2);   // opc lives at [23:22]
         // Register-offset form: [size] 111 0 00 opc 1 Rm(5) option(3) S(1) 10 Rn(5) Rt(5).
         // Bits [11:10] are the tail of `option`+S (NOT imm12!) -- misreading
         // them as an immediate produced garbage offsets, and the shift itself
         // was never captured, so `ldrsw x18,[x17,x18,lsl #2]` read the wrong
         // table entry and rtld's tag dispatch branched into garbage.
+        // inst.rm is ALSO extracted here: DecodeLoadStore's prologue sets only
+        // Rt/Rn, and leaving Rm at its 0 default made every register-offset
+        // access index off X0 (rtld: x17 + (x0<<2) = 0x23500273C, the exact
+        // faulting store address).
+        inst.rm = static_cast<u8>(ExtractBits(raw, 16, 5));
         const u32 option = ExtractBits(raw, 13, 3);
         const bool shift_by_s = ExtractBit(raw, 12);
         inst.extend_op = option;                      // reuse: extend/shift type
@@ -852,9 +862,16 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
         if (size == 0b11) { // 64-bit
             inst.is_64bit = true;
             inst.opcode = is_load ? Opcode::LDR_reg : Opcode::STR_reg;
-        } else if (size == 0b10) { // 32-bit (LDRSW when opc==10)
+        } else if (size == 0b10) {
+            // size=10, V=0: opc=00 STR(32), opc=01 LDR(32), opc=10 LDRSW --
+            // LDRSW is opc=10 UNCONDITIONALLY (it is inherently a load; there
+            // is no "store" at opc=10). Decoding it via the bit22 load flag
+            // turned every LDRSW (reg) into a STORE to the computed address --
+            // rtld's tag dispatch then wrote to its own jump table AND left
+            // the dest register holding the raw tag, branching to garbage
+            // (both observed fault signatures).
             inst.is_64bit = false;
-            if (is_load && opc == 0b10) inst.opcode = Opcode::LDRSW_reg;
+            if (opc == 0b10) inst.opcode = Opcode::LDRSW_reg;
             else inst.opcode = is_load ? Opcode::LDR_reg : Opcode::STR_reg;
         } else if (size == 0b01) { // 16-bit, loads sign-extend
             inst.opcode = is_load ? Opcode::LDRSH_imm : Opcode::STRH_imm;

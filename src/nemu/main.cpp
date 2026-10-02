@@ -248,6 +248,16 @@ static int MainInternal(int argc, char** argv) {
                 std::cout << " [" << i << "]=" << std::hex << e << std::dec;
             }
             std::cout << std::endl;
+            // Dispatch-site instruction words (the tag-dispatch sequence at
+            // 0x71000320..0x71000340) -- the XCI rtld build may differ from
+            // the PFS0 build whose disassembly we've been assuming.
+            std::cout << "[RTLD-DISPATCH]";
+            for (u64 a = 0x71000320; a <= 0x71000340; a += 4) {
+                const u32 w = gvm.IsValidAddress(a, 4)
+                            ? static_cast<u32>(gvm.Read64(a) & 0xFFFFFFFFULL) : 0;
+                std::cout << " @" << std::hex << a << "=" << w << std::dec;
+            }
+            std::cout << std::endl;
         }
         emulator.Run(run_max_frames);
         const u64 frames = emulator.GetFrameCount();
