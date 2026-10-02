@@ -24,6 +24,13 @@ void SvcDispatcher::InitializeIpc(std::shared_ptr<ipc::ServiceRegistry> registry
 void SvcDispatcher::Dispatch(cpu::CpuState& state, KProcess& process, KThread& thread, u32 svc_id) {
     debug::BreadcrumbTrail::PushSvc(svc_id, state.pc);
     NEMU_LOG_DEBUG("SVC", "Dispatching SVC 0x{:02X} for TID {}", svc_id, thread.GetTid());
+    // QueryMemory result tracing: rtld sums mem_info.size answers to derive
+    // module extents; a bogus size feeds an unbounded bss-zeroing loop
+    // (rtld 0x7100190c: stp q0,q0 in 0x80-byte chunks, b.ne, never exits).
+    if (svc_id == 0x06) {
+        NEMU_LOG_INFO("SVC", "QueryMemory: query=0x{:016X} out=0x{:016X}",
+                      state.GetX(2), state.GetX(0));
+    }
 
     switch (svc_id) {
         case 0x00: SvcSetHeapBase(state, process); break;                // svcSetHeapBase
@@ -232,8 +239,21 @@ void SvcDispatcher::SvcQueryMemory(cpu::CpuState& state, KProcess& process) {
         }
         mem_info.base_address = lo;
         mem_info.size = hi - lo;
-        mem_info.type = 3; // Normal memory (code/data regions we map)
-        mem_info.permission = static_cast<u32>(*perm_opt);
+        // Horizon MemState: rtld distinguishes code regions from data by TYPE:
+        // 4 = Code (RX), 5 = CodeData (RW companion of a code region), 3 =
+        // Static (plain R/RW data). Reporting type=3 for everything made rtld
+        // mis-derive a module's bss extent and memset forever (the
+        // 0x7100190c stp-q0 zeroing loop).
+        const u32 p = static_cast<u32>(*perm_opt);
+        if (p & 0x4u) {          // eXecute -> Code
+            mem_info.type = 4;
+        } else if ((p & 0x2u) && (p & 0x1u)) { // ReadWrite
+            // RW memory adjacent to (or inside) the code region -> CodeData.
+            mem_info.type = (lo >= 0x71000000ULL && lo < 0x80000000ULL) ? 5 : 6;
+        } else {
+            mem_info.type = 3;   // Static (read-only data)
+        }
+        mem_info.permission = p;
     } else {
         // Unmapped gap: extend to the next mapped page so the walk terminates.
         u64 base = query_addr & ~PAGE_M;
@@ -250,6 +270,9 @@ void SvcDispatcher::SvcQueryMemory(cpu::CpuState& state, KProcess& process) {
     if (vmem.WriteBlock(out_mem_info_ptr, &mem_info, sizeof(mem_info))) {
         state.SetX(0, static_cast<u64>(Result::Success));
         state.SetX(1, 0); // page info
+        NEMU_LOG_INFO("SVC", "QueryMemory: [0x{:016X} - 0x{:016X}) type={} perm={}",
+                      mem_info.base_address, mem_info.base_address + mem_info.size,
+                      mem_info.type, mem_info.permission);
     } else {
         state.SetX(0, static_cast<u64>(Result::InvalidAddress));
     }

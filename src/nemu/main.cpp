@@ -258,6 +258,15 @@ static int MainInternal(int argc, char** argv) {
                 std::cout << " @" << std::hex << a << "=" << w << std::dec;
             }
             std::cout << std::endl;
+            // Spin-loop decode (rtld 0x71001904..0x71001928): the TAIL trace
+            // shows the guest spinning here after the 21 svcQueryMemory calls.
+            std::cout << "[RTLD-SPINLOOP]";
+            for (u64 a = 0x71001904; a <= 0x71001928; a += 4) {
+                const u32 w = gvm.IsValidAddress(a, 4)
+                            ? static_cast<u32>(gvm.Read64(a) & 0xFFFFFFFFULL) : 0;
+                std::cout << " @" << std::hex << a << "=" << w << std::dec;
+            }
+            std::cout << std::endl;
         }
         emulator.Run(run_max_frames);
         const u64 frames = emulator.GetFrameCount();
