@@ -417,9 +417,13 @@ void GuestThreadPool::ArmQuantumWatchdog(vaddr_t watch_pc) {
             // Best-effort concurrent sample (diagnostic only; a race here just
             // yields a stale/zero PC).
             vaddr_t pc = 0;
+            int st = -1;
+            u64 tid = 0;
             const auto threads = process_->GetThreads();
             if (!threads.empty()) {
                 pc = threads.front()->GetCpuState().pc;
+                st = static_cast<int>(threads.front()->GetState());
+                tid = threads.front()->GetTid();
             }
             // Also dump the recent PC history: if the guest is stuck inside one
             // JIT block that never returns, all samples show the same PC and
@@ -434,8 +438,9 @@ void GuestThreadPool::ArmQuantumWatchdog(vaddr_t watch_pc) {
                 if (ring.size() > 900) break;
             }
             NEMU_LOG_ERROR("Watchdog",
-                "guest still running: first thread PC=0x{:016X}; recent PCs (newest first): {}",
-                pc, ring);
+                "guest thread {} state={} (0=Init 1=Ready 2=Running 3=Waiting 4=Term) "
+                "PC=0x{:016X}; recent PCs (newest first): {}",
+                tid, st, pc, ring);
         }
     });
     s_watchdog.detach();

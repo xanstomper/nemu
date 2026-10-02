@@ -300,4 +300,19 @@ std::optional<MemoryPermission> VirtualMemory::GetPagePermissions(vaddr_t addres
     return page->permissions;
 }
 
+vaddr_t VirtualMemory::NextMappedAddress(vaddr_t address) const {
+    std::lock_guard lock(memory_mutex_);
+    const u64 target = address >> PAGE_BITS;
+    u64 best = 0;
+    bool found = false;
+    for (const auto& [idx, page] : page_table_) {
+        (void)page;
+        if (idx >= target && (!found || idx < best)) {
+            best = idx;
+            found = true;
+        }
+    }
+    return found ? (best << PAGE_BITS) : 0;
+}
+
 } // namespace nemu::core::memory

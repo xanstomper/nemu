@@ -66,6 +66,12 @@ public:
     bool IsValidAddress(vaddr_t address, size_t size = 1) const override;
     std::optional<MemoryPermission> GetPagePermissions(vaddr_t address) const;
 
+    /// Address of the first mapped page at or above `address` (page-aligned),
+    /// or 0 if none. O(mapped pages) under a single lock — used to terminate
+    /// address-space walks over huge unmapped gaps without stepping page by
+    /// page (which took billions of lock/unlock iterations and hung the guest).
+    [[nodiscard]] vaddr_t NextMappedAddress(vaddr_t address) const;
+
     [[nodiscard]] const FaultStats& GetFaultStats() const noexcept { return faults_; }
     [[nodiscard]] u64 GetTotalFaults() const noexcept {
         return faults_.total_faults.load(std::memory_order_relaxed);

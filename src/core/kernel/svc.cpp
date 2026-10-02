@@ -193,18 +193,19 @@ void SvcDispatcher::SvcSetMemoryPermission(cpu::CpuState& state, KProcess& proce
 }
 
 void SvcDispatcher::SvcQueryMemory(cpu::CpuState& state, KProcess& process) {
-    // Progress counter (diagnostic): distinguishes "guest loops re-querying
-    // forever" (counter climbs) from "guest stopped issuing SVCs / blocked"
-    // (counter frozen at 21). Logged sparsely to avoid flooding.
-    static std::atomic<u64> s_qm_calls{0};
-    const u64 call_no = ++s_qm_calls;
-    if ((call_no % 1000) == 1 || call_no < 25) {
-        NEMU_LOG_ERROR("SVC", "QueryMemory #{} query=0x{:016X}",
-                       call_no, state.GetX(2));
-    }
-
     const vaddr_t out_mem_info_ptr = state.GetX(0);
     const vaddr_t query_addr = state.GetX(2);
+
+    // Queries above the user VA ceiling are invalid: return an error so the
+    // walker stops. Previously such a query produced a 1-page "gap" answer,
+    // making rtld advance one page at a time to infinity (observed walking
+    // 0x800000F2A000, 0x800000F2B000, ... 0x1000 apart).
+    constexpr vaddr_t kUserVaEnd = 0x800000000000ULL; // 2^47
+    if (query_addr >= kUserVaEnd) {
+        state.SetX(0, static_cast<u64>(Result::InvalidAddress));
+        state.SetX(1, 0);
+        return;
+    }
 
     auto& vmem = process.GetVirtualMemory();
 
@@ -266,14 +267,18 @@ void SvcDispatcher::SvcQueryMemory(cpu::CpuState& state, KProcess& process) {
         }
         mem_info.permission = p;
     } else {
-        // Unmapped gap: extend to the next mapped page so the walk terminates.
-        u64 base = query_addr & ~PAGE_M;
-        u64 hi = base;
-        while (hi < 0x800000000000ULL && !vmem.GetPagePermissions(hi).has_value()) {
-            hi += PAGE;
-        }
+        // Unmapped gap: jump straight to the next mapped page (one lock,
+        // O(mapped pages)) instead of stepping page-by-page. The old loop
+        // walked up to 0x800000000000 (128 TB / 4 KiB = ~34 billion
+        // lock/unlock iterations) whenever a query landed in a gap with
+        // nothing mapped above it -- which is exactly rtld's final query
+        // (#21 at 0xDEAD2000) after the continuation stubs. That hang, not a
+        // missing service, was freezing the boot.
+        const u64 base = query_addr & ~PAGE_M;
+        const vaddr_t next = vmem.NextMappedAddress(base);
+        const u64 hi = next ? next : 0x800000000000ULL;
         mem_info.base_address = base;
-        mem_info.size = hi - base;
+        mem_info.size = (hi > base) ? (hi - base) : PAGE;
         mem_info.type = 0; // Unmapped
         mem_info.permission = 0;
     }
