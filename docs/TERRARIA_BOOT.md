@@ -750,3 +750,67 @@ pointer) and link the ring. Two ways, in order of cost:
 2. If it is the SDK's module list, the fix is in the loader: after mapping all
    NSOs, build the list rtld would hand over and write each module's PLT
    entries, rather than only resolving imports the module itself references.
+
+### 10a. CONFIRMED: the list is empty -- rtld's population step is missing
+
+The spin diagnostic settles it. Dumped at the moment the watchdog trips:
+
+```
+SPIN LIST: pc=0x0000000079CDD8A0 x21=0x000000007A6039C0
+           sentinel(x21+0x1d0)=0x000000007A603B90
+           head[x21+0x1d8]=0x0000000000000000     <-- NULL
+           sentinel.next=0x0000000000000000
+SPIN LIST next-chain: (empty)
+```
+
+`x21` is an SDK global (`sdk+0xC439C0`, inside the module's `.bss`). Its
+circular list at `+0x1d0` has **head == 0**: nothing was ever linked into it.
+
+Re-reading the loop with that fact:
+
+```asm
+0x79CDD884  ldr  x9, [x21, #0x1d8]   ; x9 = head = 0
+0x79CDD888  add  x8, x21, #0x1d0      ; x8 = sentinel
+0x79CDD88C  cmp  x8, x9               ; sentinel != 0  -> not equal
+0x79CDD890  b.eq 0x79CDD8AC           ; so the empty-list exit is NOT taken
+0x79CDD898  add  x11, x9, x10, lsl #3 ; x11 = 0 + index*8
+0x79CDD89C  str  xzr, [x11, #0x88]    ; writes near address 0x88
+0x79CDD8A0  ldr  x9, [x9, #8]         ; x9 = *(0 + 8) -> reads guest address 8
+0x79CDD8A4  cmp  x8, x9
+0x79CDD8A8  b.ne 0x79CDD898
+```
+
+The pre-loop guard only tests `sentinel == head`; it does not test
+`head == 0`. With an empty list the cursor walks the low guest page that NEMU
+maps for crt0 (0x0..0x4000), re-reading whatever lives at address 8 forever.
+That low mapping is also why this shows up as a silent infinite loop rather
+than a clean memory fault.
+
+**Conclusion: NEMU never runs the population step that `rtld` performs.** Its
+loader maps the NSOs, applies each module's own relocations and resolves each
+module's own imported GOT slots (769 / 4804 / 8638 imports across main, subsdk0
+and sdk). It does not build the loader-owned lists and does not write the other
+modules' PLT entries -- the two `0x79ED25xx` PLT thunks above go through GOT
+slots (`sdk+0xBAA710`, `sdk+0xBAA728`) that hold a bare `0x4fe7e0` with **no
+relocation of any kind against them**.
+
+That is the gap to close, and it is the same rtld handoff that section 5 of
+this document identified at the very start and that was wrongly dismissed as
+"just a continuation-stub problem".
+
+### Fix direction
+
+In `TitleLoader::LoadExeFS`, after all modules are mapped and relocated:
+
+1. Build the module list rtld hands over, in load order
+   (`rtld`, `main`, `subsdk0`, `sdk`), and link each node's `next` back to the
+   sentinel so the ring actually closes.
+2. Walk every module's PLT thunk table (`adrp x16; ldr x17,[x16,#off]; br x17`
+   sequences) and write the resolved target into its GOT slot, rather than only
+   patching slots that carry an explicit `GLOB_DAT`/`JUMP_SLOT` relocation.
+   The bare `0x4fe7e0` at `sdk+0xBAA710` is exactly the kind of slot this must
+   cover.
+
+Both steps need the real structure layouts, so they should be derived from a
+working rtld walk rather than guessed. The diagnostic above (sentinel / head /
+first `next` pointers) is the tool to iterate with.

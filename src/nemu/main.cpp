@@ -273,6 +273,47 @@ static int MainInternal(int argc, char** argv) {
             verdict = "DEGRADED (booted, but guest memory faults occurred)";
         }
 
+        // Intrusive-list dump at the spin. The sdk loop at 0x79CDD898 walks a
+        // circular list and only exits when the cursor reaches the sentinel at
+        // x21+0x1d0; it never does. Dumping the sentinel, the head pointer and
+        // the first few `next` pointers distinguishes "ring was never
+        // initialised" (sentinel points at itself / head is null) from "ring is
+        // built but closed somewhere unexpected" -- which decides whether the
+        // fix is populating rtld's module list or correcting the walk.
+        if (busy_spinning) {
+            if (auto th = emulator.GetMainThread()) {
+                const auto& cpu = th->GetCpuState();
+                auto& vmem = emulator.GetProcess()->GetVirtualMemory();
+                const u64 x21 = cpu.GetX(21);
+                const u64 sentinel = x21 + 0x1d0;
+                auto rd = [&](u64 a) -> u64 {
+                    return vmem.IsValidAddress(a, 8) ? vmem.Read64(a) : 0;
+                };
+                auto fx = [&](u64 v) {
+                    char b[32];
+                    std::snprintf(b, sizeof(b), "0x%016llX",
+                                  static_cast<unsigned long long>(v));
+                    return std::string(b);
+                };
+                NEMU_LOG_ERROR("BootProbe",
+                    "SPIN LIST: pc={} x21={} sentinel(x21+0x1d0)={} "
+                    "head[x21+0x1d8]={} sentinel.next={}",
+                    fx(cpu.pc), fx(x21), fx(sentinel), fx(rd(x21 + 0x1d8)),
+                    fx(rd(sentinel + 8)));
+
+                u64 cur = rd(x21 + 0x1d8);
+                std::string chain;
+                for (int i = 0; i < 12 && cur != 0 && vmem.IsValidAddress(cur + 8, 8); ++i) {
+                    chain += fx(cur) + "->";
+                    const u64 next = rd(cur + 8);
+                    if (next == sentinel) { chain += "SENTINEL"; break; }
+                    if (next == cur) { chain += "SELF-LOOP"; break; }
+                    cur = next;
+                }
+                NEMU_LOG_ERROR("BootProbe", "SPIN LIST next-chain: {}", chain);
+            }
+        }
+
         std::cout << "[NEMU-BOOT] frames_executed=" << frames
                   << " instructions=" << instrs
                   << " memory_faults=" << mem_fault_count
