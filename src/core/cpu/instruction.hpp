@@ -73,6 +73,7 @@ enum class Opcode : u16 {
     LDRSB_imm,
     LDRSH_imm,
     LDRSW_imm,
+    LDRSW_reg,
     LDR_reg,
     STR_reg,
     LDP,

@@ -818,7 +818,10 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
         // sign-extending 8/16-bit forms ~16,000 times; all of them used to fall
         // through to "Unhandled opcode".
         case Opcode::LDR_reg: {
-            const u64 addr = state_.GetRegOrSP(inst.rn) + state_.GetX(inst.rm);
+            // Register-offset form: addr = Rn + extend(Rm) << (S ? size_log2 : 0).
+            u64 idx = state_.GetX(inst.rm);
+            if (inst.shift_amount) idx <<= inst.shift_amount;
+            const u64 addr = state_.GetRegOrSP(inst.rn) + idx;
             if (inst.is_64bit) {
                 state_.SetX(inst.rd, memory_->Read64(addr));
             } else {
@@ -827,8 +830,21 @@ StepResult Interpreter::Execute(const DecodedInstruction& inst) {
             break;
         }
 
+        case Opcode::LDRSW_reg: {
+            // 32-bit sign-extending register-offset load (rtld's tag
+            // dispatch: `ldrsw x18,[x17,x18,lsl #2]`).
+            u64 idx = state_.GetX(inst.rm);
+            if (inst.shift_amount) idx <<= inst.shift_amount;
+            const u64 addr = state_.GetRegOrSP(inst.rn) + idx;
+            state_.SetX(inst.rd, static_cast<u64>(static_cast<s64>(
+                static_cast<s32>(memory_->Read32(addr)))));
+            break;
+        }
+
         case Opcode::STR_reg: {
-            const u64 addr = state_.GetRegOrSP(inst.rn) + state_.GetX(inst.rm);
+            u64 idx = state_.GetX(inst.rm);
+            if (inst.shift_amount) idx <<= inst.shift_amount;
+            const u64 addr = state_.GetRegOrSP(inst.rn) + idx;
             if (inst.is_64bit) {
                 memory_->Write64(addr, state_.GetX(inst.rd));
             } else {

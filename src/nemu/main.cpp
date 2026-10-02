@@ -224,12 +224,30 @@ static int MainInternal(int argc, char** argv) {
         if (std::getenv("NEMU_DUMP_RTLD_GOT")) {
             auto& gvm = emulator.GetProcess()->GetVirtualMemory();
             const vaddr_t rbase = 0x71000000ULL;
-            for (u64 off = 0x3180; off <= 0x3270; off += 8) {
+            for (u64 off = 0x3150; off <= 0x3270; off += 8) {
                 const u64 v = gvm.IsValidAddress(rbase + off, 8)
                             ? gvm.Read64(rbase + off) : 0xDEADDEADULL;
             std::cout << "[RTLD-GOT] +" << std::hex << off << " = 0x"
                       << v << std::dec << std::endl;
             }
+            // Marker sanity: the RELA table rtld will walk must lie inside
+            // rtld's own image [0x71000000, 0x71004000). If a marker resolved
+            // to another module's table (first/last-wins bug) or to .dynamic,
+            // rtld's reloc walk reads garbage entries exactly like the
+            // 0xE200273C fault.
+            auto in_rtld = [&](u64 a) { return a >= 0x71000000ULL && a < 0x71004000ULL; };
+            std::cout << "[RTLD-GOT] rela_dyn in-rtld: " << (in_rtld(gvm.IsValidAddress(0x710031c0,8) ? gvm.Read64(0x710031c0) : 0) ? "YES" : "NO")
+                      << " got_start in-rtld: " << (in_rtld(gvm.IsValidAddress(0x71003200,8) ? gvm.Read64(0x71003200) : 0) ? "YES" : "NO") << std::endl;
+            // Tag-dispatch jump table dump (rtld 0x7100273C, indexed by
+            // .dynamic tag; the wild dispatch read entry[7] = +7).
+            std::cout << "[RTLD-TAGTAB]";
+            for (u64 i = 0; i < 20; ++i) {
+                const u64 a = 0x7100273CULL + i * 4;
+                const u32 e = gvm.IsValidAddress(a, 4) ?
+                    static_cast<u32>(gvm.Read64(a) & 0xFFFFFFFFULL) : 0;
+                std::cout << " [" << i << "]=" << std::hex << e << std::dec;
+            }
+            std::cout << std::endl;
         }
         emulator.Run(run_max_frames);
         const u64 frames = emulator.GetFrameCount();

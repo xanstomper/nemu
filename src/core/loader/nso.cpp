@@ -4,6 +4,7 @@
 #include <fstream>
 #include <cstring>
 #include <algorithm>
+#include <unordered_set>
 
 namespace nemu::core::loader {
 
@@ -171,6 +172,16 @@ std::optional<NsoLoadedImage> NsoLoader::Load(
     } else {
         ApplyRelocations(vm, base_address, mapped_image, hdr);
     }
+
+    // Prime the module's self-referential GOT slots. Some GOT entries carry a
+    // module-relative function address with NO relocation record against them
+    // (verified on Terraria's rtld: slots +0x3170/+0x3178 hold raw 0x19b0) --
+    // on a real console the kernel/loader fills these at map time, and rtld's
+    // PLT-style thunks `ldr x17,[GOT]; br x17` otherwise branch to the raw
+    // module-relative offset as an ABSOLUTE address (near-zero -> garbage
+    // execution inside rtld's own init walk). Fill any unrelocated slot whose
+    // raw value lies within the module image.
+    PrimeUnrelocatedGotSlots(vm, base_address, mapped_image);
 
     // Apply permissions
     vm.Reprotect(base_address + hdr->text.memory_offset,
@@ -361,6 +372,80 @@ size_t NsoLoader::CollectExportedSymbols(
     return count;
 }
 
+void NsoLoader::PrimeUnrelocatedGotSlots(
+    memory::VirtualMemory& vm,
+    vaddr_t base_address,
+    std::span<const u8> module_image
+) {
+    // Fill GOT slots that (a) have no relocation record against them and
+    // (b) hold a raw module-relative value within the module image. See the
+    // call site for why (rtld's kernel-filled self-GOT convention).
+    if (module_image.size() < 0x20) return;
+
+    size_t mod0_offset = std::string_view::npos;
+    for (size_t i = 0; i + 4 <= module_image.size(); i += 4) {
+        u32 m = 0; std::memcpy(&m, module_image.data() + i, 4);
+        if (m == 0x30444F4D) { mod0_offset = i; break; }
+    }
+    if (mod0_offset == std::string_view::npos) return;
+
+    s32 dyn_rel = 0;
+    std::memcpy(&dyn_rel, module_image.data() + mod0_offset + 4, sizeof(s32));
+    const size_t dyn_off = mod0_offset + static_cast<size_t>(dyn_rel);
+
+    u64 rela_off = 0, rela_sz = 0, rela_ent = 24;
+    u64 jmprel_off = 0, pltrel_sz = 0, pltrel_ent = 24;
+    u64 pltgot = 0;
+    size_t p = dyn_off;
+    while (p + 16 <= module_image.size()) {
+        s64 t = 0; u64 v = 0;
+        std::memcpy(&t, module_image.data() + p, 8);
+        std::memcpy(&v, module_image.data() + p + 8, 8);
+        p += 16;
+        if (t == 0) break;
+        else if (t == 7)  rela_off = v;
+        else if (t == 8)  rela_sz = v;
+        else if (t == 9)  rela_ent = v ? v : 24;
+        else if (t == 23) jmprel_off = v;
+        else if (t == 2)  pltrel_sz = v;
+        else if (t == 20) pltrel_ent = (v == 7) ? 24 : 16;
+        else if (t == 3)  pltgot = v;
+    }
+    if (!pltgot || pltgot >= module_image.size()) {
+        NEMU_LOG_DEBUG("Loader", "GotPrime: module at 0x{:016X} no usable DT_PLTGOT ({:#x})", base_address, pltgot);
+        return;
+    }
+
+    std::unordered_set<u64> relocd;
+    auto collect = [&](u64 off, u64 sz, u64 ent) {
+        for (u64 e = off; e + 24 <= off + sz && e + 24 <= module_image.size(); e += ent) {
+            u64 ro = 0;
+            std::memcpy(&ro, module_image.data() + e, 8);
+            relocd.insert(ro);
+        }
+    };
+    collect(rela_off, rela_sz, rela_ent);
+    // REL (non-a) entries are 16 bytes.
+    for (u64 e = jmprel_off; e + 16 <= jmprel_off + pltrel_sz && e + 16 <= module_image.size(); e += pltrel_ent) {
+        u64 ro = 0;
+        std::memcpy(&ro, module_image.data() + e, 8);
+        relocd.insert(ro);
+    }
+
+    size_t primed = 0;
+    for (u64 off = pltgot & ~u64(7); off + 8 <= module_image.size(); off += 8) {
+        if (relocd.count(off)) continue;
+        u64 raw = 0;
+        std::memcpy(&raw, module_image.data() + off, 8);
+        if (raw == 0 || raw >= module_image.size()) continue;
+        vm.Write64(base_address + off, base_address + raw);
+        ++primed;
+    }
+    if (primed > 0) {
+        NEMU_LOG_INFO("Loader", "Primed {} self-referential GOT slots for module at 0x{:016X}", primed, base_address);
+    }
+}
+
 void NsoLoader::SynthesizeLinkerMarkers(
     std::span<const u8> module_image,
     vaddr_t base_address,
@@ -439,16 +524,22 @@ void NsoLoader::SynthesizeLinkerMarkers(
     }
     // __EX_start/end = eh_frame_hdr range; MOD0 +0x10/+0x14 carry it as
     // MOD0-relative offsets (this is what the real linker script exports).
-    if (eh_start || eh_end) {
-        add("__EX_start", mod0_offset + static_cast<size_t>(eh_start));
-        add("__EX_end",   mod0_offset + static_cast<size_t>(eh_end));
-    }
-    // TLS markers: the SDK's __tdata_align_* / __tbss_align_* pairs. MOD0
-    // +8/+0xC are the bss extents; register them as the closest derivable
-    // stand-ins (rtld only consumes these when a module actually has TLS).
-    add("__tdata_align_abs", mod0_offset + static_cast<size_t>(bss_start));
+    // When the MOD0 fields are 0 (small modules like rtld), fall back to the
+    // whole-image extent: the markers must be NON-ZERO and inside the module,
+    // because rtld reads them unconditionally and a 0 marker both fails its
+    // own sanity walks and leaves its GOT import slot unresolved (verified on
+    // the XCI rtld: __EX_*/TLS GLOB_DAT slots stayed 0 and its init walk then
+    // double-based an address into 0xE200273C).
+    add("__EX_start", mod0_offset + static_cast<size_t>(eh_start));
+    add("__EX_end",   mod0_offset + static_cast<size_t>(eh_end ? eh_end : (total_size - mod0_offset)));
+    // TLS markers: the SDK's __tdata_align_* / __tbss_align_* pairs. Without a
+    // PT_TLS segment these should describe the (empty) TLS area at the end of
+    // data — the bss region — never 0.
+    const u64 bss_abs_start = mod0_offset + static_cast<size_t>(bss_start);
+    const u64 bss_abs_end   = mod0_offset + static_cast<size_t>(bss_end ? bss_end : (total_size - mod0_offset));
+    add("__tdata_align_abs", bss_abs_start);
     add("__tdata_align_rel", static_cast<u64>(bss_start));
-    add("__tbss_align_abs",  mod0_offset + static_cast<size_t>(bss_end));
+    add("__tbss_align_abs",  bss_abs_end);
     add("__tbss_align_rel",  static_cast<u64>(bss_end));
     // NOTE: __nnDetailNintendoSdkRuntimeObjectFile is genuinely defined in
     // main's .dynsym and resolves normally; nothing to synthesize for it.

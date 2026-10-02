@@ -14,6 +14,18 @@ namespace nemu::core::cpu {
 // 0x1FFFFFFFFFFFFFFC instead of 0xFFFFFFFFFFFFFFFC, so the high half of every
 // pointer masked against it was corrupted -- which is exactly how Terraria's
 // memset loop ended up writing to 0x187A62E290 instead of 0x7A62E290.
+// Log2 of the access size for a Load/Store register-offset encoding's
+// size field (00=byte/1, 01=half/2, 10=word/4, 11=dword/8) -- this is the
+// implicit LSL applied to the index register when the S bit is set.
+static unsigned Log2AxisSize(u32 size) {
+    switch (size & 3) {
+        case 0b00: return 0;
+        case 0b01: return 1;
+        case 0b10: return 2;
+        default:   return 3;
+    }
+}
+
 static u64 DecodeLogicalImmediateMask(u32 N, u32 immr, u32 imms, bool sf) {
     const u32 W = sf ? 64u : 32u;
 
@@ -123,6 +135,7 @@ std::string_view DecodedInstruction::OpcodeName() const noexcept {
         case Opcode::LDRSB_imm: return "LDRSB (imm)";
         case Opcode::LDRSH_imm: return "LDRSH (imm)";
         case Opcode::LDRSW_imm: return "LDRSW (imm)";
+        case Opcode::LDRSW_reg: return "LDRSW (reg)";
         case Opcode::LDP: return "LDP";
         case Opcode::STP: return "STP";
         case Opcode::NOP: return "NOP";
@@ -827,14 +840,22 @@ DecodedInstruction Decoder::DecodeLoadStore(u32 raw) noexcept {
     if ((raw & 0x3B200000) == 0x38200000) {
         const bool is_load = ExtractBit(raw, 22);
         const u32 opc = ExtractBits(raw, 30, 2);
-        const u32 imm12 = ExtractBits(raw, 10, 12);
-        inst.imm = imm12 * 8;
+        // Register-offset form: [size] 111 0 00 opc 1 Rm(5) option(3) S(1) 10 Rn(5) Rt(5).
+        // Bits [11:10] are the tail of `option`+S (NOT imm12!) -- misreading
+        // them as an immediate produced garbage offsets, and the shift itself
+        // was never captured, so `ldrsw x18,[x17,x18,lsl #2]` read the wrong
+        // table entry and rtld's tag dispatch branched into garbage.
+        const u32 option = ExtractBits(raw, 13, 3);
+        const bool shift_by_s = ExtractBit(raw, 12);
+        inst.extend_op = option;                      // reuse: extend/shift type
+        inst.shift_amount = shift_by_s ? Log2AxisSize(size) : 0; // LSL of the index
         if (size == 0b11) { // 64-bit
             inst.is_64bit = true;
             inst.opcode = is_load ? Opcode::LDR_reg : Opcode::STR_reg;
-        } else if (size == 0b10) { // 32-bit
+        } else if (size == 0b10) { // 32-bit (LDRSW when opc==10)
             inst.is_64bit = false;
-            inst.opcode = is_load ? Opcode::LDR_reg : Opcode::STR_reg;
+            if (is_load && opc == 0b10) inst.opcode = Opcode::LDRSW_reg;
+            else inst.opcode = is_load ? Opcode::LDR_reg : Opcode::STR_reg;
         } else if (size == 0b01) { // 16-bit, loads sign-extend
             inst.opcode = is_load ? Opcode::LDRSH_imm : Opcode::STRH_imm;
         } else { // 8-bit

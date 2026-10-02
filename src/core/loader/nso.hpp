@@ -120,6 +120,16 @@ public:
         std::unordered_map<std::string, u64>& out
     );
 
+    /// Fill GOT slots that have no relocation record but hold a raw
+    /// module-relative value inside the module image (the kernel-filled
+    /// self-GOT convention; without this rtld's PLT thunks branch to
+    /// near-zero absolute addresses).
+    static void PrimeUnrelocatedGotSlots(
+        memory::VirtualMemory& vm,
+        vaddr_t base_address,
+        std::span<const u8> module_image
+    );
+
     /// Patch GLOB_DAT / JUMP_SLOT slots that reference imported symbols, using
     /// a global name -> guest-address map (built from every loaded module's
     /// exported_symbols). This resolves cross-module C++/libc imports (e.g.
