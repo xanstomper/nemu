@@ -457,6 +457,45 @@ bool Emulator::LoadTitle(const std::string& path) {
     // TLS + 0x110). This is what yuzu/Eden does to hand the handle to crt0.
     process_->GetVirtualMemory().Write32(TLS_ADDR + 0x110, thread_handle);
 
+    // NEMU_PRIME_THREADMGR=1 (diagnostic): attempt to invoke
+    // nn::os::detail::ThreadManager::ThreadManager() on the SDK singleton
+    // (Terraria g_Manager @ 0x7A6039C0) before main's crt0 runs, on the MAIN
+    // THREAD context so `mrs tpidrro_el0` / TLS writes land on a valid guest TLS.
+    // VERIFIED 2026-10-02 this does NOT close the ring (ctor faults at ~129
+    // steps; head stays 0) because the ctor's ImplByHorizon sub-ctor needs a
+    // whole cascade of unprimed Horizon runtime globals. Kept ONLY as a bounded,
+    // gated diagnostic for tracing that cascade; it never runs unless asked.
+    if (std::getenv("NEMU_PRIME_THREADMGR")) {
+        static const vaddr_t kThreadMgrCtor = 0x0000000079CDD950ULL;   // ThreadManager::ThreadManager
+        static const vaddr_t kThreadMgrObj  = 0x000000007A6039C0ULL;   // g_Manager .bss singleton
+        static const vaddr_t kPrimeRetSentinel = 0x000000001CE12000ULL;
+        auto& vm = process_->GetVirtualMemory();
+        const u64 cur_head = vm.IsValidAddress(kThreadMgrObj + 0x1d8, 8)
+                           ? vm.Read64(kThreadMgrObj + 0x1d8) : 0;
+        if (cur_head == 0 && vm.IsValidAddress(kThreadMgrCtor, 4)) {
+            // Save the main thread's real entry state, run the ctor, restore.
+            cpu::CpuState saved = cpu;
+            cpu.pc  = kThreadMgrCtor;
+            cpu.SetX(0, kThreadMgrObj);
+            cpu.SetX(30, kPrimeRetSentinel);
+            cpu::Interpreter interp(cpu, vm);
+            NEMU_LOG_INFO("Loader", "NEMU_PRIME_THREADMGR: running ThreadManager ctor @ 0x{:016X}", kThreadMgrCtor);
+            u64 steps = 0;
+            for (; steps < 1'000'000 && cpu.pc != kPrimeRetSentinel && !cpu.halted; ++steps) {
+                const auto res = interp.Step();
+                if (res == cpu::StepResult::MemoryFault ||
+                    res == cpu::StepResult::UndefinedInstruction) {
+                    if (steps > 128) break;
+                }
+            }
+            const u64 new_head = vm.IsValidAddress(kThreadMgrObj + 0x1d8, 8)
+                               ? vm.Read64(kThreadMgrObj + 0x1d8) : 0;
+            NEMU_LOG_INFO("Loader", "NEMU_PRIME_THREADMGR: ctor ran {} step(s); head now 0x{:016X} (was 0)",
+                          steps, new_head);
+            cpu = saved; // restore real entry state; PC/SP/TLS untouched for main boot
+        }
+    }
+
     // Run every module's .init_array (DT_INIT_ARRAY) static-constructors in
     // load order, like the real rtld does before transferring control to the
     // process entry. NOTE (verified 2026-10-02): running these alone does NOT
