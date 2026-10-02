@@ -842,6 +842,48 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
     // NOTE: executed by the Emulator (RunModuleInitArrays) after this returns,
     // where the process/thread/SVC dispatch exist.
 
+    // Install the nn::ro auto-load module list that rtld iterates to register
+    // each loaded module's info pointer. The walker (rtld 0x710007b0-f4, decoded
+    // from the live bytes) reads head at rtld-bss+0x290:
+    //   head[8]  = tail pointer (== head when empty)   -- termination sentinel
+    //   head/node[0] = node->next (SINGLY linked, circular back to head)
+    // and hashes one field per node, stopping when node->next == head[8].
+    // Without an installed list, head[8]==head so rtld's b.eq skips to the fatal
+    // trap stub (0x71000708 'b .') -- the previous wall. Nodes live in a mapped
+    // page; NUL-terminated name strings follow the node block.
+    {
+        const vaddr_t pool = 0x00000000DDDD0000ULL;
+        vm.Map(pool, memory::VirtualMemory::PAGE_SIZE,
+               memory::MemoryPermission::ReadWrite);
+        constexpr u64 kNodeStride = 0x20;
+        const u64 n = loaded_modules.size();
+        if (n > 0) {
+            const u64 head = base_address + 0x3290;  // rtld g_pAutoLoadList head
+            const u64 node_base = pool;
+            for (size_t i = 0; i < n; ++i) {
+                const u64 cur = node_base + i * kNodeStride;
+                const u64 next = (i + 1 < n) ? (node_base + (i + 1) * kNodeStride)
+                                             : head;
+                const u64 name_ptr = node_base + n * kNodeStride + (i * 0x10);
+                char nm[16] = {0};
+                std::snprintf(nm, sizeof(nm), "%.12s",
+                              loaded_modules[i].name.c_str());
+                if (nm[0] == '\0') std::snprintf(nm, sizeof(nm), "mod%zu", i);
+                vm.WriteBlock(name_ptr, nm, 16);
+                vm.Write64(cur, next);               // node->next
+                vm.Write64(cur + 8, cur);            // module info (identity ptr)
+                vm.Write64(cur + 16, loaded_modules[i].base_address);
+                vm.Write64(cur + 24, loaded_modules[i].size);
+            }
+            vm.Write64(head, node_base);                              // head.next
+            vm.Write64(head + 8, node_base + (n - 1) * kNodeStride); // head.tail
+            NEMU_LOG_INFO("Loader",
+                "Installed nn::ro auto-load list: {} modules, head=0x{:016X} "
+                "(next->{:016X}, tail->{:016X})", n, head, node_base,
+                node_base + (n - 1) * kNodeStride);
+        }
+    }
+
     size_t total_size = static_cast<size_t>(curr_base - base_address);
 
     return LoadedTitleInfo{
