@@ -275,6 +275,14 @@ static int MainInternal(int argc, char** argv) {
                 std::cout << " @" << std::hex << a << "=" << w << std::dec;
             }
             std::cout << std::endl;
+            // New post-walk spin (rtld 0x71000708) after the QueryMemory fix.
+            std::cout << "[RTLD-SPIN3]";
+            for (u64 a = 0x710006E0; a <= 0x71000740; a += 4) {
+                const u32 w = gvm.IsValidAddress(a, 4)
+                            ? static_cast<u32>(gvm.Read64(a) & 0xFFFFFFFFULL) : 0;
+                std::cout << " @" << std::hex << a << "=" << w << std::dec;
+            }
+            std::cout << std::endl;
         }
         emulator.Run(run_max_frames);
         const u64 frames = emulator.GetFrameCount();
