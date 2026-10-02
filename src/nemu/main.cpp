@@ -217,6 +217,20 @@ static int MainInternal(int argc, char** argv) {
         }
         std::cout << "[NEMU-BOOT] Loaded OK; running up to " << run_max_frames
                   << " frame(s) ..." << std::endl;
+
+        // TEMP diagnostic: dump rtld's marker GOT slots (GLOB_DAT syms land at
+        // r_offsets 0x31c0..0x3258) after linking, before execution. Verifies
+        // the synthesized linker markers resolved to sane guest addresses.
+        if (std::getenv("NEMU_DUMP_RTLD_GOT")) {
+            auto& gvm = emulator.GetProcess()->GetVirtualMemory();
+            const vaddr_t rbase = 0x71000000ULL;
+            for (u64 off = 0x3180; off <= 0x3270; off += 8) {
+                const u64 v = gvm.IsValidAddress(rbase + off, 8)
+                            ? gvm.Read64(rbase + off) : 0xDEADDEADULL;
+            std::cout << "[RTLD-GOT] +" << std::hex << off << " = 0x"
+                      << v << std::dec << std::endl;
+            }
+        }
         emulator.Run(run_max_frames);
         const u64 frames = emulator.GetFrameCount();
 

@@ -72,7 +72,8 @@ std::optional<NsoLoadedImage> NsoLoader::Load(
     memory::VirtualMemory& vm,
     vaddr_t base_address,
     filesystem::VirtualFileSystem* vfs,
-    u64 title_id
+    u64 title_id,
+    bool leave_relocations
 ) {
     if (data.size() < sizeof(NsoHeader)) {
         NEMU_LOG_ERROR("Loader", "NSO data too small for header ({} bytes)", data.size());
@@ -165,7 +166,11 @@ std::optional<NsoLoadedImage> NsoLoader::Load(
     }
 
     // Apply ELF dynamic relocations (module-relative: RELATIVE / ABS64 / GLOB_DAT / JUMP_SLOT).
-    ApplyRelocations(vm, base_address, mapped_image, hdr);
+    if (leave_relocations) {
+        NEMU_LOG_INFO("Loader", "Leaving relocations unapplied for module at 0x{:016X} (rtld self-relocates)", base_address);
+    } else {
+        ApplyRelocations(vm, base_address, mapped_image, hdr);
+    }
 
     // Apply permissions
     vm.Reprotect(base_address + hdr->text.memory_offset,
@@ -239,9 +244,18 @@ std::optional<NsoLoadedImage> NsoLoader::Load(
                           mod0_off, entry_rel);
         }
     }
-    // Collect exported dynamic symbols (for cross-module import resolution).
+    // Collect exported dynamic symbols (for cross-module symbol resolution).
     std::unordered_map<std::string, u64> exports;
     NsoLoader::CollectExportedSymbols(mapped_image, exports);
+
+    // Synthesize the linker-script marker symbols rtld imports
+    // (__rela_dyn_start/end, __rela_plt_start/end, __rel_dyn_*, __rel_plt_*,
+    // __got_start/end, ...). These are NOT defined in any module's .dynsym --
+    // on a real title the kernel/rtld supplies them from each NSO's own segment
+    // layout, which is why rtld's imports mostly went unresolved under NEMU
+    // (only 7/19 resolved) and why booting rtld relocated itself to a garbage
+    // base. We can compute every derivable one from the module's .dynamic.
+    NsoLoader::SynthesizeLinkerMarkers(mapped_image, base_address, aligned_size, exports);
 
     return NsoLoadedImage{
         .base_address = base_address,
@@ -345,6 +359,99 @@ size_t NsoLoader::CollectExportedSymbols(
         ++count;
     }
     return count;
+}
+
+void NsoLoader::SynthesizeLinkerMarkers(
+    std::span<const u8> module_image,
+    vaddr_t base_address,
+    size_t total_size,
+    std::unordered_map<std::string, u64>& out
+) {
+    // rtld imports a family of linker-script marker symbols that no module
+    // defines in .dynsym: the kernel hands rtld each NSO's marker values from
+    // the module's own dynamic/segment layout. Without them rtld cannot walk
+    // the modules' relocation tables (only 7/19 of its imports resolved for
+    // Terraria), so booting rtld self-relocates to garbage. Compute what the
+    // .dynamic can derive and register the rest with honest best-effort values.
+    if (module_image.size() < 0x20) return;
+
+    size_t mod0_offset = std::string_view::npos;
+    for (size_t i = 0; i + 4 <= module_image.size(); i += 4) {
+        u32 m = 0; std::memcpy(&m, module_image.data() + i, 4);
+        if (m == 0x30444F4D) { mod0_offset = i; break; }
+    }
+    if (mod0_offset == std::string_view::npos) return;
+
+    s32 dyn_rel = 0, bss_start = 0, bss_end = 0;
+    s32 eh_start = 0, eh_end = 0;
+    std::memcpy(&dyn_rel, module_image.data() + mod0_offset + 4, sizeof(s32));
+    std::memcpy(&bss_start, module_image.data() + mod0_offset + 8, sizeof(s32));
+    std::memcpy(&bss_end, module_image.data() + mod0_offset + 12, sizeof(s32));
+    std::memcpy(&eh_start, module_image.data() + mod0_offset + 16, sizeof(s32));
+    std::memcpy(&eh_end, module_image.data() + mod0_offset + 20, sizeof(s32));
+    const size_t dyn_off = mod0_offset + static_cast<size_t>(dyn_rel);
+
+    u64 rela_off = 0, rela_sz = 0, rela_ent = 24;
+    u64 jmprel_off = 0, pltrel_sz = 0, pltrel_ent = 24;
+    u64 pltgot = 0;
+    size_t p = dyn_off;
+    while (p + 16 <= module_image.size()) {
+        s64 t = 0; u64 v = 0;
+        std::memcpy(&t, module_image.data() + p, 8);
+        std::memcpy(&v, module_image.data() + p + 8, 8);
+        p += 16;
+        if (t == 0) break;
+        else if (t == 7)  rela_off = v;      // DT_RELA
+        else if (t == 8)  rela_sz = v;       // DT_RELASZ
+        else if (t == 9)  rela_ent = v ? v : 24;
+        else if (t == 23) jmprel_off = v;    // DT_JMPREL
+        else if (t == 2)  pltrel_sz = v;     // DT_PLTRELSZ
+        else if (t == 20) pltrel_ent = (v == 7) ? 24 : 16; // DT_PLTREL
+        else if (t == 3)  pltgot = v;        // DT_PLTGOT
+    }
+
+    auto add = [&](const char* name, u64 module_rel_value) {
+        // Markers are stored MODULE-RELATIVE like every other exported symbol
+        // (the global link pass adds base_address). Storing absolute addresses
+        // here double-bases them (rtld's __rela_dyn_start became 0xE2002010 =
+        // 0x71000000 + 0x71002010) and rtld self-relocated to garbage.
+        out.emplace(name, module_rel_value);
+    };
+
+    if (rela_off) {
+        add("__rela_dyn_start", rela_off);
+        add("__rela_dyn_end",   rela_off + rela_sz);
+    }
+    if (jmprel_off) {
+        add("__rela_plt_start", jmprel_off);
+        add("__rela_plt_end",   jmprel_off + pltrel_sz);
+    }
+    // Legacy non-a names used by some SDK builds.
+    add("__rel_dyn_start",  rela_off);
+    add("__rel_dyn_end",    rela_off + rela_sz);
+    add("__rel_plt_start",  jmprel_off);
+    add("__rel_plt_end",    jmprel_off + pltrel_sz);
+    if (pltgot) {
+        add("__got_start", pltgot);
+        // __got_end: rtld's own table used the image end (RELA addend 0x4000 on
+        // a 0x4000 module). Use the image end as the honest approximation.
+        add("__got_end", total_size);
+    }
+    // __EX_start/end = eh_frame_hdr range; MOD0 +0x10/+0x14 carry it as
+    // MOD0-relative offsets (this is what the real linker script exports).
+    if (eh_start || eh_end) {
+        add("__EX_start", mod0_offset + static_cast<size_t>(eh_start));
+        add("__EX_end",   mod0_offset + static_cast<size_t>(eh_end));
+    }
+    // TLS markers: the SDK's __tdata_align_* / __tbss_align_* pairs. MOD0
+    // +8/+0xC are the bss extents; register them as the closest derivable
+    // stand-ins (rtld only consumes these when a module actually has TLS).
+    add("__tdata_align_abs", mod0_offset + static_cast<size_t>(bss_start));
+    add("__tdata_align_rel", static_cast<u64>(bss_start));
+    add("__tbss_align_abs",  mod0_offset + static_cast<size_t>(bss_end));
+    add("__tbss_align_rel",  static_cast<u64>(bss_end));
+    // NOTE: __nnDetailNintendoSdkRuntimeObjectFile is genuinely defined in
+    // main's .dynsym and resolves normally; nothing to synthesize for it.
 }
 
 size_t NsoLoader::ApplyRelocations(

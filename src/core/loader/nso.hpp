@@ -64,13 +64,19 @@ class NsoLoader {
 public:
     static constexpr u32 NSO_MAGIC = 0x304F534E; // 'NSO0'
 
-    /// Load and map an NSO0 binary into guest VirtualMemory
+    /// Load and map an NSO0 binary into guest VirtualMemory.
+    /// `leave_relocations`: skip loader-side relocation application. Required
+    /// for the rtld module when booting through rtld — rtld re-processes its
+    /// own GOT relative-relocs and ADDS the module base again, so pre-applied
+    /// slots end up double-based (verified: store to 0xE200273C = rtld jump
+    /// table 0x7100273C + base again). rtld does its own relocation work.
     static std::optional<NsoLoadedImage> Load(
         std::span<const u8> data,
         memory::VirtualMemory& vm,
         vaddr_t base_address = 0x0071000000ULL,
         filesystem::VirtualFileSystem* vfs = nullptr,
-        u64 title_id = 0
+        u64 title_id = 0,
+        bool leave_relocations = false
     );
 
     /// Load from host filesystem
@@ -99,6 +105,18 @@ public:
     /// from a flat module image's .dynsym / .dynstr.
     static size_t CollectExportedSymbols(
         std::span<const u8> module_image,
+        std::unordered_map<std::string, u64>& out
+    );
+
+    /// Synthesize the linker-script marker symbols rtld imports
+    /// (__rela_dyn_start/end, __rela_plt_start/end, __rel_*, __got_start/end).
+    /// These are not defined in any module's .dynsym; the real kernel derives
+    /// them from each NSO's dynamic/segment layout. Without them rtld cannot
+    /// self-relocate or walk other modules' relocation tables.
+    static void SynthesizeLinkerMarkers(
+        std::span<const u8> module_image,
+        vaddr_t base_address,
+        size_t total_size,
         std::unordered_map<std::string, u64>& out
     );
 

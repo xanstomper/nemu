@@ -728,6 +728,13 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
     vaddr_t primary_entry = 0;
     std::vector<LoadedModuleInfo> loaded_modules;
 
+    // Boot-entry choice, decided up-front so the loader can hand rtld its
+    // relocation work (see NsoLoader::Load's leave_relocations contract).
+    const bool boot_via_rtld = [&] {
+        const char* entry_env_pre = std::getenv("NEMU_BOOT_ENTRY");
+        return !entry_env_pre || std::string_view(entry_env_pre) != "main";
+    }();
+
     for (const auto& mod_name : load_order) {
         auto mod_data = exefs.OpenFile(mod_name);
         if (!mod_data) continue;
@@ -736,7 +743,9 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
         constexpr u64 MODULE_ALIGN = 0x10000;
         curr_base = (curr_base + MODULE_ALIGN - 1) & ~(MODULE_ALIGN - 1);
 
-        auto loaded = NsoLoader::Load(*mod_data, vm, curr_base, &vfs_, title_id);
+        const bool is_rtld_mod = (mod_name == "rtld");
+        auto loaded = NsoLoader::Load(*mod_data, vm, curr_base, &vfs_, title_id,
+                                      /*leave_relocations=*/boot_via_rtld && is_rtld_mod);
         if (!loaded) {
             NEMU_LOG_ERROR("Loader", "Failed to load module '{}' at 0x{:016X}", mod_name, curr_base);
             continue;
@@ -756,26 +765,28 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
 
         // Primary entry selection.
         //
-        // Overridable with NEMU_BOOT_ENTRY=main|rtld; the default is "main".
+        // Overridable with NEMU_BOOT_ENTRY=main|rtld; the default is "rtld".
         //
-        //   "main" (default) boots the game's own crt0 directly. This is what
-        //     every mature Switch emulator does: Ryujinx (both the classic tree
-        //     and the current `qlaunch` tree) sets the process entry point to the
-        //     first NSO in the ExeFS and performs all relocations in the loader
-        //     (`ProcessLoaderHelper.LoadNsos` -> `LoadIntoMemory`), and Eden
-        //     (yuzu) does the same via `AppLoader_NSO::Load`. None of them hand
-        //     rtld a kernel-installed ldr module map, and none of them boot rtld
-        //     directly. NEMU already applies every module's RELA relocations and
-        //     resolves cross-module imports at load time, so rtld's relocation
-        //     work is redundant here.
+        //   "rtld" (default, changed 2026-10-02): boots Nintendo's real rtld
+        //     _start (x0=0 normal-boot path, x1=main-thread handle -- already
+        //     the NEMU convention). rtld then does what the direct-main boot
+        //     left missing: resolves ALL cross-module imports itself, primes
+        //     the nn::ro/nn::os runtime globals (g_pAutoLoadList et al) that
+        //     the SDK's ThreadManager/Horizon cascade consumes, runs every
+        //     module's .init_array in dependency order, and hands off to
+        //     nnMain. This closes the verified Terraria boot wall (spin in
+        //     SetZeroToAllThreadsTlsSafe on an unprimed ring).
         //
-        //   "rtld" is kept only for bring-up comparison. Booting rtld directly
-        //     stalls: rtld derives its own load base from a *module list*
-        //     structure the real kernel hands it, and NEMU never installs one,
-        //     so rtld relocates itself to a garbage base (observed:
-        //     0x1871_0000_00 on Terraria) and every write from there faults.
-        const char* entry_env = std::getenv("NEMU_BOOT_ENTRY");
-        const bool prefer_rtld = (entry_env != nullptr) && (std::string_view(entry_env) == "rtld");
+        //   "main" is the legacy NEMU model: loader pre-resolves imports and
+        //     boots main's crt0 directly. Faster, but the SDK runtime-init
+        //     cascade never runs -- ThreadManager::g_Manager ends up with an
+        //     uninitialised thread-list ring and the guest busy-spins in
+        //     SetZeroToAllThreadsTlsSafe. Kept as the bring-up escape hatch.
+        //     (Ryujinx/Eden use this loader-side model via
+        //     ProcessLoaderHelper.LoadNsos / AppLoader_NSO::Load; they get away
+        //     with it because their full HLE service/kernel trees cover for the
+        //     missing runtime init. NEMU's does not yet.)
+        const bool prefer_rtld = boot_via_rtld;
 
         if (mod_name == "rtld" && prefer_rtld) {
             primary_entry = loaded->entry_point;
@@ -804,7 +815,13 @@ std::optional<LoadedTitleInfo> TitleLoader::LoadExeFS(
         std::unordered_map<std::string, u64> global_symbols;
         for (const auto& m : loaded_modules) {
             for (const auto& [name, val] : m.exported_symbols) {
-                global_symbols[name] = m.base_address + val;
+                // FIRST definition wins (ELF link-order precedence). The linker
+                // marker symbols (__rela_dyn_start, __got_start, ...) exist in
+                // EVERY module's synthesized export set; rtld must bind its own
+                // copies of them, not the last module's. Last-wins silently
+                // pointed rtld's markers at sdk's tables and its reloc walk
+                // read garbage entries.
+                global_symbols.emplace(name, m.base_address + val);
             }
         }
         if (!global_symbols.empty()) {

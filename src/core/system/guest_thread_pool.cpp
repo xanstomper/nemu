@@ -217,6 +217,25 @@ size_t GuestThreadPool::RunQuantum(kernel::KThread& thread, size_t budget, vaddr
             step_res == cpu::StepResult::MemoryFault) {
             if (++fault_streak == 1) {
                 first_fault_pc = cpu.pc;
+                // FIRST-FAULT REGISTER DUMP (diagnostic): the guest's first
+                // fault carries the whole story -- which base the guest
+                // computed, which table it walked. Dump registers once.
+                if (std::getenv("NEMU_TRACE_SPIN_CALLER")) {
+                    std::string regs;
+                    for (unsigned r = 0; r < 31; ++r) {
+                        char b[48];
+                        std::snprintf(b, sizeof(b), "x%u=%016llX ", r,
+                                      static_cast<unsigned long long>(cpu.GetX(r)));
+                        regs += b;
+                    }
+                    char b[64];
+                    std::snprintf(b, sizeof(b), "pc=%016llX sp=%016llX lr=%016llX",
+                                  static_cast<unsigned long long>(cpu.pc),
+                                  static_cast<unsigned long long>(cpu.GetX(31) ? cpu.GetX(31) : 0),
+                                  static_cast<unsigned long long>(cpu.GetX(30)));
+                    NEMU_LOG_ERROR("CPU", "FIRST-FAULT thread {} {}: {}",
+                                   thread.GetTid(), regs, b);
+                }
             }
             if (fault_streak >= kMaxConsecutiveFaults) {
                 NEMU_LOG_ERROR("CPU",
