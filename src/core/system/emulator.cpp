@@ -361,14 +361,18 @@ bool Emulator::LoadTitle(const std::string& path) {
         process_->SetName(loaded->title_name);
     }
 
-    // NOTE: Do NOT run .init_array here anymore. The initial thread now boots
-    // through rtld (like the real OS / Eden), and rtld's _start itself runs
-    // every module's .init_array in dependency order *after* registering all
-    // modules and resolving nn::ro internals (verified in Terraria's nnrtld
-    // disassembly: init runner at rtld+0xfb0, called from the module walk).
-    // Running them from the loader before the SDK allocator/service globals
-    // exist was why 149/372 constructors faulted and the game died in its
-    // first sparsehash set_empty_key().
+    // NOTE: NEMU boots the process at `main`'s crt0 entry directly (the same
+    // model Ryujinx/Eden use), NOT through rtld. That means every module's
+    // .init_array static-constructors — which on a real title rtld runs before
+    // transferring control — are NOT run unless we run them ourselves. They are
+    // what close the SDK's intrusive runtime rings (e.g.
+    // nn::os::detail::ThreadManager::g_Manager.m_ThreadList gets its
+    // self-loop-to-sentinel in ThreadManager::ThreadManager). Skipping them is
+    // why Terraria's SetZeroToAllThreadsTlsSafe walks an uninitialised ring:
+    // head[x21+0x1d8] is 0 (sentinel-dump), the cursor never returns, and the
+    // guest busy-spins 600 frames cleanly with 0 faults. RunModuleInitArrays is
+    // invoked in LoadTitle *after* main_thread_ exists (SVCN dispatch needs a
+    // thread), see below.
     if (loaded->title_id != 0) {
         process_->SetTitleId(loaded->title_id);
     }
@@ -452,6 +456,28 @@ bool Emulator::LoadTitle(const std::string& path) {
     // Write the thread handle into the thread-local region (libnx reads it at
     // TLS + 0x110). This is what yuzu/Eden does to hand the handle to crt0.
     process_->GetVirtualMemory().Write32(TLS_ADDR + 0x110, thread_handle);
+
+    // Run every module's .init_array (DT_INIT_ARRAY) static-constructors in
+    // load order, like the real rtld does before transferring control to the
+    // process entry. NOTE (verified 2026-10-02): running these alone does NOT
+    // close the SDK's nn::os::detail::ThreadManager ring (Teraria still spins
+    // with head[x21+0x1d8]==0) because ThreadManager::g_Manager is constructed
+    // via the runtime's own path, not .init_array. This remains correct,
+    // reusable infrastructure (the RELATIVE-relocation slot fix below is a real
+    // bug fix), so it is retained but gated behind NEMU_RUN_INIT_ARRAYS=1 to
+    // keep normal boots fast. sys: enable to exercise the ctors during bring-up.
+    if (getenv("NEMU_RUN_INIT_ARRAYS")) {
+        if (!loaded->modules.empty() && !is_nro_) {
+            title_loader_->RunModuleInitArrays(
+                process_->GetVirtualMemory(),
+                loaded->modules,
+                [this](cpu::CpuState& state, u32 svc_id) {
+                    if (process_ && main_thread_) {
+                        kernel::SvcDispatcher::Dispatch(state, *process_, *main_thread_, svc_id);
+                    }
+                });
+        }
+    }
 
     // Render initial boot clear frame
     if (gpu_backend_) {

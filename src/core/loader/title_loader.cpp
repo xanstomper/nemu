@@ -537,10 +537,38 @@ void TitleLoader::RunModuleInitArrays(
     }
 
     constexpr u64 kPerFunctionBudget = 5'000'000;
+    // Diagnostic knobs so the .init_array pass can be targeted/bounded while
+    // iterating on which constructs close the SDK's runtime rings.
+    const char* ia_only = std::getenv("NEMU_INIT_ARRAYS_ONLY"); // e.g. "sdk,main"
+    u64 per_fn_budget = kPerFunctionBudget;
+    if (const char* b = std::getenv("NEMU_INIT_ARRAY_BUDGET")) {
+        per_fn_budget = std::strtoull(b, nullptr, 10);
+        if (per_fn_budget == 0) per_fn_budget = kPerFunctionBudget;
+    }
     size_t total_run = 0, total_failed = 0;
 
     for (const auto& m : modules) {
         if (m.image.empty()) continue;
+        if (ia_only && !std::string_view(ia_only).empty()) {
+            // Comma-separated allow-list of module names (e.g. "sdk" to run only
+            // the framework ctors that close the runtime rings).
+            bool wanted = false;
+            std::string_view csv(ia_only);
+            size_t start = 0;
+            while (start <= csv.size()) {
+                const size_t end = csv.find(',', start);
+                const std::string_view tok = csv.substr(
+                    start, (end == std::string_view::npos) ? std::string_view::npos : end - start);
+                if (!tok.empty() && tok == m.name) { wanted = true; break; }
+                if (end == std::string_view::npos) break;
+                start = end + 1;
+            }
+            if (!wanted) {
+                NEMU_LOG_INFO("Loader", "init_array: skipping module '{}' (NEMU_INIT_ARRAYS_ONLY)",
+                              m.name);
+                continue;
+            }
+        }
         u64 init_array = 0, init_arraysz = 0;
         if (!FindInitArray(m.image, init_array, init_arraysz)) continue;
         const size_t count = static_cast<size_t>(init_arraysz / 8);
@@ -552,11 +580,21 @@ void TitleLoader::RunModuleInitArrays(
             if (slot + 8 > m.image.size()) break;
             u64 fn_rel = 0;
             std::memcpy(&fn_rel, m.image.data() + slot, 8);
-            if (fn_rel == 0) continue;
-            vaddr_t fn = m.base_address + fn_rel;
+            // Resolve the ctor address. .init_array slots are either (a) a flat
+            // module-relative VA stored directly (main game modules) or (b) a
+            // RELATIVE-relocation slot whose flat value is 0 and whose real value
+            // (load_base + addend) was written into GUEST memory at load time
+            // (framework/sdk modules). Consult guest memory first and only fall
+            // back to the flat image value, so both layouts resolve.
+            vaddr_t fn = 0;
             const u64 in_guest = vm.IsValidAddress(m.base_address + slot, 8)
                                ? vm.Read64(m.base_address + slot) : 0;
-            if (in_guest != 0 && in_guest != fn_rel) fn = in_guest;
+            if (in_guest != 0) {
+                fn = in_guest; // already absolute (RELATIVE-relocated)
+            } else if (fn_rel != 0) {
+                fn = m.base_address + fn_rel; // flat module-relative VA
+            }
+            if (fn == 0) continue;
             if (!vm.IsValidAddress(fn, 4)) continue;
 
             cpu::CpuState cpu;
@@ -570,17 +608,45 @@ void TitleLoader::RunModuleInitArrays(
             }
             bool ok = true;
             u64 fault_streak = 0;
-            for (u64 s = 0; s < kPerFunctionBudget; ++s) {
+            u64 spin_streak = 0;
+            vaddr_t last_pc = 0;
+            vaddr_t spin_pc = 0;
+            u64 executed = 0;
+            for (u64 s = 0; s < per_fn_budget; ++s) {
                 if (cpu.pc == kInitReturnSentinel || cpu.halted) break;
                 const auto res = interp.Step();
+                ++executed;
                 if (res == cpu::StepResult::MemoryFault ||
                     res == cpu::StepResult::UndefinedInstruction) {
                     if (++fault_streak > 64) { ok = false; break; } // runaway, abort
                 } else {
                     fault_streak = 0;
                 }
+                // Spin-hang detector: a static-ctor that never returns and never
+                // faults is busy-spinning (e.g. waiting on a scheduler/thread the
+                // interpreter isn't driving). Cut it off once it repeats the same
+                // PC densely over a short window so one hung ctor can't stall the
+                // whole .init_array pass for minutes. Marked failed, not fatal.
+                if (cpu.pc == last_pc) {
+                    if (cpu.pc != spin_pc) { spin_pc = cpu.pc; spin_streak = 0; }
+                    if (++spin_streak > 40'000) { ok = false; break; }
+                } else {
+                    spin_pc = 0; spin_streak = 0;
+                }
+                last_pc = cpu.pc;
             }
-            if (ok) ++total_run; else ++total_failed;
+            if (ok) {
+                ++total_run;
+                if (executed > 0)
+                    NEMU_LOG_DEBUG("Loader", "init_array[{}] ok: pc={:016X} {} step(s)",
+                                   i, fn, executed);
+            } else {
+                ++total_failed;
+                NEMU_LOG_WARN("Loader",
+                              "init_array[{}] FAILED {}: pc (after)={:016X} {} step(s) [fault_streak={}, spin={}]",
+                              i, (fault_streak > 64 ? "fault" : "spin"),
+                              cpu.pc, executed, fault_streak, (spin_pc ? "yes" : "no"));
+            }
         }
     }
     NEMU_LOG_INFO("Loader", "Module init_array execution: {} ok, {} faulted", total_run, total_failed);
