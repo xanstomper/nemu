@@ -10,6 +10,7 @@
 #include <csignal>
 #include <atomic>
 #include <cstdlib>
+#include <cstring>
 #include <cstdint>
 #include <cstdio>
 #ifndef _WIN32
@@ -323,6 +324,22 @@ static int MainInternal(int argc, char** argv) {
                 std::cout << " @" << std::hex << a << "=" << w << std::dec;
             }
             std::cout << std::endl;
+            // Configurable dump: NEMU_DUMP_RANGE=0xADDR:0xADDR dumps guest words
+            // in that range (so any new wall can be read without a rebuild).
+            if (const char* rng = std::getenv("NEMU_DUMP_RANGE")) {
+                const char* colon = std::strchr(rng, ':');
+                if (colon) {
+                    const u64 lo = std::strtoull(rng, nullptr, 0);
+                    const u64 hi = std::strtoull(colon + 1, nullptr, 0);
+                    std::cout << "[DUMP-RANGE " << std::hex << lo << "]" << std::dec;
+                    for (u64 a = lo; a <= hi; a += 4) {
+                        const u32 w = gvm.IsValidAddress(a, 4)
+                                    ? static_cast<u32>(gvm.Read64(a) & 0xFFFFFFFFULL) : 0;
+                        std::cout << " @" << std::hex << a << "=" << w << std::dec;
+                    }
+                    std::cout << std::endl;
+                }
+            }
         }
         emulator.Run(run_max_frames);
         const u64 frames = emulator.GetFrameCount();
