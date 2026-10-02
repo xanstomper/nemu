@@ -196,17 +196,6 @@ void SvcDispatcher::SvcQueryMemory(cpu::CpuState& state, KProcess& process) {
     const vaddr_t out_mem_info_ptr = state.GetX(0);
     const vaddr_t query_addr = state.GetX(2);
 
-    // Queries above the user VA ceiling are invalid: return an error so the
-    // walker stops. Previously such a query produced a 1-page "gap" answer,
-    // making rtld advance one page at a time to infinity (observed walking
-    // 0x800000F2A000, 0x800000F2B000, ... 0x1000 apart).
-    constexpr vaddr_t kUserVaEnd = 0x800000000000ULL; // 2^47
-    if (query_addr >= kUserVaEnd) {
-        state.SetX(0, static_cast<u64>(Result::InvalidAddress));
-        state.SetX(1, 0);
-        return;
-    }
-
     auto& vmem = process.GetVirtualMemory();
 
     // Horizon MemoryInfo layout (32 bytes) as consumed by libnx / nnSDK rtld:
@@ -276,9 +265,14 @@ void SvcDispatcher::SvcQueryMemory(cpu::CpuState& state, KProcess& process) {
         // missing service, was freezing the boot.
         const u64 base = query_addr & ~PAGE_M;
         const vaddr_t next = vmem.NextMappedAddress(base);
-        const u64 hi = next ? next : 0x800000000000ULL;
         mem_info.base_address = base;
-        mem_info.size = (hi > base) ? (hi - base) : PAGE;
+        // Terminal condition: rtld's walk loop (0x71000588) loops while
+        // `base + size > addr` and EXITS when the region is empty. When no
+        // page is mapped above the query, report size 0 (Success) so the walk
+        // ends -- returning an error here instead made rtld trap via
+        // `cbnz w0, 0x71000708`, and reporting a huge gap made it crawl one
+        // page at a time forever.
+        mem_info.size = next ? (next - base) : 0;
         mem_info.type = 0; // Unmapped
         mem_info.permission = 0;
     }

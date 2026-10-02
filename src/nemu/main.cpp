@@ -283,6 +283,46 @@ static int MainInternal(int argc, char** argv) {
                 std::cout << " @" << std::hex << a << "=" << w << std::dec;
             }
             std::cout << std::endl;
+            // Static scan: find branches INTO the fatal trap at 0x71000708
+            // (b .). The caller reveals which check failed before the abort.
+            std::cout << "[RTLD-TRAP-CALLERS]";
+            for (u64 a = 0x71000000; a < 0x71002000; a += 4) {
+                if (!gvm.IsValidAddress(a, 4)) continue;
+                const u32 w = static_cast<u32>(gvm.Read64(a) & 0xFFFFFFFFULL);
+                s64 tgt = -1;
+                if ((w & 0xFC000000u) == 0x94000000u || (w & 0xFC000000u) == 0x14000000u) {
+                    s64 imm = static_cast<s64>(w & 0x03FFFFFFu);          // imm26
+                    if (imm & 0x02000000) imm |= ~0x03FFFFFFLL;
+                    tgt = static_cast<s64>(a) + imm * 4;
+                } else if ((w & 0xFF000010u) == 0x54000000u) {            // B.cond
+                    s64 imm = static_cast<s64>((w >> 5) & 0x7FFFFu);      // imm19
+                    if (imm & 0x40000) imm |= ~0x7FFFFLL;
+                    tgt = static_cast<s64>(a) + imm * 4;
+                } else if ((w & 0x7E000000u) == 0x34000000u) {            // CBZ/CBNZ
+                    s64 imm = static_cast<s64>((w >> 5) & 0x7FFFFu);
+                    if (imm & 0x40000) imm |= ~0x7FFFFLL;
+                    tgt = static_cast<s64>(a) + imm * 4;
+                } else if ((w & 0x7E000000u) == 0x36000000u) {            // TBZ/TBNZ
+                    s64 imm = static_cast<s64>((w >> 5) & 0x3FFFu);
+                    if (imm & 0x2000) imm |= ~0x3FFFLL;
+                    tgt = static_cast<s64>(a) + imm * 4;
+                }
+                if (tgt >= 0x71000700LL && tgt <= 0x71000730LL) {
+                    std::cout << " " << std::hex << a << "->" << tgt
+                              << "(w=" << w << ")" << std::dec;
+                }
+            }
+            std::cout << std::endl;
+            // Dump the QueryMemory walk loop (rtld 0x710004C0-0x710005A8) whose
+            // exit condition decides when rtld stops -- it traps via
+            // `cbnz w0, 0x71000708` when QueryMemory returns an error.
+            std::cout << "[RTLD-WALKLOOP]";
+            for (u64 a = 0x710004C0; a <= 0x710005A8; a += 4) {
+                const u32 w = gvm.IsValidAddress(a, 4)
+                            ? static_cast<u32>(gvm.Read64(a) & 0xFFFFFFFFULL) : 0;
+                std::cout << " @" << std::hex << a << "=" << w << std::dec;
+            }
+            std::cout << std::endl;
         }
         emulator.Run(run_max_frames);
         const u64 frames = emulator.GetFrameCount();
