@@ -3,6 +3,9 @@
 #include "platform/logger.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
+#include <cstdio>
+#include <string>
 
 namespace nemu::core::system {
 
@@ -179,6 +182,31 @@ size_t GuestThreadPool::RunQuantum(kernel::KThread& thread, size_t budget, vaddr
         // Record where the guest actually was, so a boot failure can be
         // post-mortem'd without re-running under a debugger.
         TracePush(cpu.pc);
+
+        // BOOT-WALL WATCHPOINT (diagnostic): when the guest first enters the
+        // SDK's nn::os::detail::ThreadManager::SetZeroToAllThreadsTlsSafe spin
+        // function (Terraria 0x79CDD860), dump the recent PC history so we can
+        // see the exact caller chain that reached an uninitialised thread list
+        // before it busy-spins forever. Fires once per process for legibility.
+        if (getenv("NEMU_TRACE_SPIN_CALLER")) {
+            static bool s_spin_logged = false;
+            static const vaddr_t kSetZero = 0x0000000079CDD860ULL;
+            constexpr vaddr_t kSpinWindow = 0x100;
+            if (!s_spin_logged && cpu.pc >= kSetZero && cpu.pc < kSetZero + kSpinWindow) {
+                s_spin_logged = true;
+                const auto hist = GetTraceSnapshot();
+                std::string line;
+                for (auto it = hist.rbegin(); it != hist.rend() && line.size() < 1500; ++it) {
+                    char b[32];
+                    std::snprintf(b, sizeof(b), "%s%016llX", line.empty() ? "" : " ", 
+                                  static_cast<unsigned long long>(*it));
+                    line += b;
+                }
+                NEMU_LOG_ERROR("BootProbe",
+                    "SPIN-CALLER: thread {} entered SetZeroToAllThreadsTlsSafe; "
+                    "recent PCs (newest first): {}", thread.GetTid(), line);
+            }
+        }
 
         if (step_res == cpu::StepResult::Halted) {
             thread.SetState(kernel::ThreadState::Terminated);

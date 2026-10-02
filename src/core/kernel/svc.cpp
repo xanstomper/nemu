@@ -10,6 +10,7 @@
 #include "core/cpu/title_compat.hpp"
 #include <thread>
 #include <vector>
+#include <cstdlib>
 #include <memory>
 
 namespace nemu::core::kernel {
@@ -269,6 +270,11 @@ void SvcDispatcher::SvcCreateThread(cpu::CpuState& state, KProcess& process) {
     const vaddr_t stack_top = state.GetX(3);
     const u32 priority = static_cast<u32>(state.GetX(4));
 
+    if (std::getenv("NEMU_TRACE_SPIN_CALLER")) {
+        NEMU_LOG_INFO("SVC", "svcCreateThread: entry=0x{:016X} stack=0x{:016X} pri={}",
+                      entry_point, stack_top, priority);
+    }
+
     // Allocate new thread
     static u64 s_next_tid = 100;
     const u64 tid = s_next_tid++;
@@ -292,6 +298,10 @@ void SvcDispatcher::SvcStartThread(cpu::CpuState& state, KProcess& process) {
     auto thread = process.GetHandleTable().GetObject<KThread>(h);
 
     if (thread) {
+        if (std::getenv("NEMU_TRACE_SPIN_CALLER")) {
+            NEMU_LOG_INFO("SVC", "svcStartThread: handle={} entry=0x{:016X} (tid {})",
+                          h, thread->GetCpuState().pc, thread->GetTid());
+        }
         thread->SetState(ThreadState::Ready);
         state.SetX(0, static_cast<u64>(Result::Success));
     } else {
@@ -300,6 +310,9 @@ void SvcDispatcher::SvcStartThread(cpu::CpuState& state, KProcess& process) {
 }
 
 void SvcDispatcher::SvcExitThread(cpu::CpuState& state, KThread& thread) {
+    if (std::getenv("NEMU_TRACE_SPIN_CALLER")) {
+        NEMU_LOG_INFO("SVC", "svcExitThread: tid {}", thread.GetTid());
+    }
     thread.SetState(ThreadState::Terminated);
     state.halted = true;
     state.SetX(0, static_cast<u64>(Result::Success));
